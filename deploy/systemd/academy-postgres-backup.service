@@ -3,6 +3,7 @@ Description=Проверенная резервная копия PostgreSQL Ак
 Documentation=https://github.com/Abrikosov-group/abrikosoff-academy
 Requires=docker.service
 After=docker.service
+OnSuccess=academy-postgres-offsite-backup.service
 ConditionPathExists=/opt/academy/shared/.env
 
 [Service]
