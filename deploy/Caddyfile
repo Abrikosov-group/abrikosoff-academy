@@ -12,8 +12,5 @@ academy.abrikosoff.com {
 		X-Robots-Tag "noindex, nofollow"
 	}
 
-	log {
-		output stdout
-		format json
-	}
+	# Не сохраняем IP-адреса и заголовки посетителей в журнале доступа.
 }
