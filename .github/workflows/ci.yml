@@ -23,6 +23,25 @@ jobs:
       - name: Получить исходный код
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Проверить серверные сценарии
+        run: |
+          bash -n deploy/server/academy-postgres-backup
+          bash -n deploy/server/academy-postgres-offsite-backup
+          shellcheck \
+            deploy/server/academy-postgres-backup \
+            deploy/server/academy-postgres-offsite-backup
+
+          set +e
+          smoke_output="$(
+            ACADEMY_BACKUP_ROOT="$RUNNER_TEMP/missing-backups" \
+              deploy/server/academy-postgres-offsite-backup 2>&1
+          )"
+          smoke_exit=$?
+          set -e
+
+          test "$smoke_exit" -eq 1
+          grep -Fq 'last-success не найден' <<< "$smoke_output"
+
       - name: Подготовить Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

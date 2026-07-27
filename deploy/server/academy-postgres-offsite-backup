@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly backup_root="${ACADEMY_BACKUP_ROOT:-/opt/academy/backups/postgres}"
+readonly marker_path="${backup_root}/last-success"
+readonly offsite_marker_path="${backup_root}/last-offsite-success"
+readonly bucket="${ACADEMY_OFFSITE_BUCKET:-abrikosoff-academy-backups-prod-2026}"
+readonly endpoint="${ACADEMY_OFFSITE_ENDPOINT:-https://storage.yandexcloud.net}"
+readonly region="${ACADEMY_OFFSITE_REGION:-ru-central1}"
+recipient_file="${ACADEMY_AGE_RECIPIENT_FILE:-/etc/academy-backup/age-recipient}"
+readonly recipient_file
+readonly credentials_directory="${CREDENTIALS_DIRECTORY:-}"
+runtime_directory="${RUNTIME_DIRECTORY:-/run/academy-postgres-offsite-backup}"
+readonly runtime_directory
+readonly maximum_single_upload_bytes=$((5 * 1024 * 1024 * 1024))
+
+work_directory=""
+encrypted_path=""
+downloaded_path=""
+partial_marker=""
+
+fail() {
+  printf 'Ошибка внешней резервной копии: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  for temporary_file in \
+    "${encrypted_path}" \
+    "${downloaded_path}" \
+    "${partial_marker}"; do
+    if [[ -n "${temporary_file}" && -f "${temporary_file}" ]]; then
+      rm -f -- "${temporary_file}"
+    fi
+  done
+
+  if [[ -n "${work_directory}" && -d "${work_directory}" ]]; then
+    rmdir -- "${work_directory}" 2>/dev/null || true
+  fi
+}
+
+trap cleanup EXIT
+
+read_marker_value() {
+  local key="$1"
+  local value
+
+  value="$(
+    awk -v key="${key}" '
+      index($0, key "=") == 1 {
+        value = substr($0, length(key) + 2)
+        count += 1
+      }
+      END {
+        if (count != 1) {
+          exit 1
+        }
+        print value
+      }
+    ' "${marker_path}"
+  )" || fail "поле ${key} должно встречаться в last-success ровно один раз"
+
+  printf '%s' "${value}"
+}
+
+read_credential() {
+  local credential_name="$1"
+  local credential_path="${credentials_directory}/${credential_name}"
+  local value
+
+  [[ -f "${credential_path}" ]] || \
+    fail "systemd credential ${credential_name} не найден"
+  IFS= read -r value < "${credential_path}" || \
+    fail "systemd credential ${credential_name} не читается"
+  [[ -n "${value}" ]] || \
+    fail "systemd credential ${credential_name} пуст"
+
+  printf '%s' "${value}"
+}
+
+aws_s3api() {
+  AWS_ACCESS_KEY_ID="${access_key_id}" \
+  AWS_SECRET_ACCESS_KEY="${secret_access_key}" \
+  AWS_DEFAULT_REGION="${region}" \
+  AWS_REGION="${region}" \
+  AWS_EC2_METADATA_DISABLED=true \
+  AWS_RETRY_MODE=standard \
+  AWS_MAX_ATTEMPTS=5 \
+  AWS_PAGER="" \
+    aws \
+      --endpoint-url "${endpoint}" \
+      --region "${region}" \
+      s3api \
+      "$@"
+}
+
+[[ -f "${marker_path}" ]] || fail "last-success не найден"
+[[ -f "${recipient_file}" ]] || fail "публичный ключ age не найден"
+[[ -n "${credentials_directory}" ]] || \
+  fail "CREDENTIALS_DIRECTORY не передан systemd"
+
+mapfile -t recipients < <(
+  sed \
+    -e 's/[[:space:]]//g' \
+    -e '/^$/d' \
+    -e '/^#/d' \
+    "${recipient_file}"
+)
+[[ "${#recipients[@]}" -eq 1 ]] || \
+  fail "файл получателя age должен содержать ровно один публичный ключ"
+readonly recipient="${recipients[0]}"
+[[ "${recipient}" =~ ^age1[0-9a-z]+$ ]] || \
+  fail "публичный ключ age имеет неподдерживаемый формат"
+
+archive_basename="$(read_marker_value archive)"
+archive_sha256="$(read_marker_value sha256)"
+restore_verified="$(read_marker_value restore_verified)"
+readonly archive_basename archive_sha256 restore_verified
+
+[[ "${restore_verified}" == "true" ]] || \
+  fail "локальная копия не подтверждена восстановлением"
+[[ "${archive_basename}" =~ ^academy-([0-9]{8})T[0-9]{6}Z\.dump$ ]] || \
+  fail "имя локального архива имеет неподдерживаемый формат"
+readonly archive_date="${BASH_REMATCH[1]}"
+readonly archive_path="${backup_root}/${archive_basename}"
+[[ -f "${archive_path}" ]] || fail "локальный архив не найден"
+[[ "${archive_sha256}" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "SHA-256 локального архива имеет неподдерживаемый формат"
+
+actual_archive_sha256="$(
+  sha256sum "${archive_path}" | awk '{print $1}'
+)"
+readonly actual_archive_sha256
+[[ "${actual_archive_sha256}" == "${archive_sha256}" ]] || \
+  fail "SHA-256 локального архива не совпал с last-success"
+
+install -d -m 700 "${runtime_directory}"
+exec 9> "${backup_root}/.offsite-backup.lock"
+flock -n 9 || fail "другая внешняя выгрузка уже выполняется"
+
+work_directory="$(
+  mktemp -d "${runtime_directory}/academy-offsite.XXXXXX"
+)"
+encrypted_path="${work_directory}/${archive_basename}.age"
+downloaded_path="${work_directory}/${archive_basename}.downloaded.age"
+partial_marker="$(
+  mktemp "${backup_root}/.last-offsite-success.XXXXXX"
+)"
+
+printf 'Шифрую резервную копию %s.\n' "${archive_basename}"
+age \
+  --encrypt \
+  --recipient "${recipient}" \
+  --output "${encrypted_path}" \
+  "${archive_path}"
+
+[[ -s "${encrypted_path}" ]] || fail "age создал пустой архив"
+
+encrypted_size_bytes="$(stat -c '%s' "${encrypted_path}")"
+encrypted_sha256="$(
+  sha256sum "${encrypted_path}" | awk '{print $1}'
+)"
+content_md5="$(
+  openssl dgst -md5 -binary "${encrypted_path}" | openssl base64 -A
+)"
+readonly encrypted_size_bytes encrypted_sha256 content_md5
+
+(( encrypted_size_bytes <= maximum_single_upload_bytes )) || \
+  fail "зашифрованный архив превышает лимит одиночной загрузки 5 ГиБ"
+[[ "${content_md5}" =~ ^[A-Za-z0-9+/]{22}==$ ]] || \
+  fail "не удалось вычислить Content-MD5"
+
+access_key_id="$(read_credential aws-access-key-id)"
+secret_access_key="$(read_credential aws-secret-access-key)"
+readonly access_key_id secret_access_key
+[[ "${access_key_id}" =~ ^YCAJ[A-Za-z0-9_-]{21}$ ]] || \
+  fail "идентификатор статического ключа имеет неподдерживаемый формат"
+[[ "${secret_access_key}" =~ ^[A-Za-z0-9_-]{40}$ ]] || \
+  fail "секрет статического ключа имеет неподдерживаемый формат"
+
+readonly object_prefix="${ACADEMY_OFFSITE_PREFIX:-postgres}"
+object_key="${object_prefix}/${archive_date:0:4}/${archive_date:4:2}/${archive_basename}.age"
+readonly object_key
+
+printf 'Загружаю зашифрованную копию s3://%s/%s.\n' \
+  "${bucket}" \
+  "${object_key}"
+version_id="$(
+  aws_s3api put-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --body "${encrypted_path}" \
+    --content-md5 "${content_md5}" \
+    --content-type application/octet-stream \
+    --metadata \
+      "sha256=${encrypted_sha256},source_sha256=${archive_sha256}" \
+    --query VersionId \
+    --output text
+)"
+readonly version_id
+[[ -n "${version_id}" && "${version_id}" != "None" ]] || \
+  fail "Object Storage не вернул идентификатор версии"
+
+remote_size="$(
+  aws_s3api head-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --version-id "${version_id}" \
+    --query ContentLength \
+    --output text
+)"
+remote_sha256="$(
+  aws_s3api head-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --version-id "${version_id}" \
+    --query Metadata.Sha256 \
+    --output text
+)"
+remote_source_sha256="$(
+  aws_s3api head-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --version-id "${version_id}" \
+    --query Metadata.Source_sha256 \
+    --output text
+)"
+remote_lock_mode="$(
+  aws_s3api head-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --version-id "${version_id}" \
+    --query ObjectLockMode \
+    --output text
+)"
+remote_retain_until="$(
+  aws_s3api head-object \
+    --bucket "${bucket}" \
+    --key "${object_key}" \
+    --version-id "${version_id}" \
+    --query ObjectLockRetainUntilDate \
+    --output text
+)"
+readonly \
+  remote_size \
+  remote_sha256 \
+  remote_source_sha256 \
+  remote_lock_mode \
+  remote_retain_until
+
+[[ "${remote_size}" == "${encrypted_size_bytes}" ]] || \
+  fail "размер объекта после загрузки не совпал"
+[[ "${remote_sha256}" == "${encrypted_sha256}" ]] || \
+  fail "метаданные SHA-256 зашифрованного объекта не совпали"
+[[ "${remote_source_sha256}" == "${archive_sha256}" ]] || \
+  fail "метаданные SHA-256 исходного архива не совпали"
+[[ "${remote_lock_mode}" == "COMPLIANCE" ]] || \
+  fail "объект не получил строгую блокировку COMPLIANCE"
+
+retain_until_epoch="$(
+  date -u -d "${remote_retain_until}" +%s
+)" || fail "не удалось прочитать дату окончания блокировки"
+minimum_retain_until_epoch="$((
+  $(date -u +%s) + 34 * 24 * 60 * 60
+))"
+readonly retain_until_epoch minimum_retain_until_epoch
+(( retain_until_epoch >= minimum_retain_until_epoch )) || \
+  fail "строгая блокировка объекта короче 34 суток"
+
+aws_s3api get-object \
+  --bucket "${bucket}" \
+  --key "${object_key}" \
+  --version-id "${version_id}" \
+  "${downloaded_path}" \
+  >/dev/null
+
+downloaded_sha256="$(
+  sha256sum "${downloaded_path}" | awk '{print $1}'
+)"
+readonly downloaded_sha256
+[[ "${downloaded_sha256}" == "${encrypted_sha256}" ]] || \
+  fail "SHA-256 скачанного объекта не совпал с загруженным"
+
+{
+  printf 'uploaded_at=%s\n' "$(date -u --iso-8601=seconds)"
+  printf 'bucket=%s\n' "${bucket}"
+  printf 'object_key=%s\n' "${object_key}"
+  printf 'version_id=%s\n' "${version_id}"
+  printf 'source_archive=%s\n' "${archive_basename}"
+  printf 'source_sha256=%s\n' "${archive_sha256}"
+  printf 'encrypted_sha256=%s\n' "${encrypted_sha256}"
+  printf 'encrypted_size_bytes=%s\n' "${encrypted_size_bytes}"
+  printf 'object_lock_mode=%s\n' "${remote_lock_mode}"
+  printf 'retain_until=%s\n' "${remote_retain_until}"
+  printf 'download_verified=true\n'
+} > "${partial_marker}"
+mv -- "${partial_marker}" "${offsite_marker_path}"
+partial_marker=""
+
+printf 'Внешняя копия загружена и проверена скачиванием: %s (%s байт).\n' \
+  "${object_key}" \
+  "${encrypted_size_bytes}"
