@@ -1,0 +1,12 @@
+[Unit]
+Description=Ежедневная резервная копия PostgreSQL Академии
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Europe/Moscow
+RandomizedDelaySec=15m
+AccuracySec=1m
+Persistent=true
+Unit=academy-postgres-backup.service
+
+[Install]
+WantedBy=timers.target
