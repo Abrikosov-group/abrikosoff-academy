@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly backup_root="${ACADEMY_BACKUP_ROOT:-/opt/academy/backups/postgres}"
+readonly environment_file="${ACADEMY_ENV_FILE:-/opt/academy/shared/.env}"
+readonly project_name="academy-abrikosoff"
+readonly database_service="database"
+readonly retention_days="${ACADEMY_BACKUP_RETENTION_DAYS:-14}"
+readonly object_count_query="
+  SELECT count(*)
+  FROM pg_catalog.pg_class AS relation
+  JOIN pg_catalog.pg_namespace AS namespace
+    ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND namespace.nspname NOT LIKE 'pg_toast%'
+    AND relation.relkind IN ('r', 'p', 'v', 'm', 'S', 'f');
+"
+
+partial_archive=""
+partial_checksum=""
+partial_marker=""
+verification_database=""
+database_container=""
+database_user=""
+
+fail() {
+  printf 'Ошибка резервного копирования: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [[ -n "${verification_database}" && -n "${database_container}" ]]; then
+    docker exec \
+      --user postgres \
+      "${database_container}" \
+      dropdb \
+        --username "${database_user}" \
+        --no-password \
+        --force \
+        --if-exists \
+        "${verification_database}" \
+        >/dev/null 2>&1 || true
+  fi
+
+  for temporary_file in \
+    "${partial_archive}" \
+    "${partial_checksum}" \
+    "${partial_marker}"; do
+    if [[ -n "${temporary_file}" && -f "${temporary_file}" ]]; then
+      rm -f -- "${temporary_file}"
+    fi
+  done
+}
+
+trap cleanup EXIT
+
+read_environment_value() {
+  local key="$1"
+  local value
+
+  value="$(
+    awk -v key="${key}" '
+      index($0, key "=") == 1 {
+        value = substr($0, length(key) + 2)
+        count += 1
+      }
+      END {
+        if (count != 1) {
+          exit 1
+        }
+        print value
+      }
+    ' "${environment_file}"
+  )" || fail "переменная ${key} должна встречаться в .env ровно один раз"
+
+  printf '%s' "${value}"
+}
+
+query_object_count() {
+  local database_name="$1"
+
+  docker exec \
+    --user postgres \
+    "${database_container}" \
+    psql \
+      --username "${database_user}" \
+      --dbname "${database_name}" \
+      --no-password \
+      --no-psqlrc \
+      --tuples-only \
+      --no-align \
+      --set ON_ERROR_STOP=1 \
+      --command "${object_count_query}" \
+    | tr -d '[:space:]'
+}
+
+[[ "${retention_days}" =~ ^[0-9]+$ ]] || \
+  fail "срок хранения должен быть целым числом дней"
+(( retention_days >= 7 && retention_days <= 3650 )) || \
+  fail "срок хранения должен быть от 7 до 3650 дней"
+[[ -f "${environment_file}" ]] || fail "серверный .env не найден"
+
+install -d -m 750 "${backup_root}"
+exec 9> "${backup_root}/.backup.lock"
+flock -n 9 || fail "другой процесс резервного копирования уже выполняется"
+
+docker info >/dev/null
+
+mapfile -t database_containers < <(
+  docker ps \
+    --filter "label=com.docker.compose.project=${project_name}" \
+    --filter "label=com.docker.compose.service=${database_service}" \
+    --format '{{.ID}}'
+)
+
+[[ "${#database_containers[@]}" -eq 1 ]] || \
+  fail "ожидался ровно один работающий контейнер PostgreSQL"
+database_container="${database_containers[0]}"
+
+[[ "$(
+  docker inspect \
+    --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' \
+    "${database_container}"
+)" == "healthy" ]] || fail "контейнер PostgreSQL не прошёл health-check"
+
+database_name="$(read_environment_value POSTGRES_DB)"
+database_user="$(read_environment_value POSTGRES_USER)"
+[[ "${database_name}" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] || \
+  fail "POSTGRES_DB содержит неподдерживаемое имя"
+[[ "${database_user}" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] || \
+  fail "POSTGRES_USER содержит неподдерживаемое имя"
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+readonly timestamp
+readonly archive_basename="academy-${timestamp}.dump"
+readonly archive_path="${backup_root}/${archive_basename}"
+readonly checksum_path="${archive_path}.sha256"
+readonly verification_database_name="academy_restore_${timestamp,,}"
+
+partial_archive="$(mktemp "${backup_root}/.${archive_basename}.XXXXXX")"
+partial_checksum="$(mktemp "${backup_root}/.${archive_basename}.sha256.XXXXXX")"
+partial_marker="$(mktemp "${backup_root}/.last-success.XXXXXX")"
+
+printf 'Создаю резервную копию %s.\n' "${archive_basename}"
+docker exec \
+  --user postgres \
+  "${database_container}" \
+  pg_dump \
+    --username "${database_user}" \
+    --dbname "${database_name}" \
+    --format custom \
+    --compress=9 \
+    --no-password \
+  > "${partial_archive}"
+
+[[ -s "${partial_archive}" ]] || fail "pg_dump создал пустой архив"
+
+docker exec \
+  --interactive \
+  --user postgres \
+  "${database_container}" \
+  pg_restore --list \
+  < "${partial_archive}" \
+  >/dev/null
+
+source_object_count="$(query_object_count "${database_name}")"
+readonly source_object_count
+[[ "${source_object_count}" =~ ^[0-9]+$ ]] || \
+  fail "не удалось посчитать объекты исходной базы"
+
+verification_database="${verification_database_name}"
+docker exec \
+  --user postgres \
+  "${database_container}" \
+  createdb \
+    --username "${database_user}" \
+    --template template0 \
+    --no-password \
+    "${verification_database}"
+
+docker exec \
+  --interactive \
+  --user postgres \
+  "${database_container}" \
+  pg_restore \
+    --username "${database_user}" \
+    --dbname "${verification_database}" \
+    --no-password \
+    --exit-on-error \
+    --single-transaction \
+    --no-owner \
+    --no-privileges \
+  < "${partial_archive}"
+
+restored_object_count="$(
+  query_object_count "${verification_database}"
+)"
+readonly restored_object_count
+[[ "${restored_object_count}" == "${source_object_count}" ]] || \
+  fail "число объектов после восстановления не совпало с исходной базой"
+
+docker exec \
+  --user postgres \
+  "${database_container}" \
+  psql \
+    --username "${database_user}" \
+    --dbname "${verification_database}" \
+    --no-password \
+    --no-psqlrc \
+    --set ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --command 'SELECT 1;' \
+  | grep -Fxq '1'
+
+docker exec \
+  --user postgres \
+  "${database_container}" \
+  dropdb \
+    --username "${database_user}" \
+    --no-password \
+    --force \
+    "${verification_database}"
+verification_database=""
+
+archive_sha256="$(
+  sha256sum "${partial_archive}" | awk '{print $1}'
+)"
+readonly archive_sha256
+archive_size_bytes="$(stat -c '%s' "${partial_archive}")"
+readonly archive_size_bytes
+postgres_version="$(
+  docker exec "${database_container}" pg_dump --version
+)"
+readonly postgres_version
+
+printf '%s  %s\n' \
+  "${archive_sha256}" \
+  "${archive_basename}" \
+  > "${partial_checksum}"
+
+mv -- "${partial_archive}" "${archive_path}"
+partial_archive=""
+mv -- "${partial_checksum}" "${checksum_path}"
+partial_checksum=""
+
+ln -sfn "${archive_basename}" "${backup_root}/latest.dump"
+ln -sfn \
+  "${archive_basename}.sha256" \
+  "${backup_root}/latest.dump.sha256"
+
+{
+  printf 'completed_at=%s\n' "$(date -u --iso-8601=seconds)"
+  printf 'archive=%s\n' "${archive_basename}"
+  printf 'sha256=%s\n' "${archive_sha256}"
+  printf 'size_bytes=%s\n' "${archive_size_bytes}"
+  printf 'source_objects=%s\n' "${source_object_count}"
+  printf 'restored_objects=%s\n' "${restored_object_count}"
+  printf 'restore_verified=true\n'
+  printf 'postgres_version=%s\n' "${postgres_version}"
+} > "${partial_marker}"
+mv -- "${partial_marker}" "${backup_root}/last-success"
+partial_marker=""
+
+while IFS= read -r -d '' expired_archive; do
+  rm -f -- "${expired_archive}" "${expired_archive}.sha256"
+done < <(
+  find "${backup_root}" \
+    -maxdepth 1 \
+    -type f \
+    -name 'academy-*.dump' \
+    -mtime "+${retention_days}" \
+    -print0
+)
+
+find "${backup_root}" \
+  -maxdepth 1 \
+  -type f \
+  -name 'academy-*.dump.sha256' \
+  -mtime "+${retention_days}" \
+  -delete
+
+printf 'Резервная копия проверена восстановлением: %s (%s байт).\n' \
+  "${archive_basename}" \
+  "${archive_size_bytes}"
