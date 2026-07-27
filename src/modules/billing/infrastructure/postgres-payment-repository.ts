@@ -6,9 +6,11 @@ import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
   PaymentRepository,
+  ReserveCheckoutInput,
   SaveCheckoutInput,
 } from "../application/payment-repository";
 import type {
+  CheckoutReservation,
   OrderStatus,
   PaymentProviderId,
   PaymentStatus,
@@ -32,9 +34,27 @@ type CheckoutRow = {
   external_payment_id: string;
   payment_status: PaymentStatus;
   confirmation_url: string | null;
-  payment_method_token: string | null;
-  recurring_consent_accepted_at: Date;
-  recurring_consent_offer_version: string;
+  offer_accepted_at: Date;
+  offer_version: string;
+  receipt_email: string | null;
+  receipt_phone: string | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type CheckoutReservationRow = {
+  order_id: string;
+  customer_id: string;
+  plan_id: SubscriptionPlanId;
+  legal_entity_id: string;
+  country_code: string;
+  merchant_account_id: string;
+  amount_minor: string;
+  currency: "RUB";
+  idempotency_key: string;
+  selected_provider: PaymentProviderId;
+  offer_accepted_at: Date;
+  offer_version: string;
   receipt_email: string | null;
   receipt_phone: string | null;
   created_at: Date;
@@ -75,11 +95,8 @@ function mapCheckoutRow(row: CheckoutRow): StoredCheckout {
     externalPaymentId: row.external_payment_id,
     status: row.payment_status,
     confirmationUrl: row.confirmation_url ?? "",
-    paymentMethodToken: row.payment_method_token ?? undefined,
-    recurringConsentAcceptedAt:
-      row.recurring_consent_accepted_at.toISOString(),
-    recurringConsentOfferVersion:
-      row.recurring_consent_offer_version,
+    offerAcceptedAt: row.offer_accepted_at.toISOString(),
+    offerVersion: row.offer_version,
     receiptContact: {
       email: row.receipt_email ?? undefined,
       phone: row.receipt_phone ?? undefined,
@@ -105,9 +122,8 @@ const checkoutSelect = `
     payments.external_payment_id,
     payments.status AS payment_status,
     payments.confirmation_url,
-    payments.payment_method_token,
-    orders.recurring_consent_accepted_at,
-    orders.recurring_consent_offer_version,
+    orders.offer_accepted_at,
+    orders.offer_version,
     orders.receipt_email,
     orders.receipt_phone,
     orders.created_at,
@@ -121,6 +137,66 @@ const checkoutSelect = `
     LIMIT 1
   ) payments ON true
 `;
+
+const reservationSelect = `
+  SELECT
+    orders.id AS order_id,
+    orders.customer_id,
+    orders.plan_id,
+    orders.legal_entity_id,
+    orders.country_code,
+    orders.merchant_account_id,
+    orders.amount_minor,
+    orders.currency,
+    orders.idempotency_key,
+    orders.selected_provider,
+    orders.offer_accepted_at,
+    orders.offer_version,
+    orders.receipt_email,
+    orders.receipt_phone,
+    orders.created_at,
+    orders.updated_at
+  FROM billing_orders orders
+`;
+
+function mapReservationRow(
+  row: CheckoutReservationRow,
+): CheckoutReservation {
+  return {
+    orderId: row.order_id,
+    customerId: row.customer_id,
+    planId: row.plan_id,
+    legalEntityId: row.legal_entity_id,
+    countryCode: row.country_code,
+    merchantAccountId: row.merchant_account_id,
+    money: {
+      amountMinor: Number(row.amount_minor),
+      currency: row.currency,
+    },
+    idempotencyKey: row.idempotency_key,
+    provider: row.selected_provider,
+    offerAcceptedAt: row.offer_accepted_at.toISOString(),
+    offerVersion: row.offer_version,
+    receiptContact: {
+      email: row.receipt_email ?? undefined,
+      phone: row.receipt_phone ?? undefined,
+    },
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+async function findReservationByIdempotencyKey(
+  client: Pool | PoolClient,
+  idempotencyKey: string,
+) {
+  const result = await client.query<CheckoutReservationRow>(
+    `${reservationSelect} WHERE orders.idempotency_key = $1 LIMIT 1`,
+    [idempotencyKey],
+  );
+
+  return result.rows[0] ? mapReservationRow(result.rows[0]) : null;
+}
 
 async function findByIdempotencyKey(
   client: Pool | PoolClient,
@@ -159,52 +235,6 @@ async function activateSubscription(
   checkout: StoredCheckout,
   activatedAt: Date,
 ) {
-  let mandateId: string | null = null;
-
-  if (checkout.paymentMethodToken) {
-    const mandateResult = await client.query<{ id: string }>(
-      `
-        INSERT INTO billing_payment_mandates (
-          id,
-          customer_id,
-          provider,
-          merchant_account_id,
-          provider_payment_method_token,
-          status,
-          consent_accepted_at,
-          consent_offer_version,
-          activated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8)
-        ON CONFLICT (
-          provider,
-          merchant_account_id,
-          provider_payment_method_token
-        )
-        DO UPDATE SET
-          status = 'active',
-          activated_at = COALESCE(
-            billing_payment_mandates.activated_at,
-            EXCLUDED.activated_at
-          ),
-          revoked_at = NULL,
-          updated_at = now()
-        RETURNING id
-      `,
-      [
-        randomUUID(),
-        checkout.customerId,
-        checkout.provider,
-        checkout.merchantAccountId,
-        checkout.paymentMethodToken,
-        checkout.recurringConsentAcceptedAt,
-        checkout.recurringConsentOfferVersion,
-        activatedAt,
-      ],
-    );
-    mandateId = mandateResult.rows[0].id;
-  }
-
   const existing = await client.query<{
     id: string;
     current_period_end: Date | null;
@@ -240,9 +270,9 @@ async function activateSubscription(
           status = 'active',
           current_period_start = $3,
           current_period_end = $4,
-          auto_renew = true,
-          mandate_id = COALESCE($5, mandate_id),
-          activated_by_order_id = $6,
+          auto_renew = false,
+          mandate_id = NULL,
+          activated_by_order_id = $5,
           cancel_at_period_end = false,
           canceled_at = NULL,
           updated_at = now()
@@ -253,7 +283,6 @@ async function activateSubscription(
         checkout.planId,
         periodStart,
         periodEnd,
-        mandateId,
         checkout.orderId,
       ],
     );
@@ -271,7 +300,7 @@ async function activateSubscription(
           mandate_id,
           activated_by_order_id
         )
-        VALUES ($1, $2, $3, 'active', $4, $5, true, $6, $7)
+        VALUES ($1, $2, $3, 'active', $4, $5, false, NULL, $6)
       `,
       [
         randomUUID(),
@@ -279,7 +308,6 @@ async function activateSubscription(
         checkout.planId,
         periodStart,
         periodEnd,
-        mandateId,
         checkout.orderId,
       ],
     );
@@ -288,6 +316,73 @@ async function activateSubscription(
 
 export class PostgresPaymentRepository implements PaymentRepository {
   constructor(private readonly pool: Pool) {}
+
+  async findCheckoutReservationByIdempotencyKey(
+    idempotencyKey: string,
+  ) {
+    return findReservationByIdempotencyKey(
+      this.pool,
+      idempotencyKey,
+    );
+  }
+
+  async reserveCheckout(input: ReserveCheckoutInput) {
+    await this.pool.query(
+      `
+        INSERT INTO billing_orders (
+          id,
+          customer_id,
+          plan_id,
+          legal_entity_id,
+          country_code,
+          amount_minor,
+          currency,
+          status,
+          idempotency_key,
+          selected_provider,
+          merchant_account_id,
+          offer_accepted_at,
+          offer_version,
+          receipt_email,
+          receipt_phone,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
+          $12, $13, $14, $15, $15
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `,
+      [
+        input.orderId,
+        input.customerId,
+        input.planId,
+        input.legalEntityId,
+        input.countryCode,
+        input.money.amountMinor,
+        input.money.currency,
+        input.idempotencyKey,
+        input.provider,
+        input.merchantAccountId,
+        input.offerAcceptedAt,
+        input.offerVersion,
+        input.receiptContact.email ?? null,
+        input.receiptContact.phone ?? null,
+        input.createdAt,
+      ],
+    );
+    const reservation = await findReservationByIdempotencyKey(
+      this.pool,
+      input.idempotencyKey,
+    );
+
+    if (!reservation) {
+      throw new Error("Не удалось зарезервировать заказ");
+    }
+
+    return reservation;
+  }
 
   async findCheckoutByIdempotencyKey(idempotencyKey: string) {
     return findByIdempotencyKey(this.pool, idempotencyKey);
@@ -298,51 +393,20 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
     try {
       await client.query("BEGIN");
-      await client.query(
+      const reservedOrder = await client.query<{ id: string }>(
         `
-          INSERT INTO billing_orders (
-            id,
-            customer_id,
-            plan_id,
-            legal_entity_id,
-            country_code,
-            amount_minor,
-            currency,
-            status,
-            idempotency_key,
-            selected_provider,
-            merchant_account_id,
-            recurring_consent_accepted_at,
-            recurring_consent_offer_version,
-            receipt_email,
-            receipt_phone,
-            created_at,
-            updated_at
-          )
-          VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, $16
-          )
+          SELECT id
+          FROM billing_orders
+          WHERE id = $1 AND idempotency_key = $2
+          FOR UPDATE
         `,
-        [
-          input.orderId,
-          input.customerId,
-          input.planId,
-          input.legalEntityId,
-          input.countryCode,
-          input.money.amountMinor,
-          input.money.currency,
-          orderStatusForPayment(input.status),
-          input.idempotencyKey,
-          input.provider,
-          input.merchantAccountId,
-          input.recurringConsentAcceptedAt,
-          input.recurringConsentOfferVersion,
-          input.receiptContact.email ?? null,
-          input.receiptContact.phone ?? null,
-          input.createdAt,
-        ],
+        [input.orderId, input.idempotencyKey],
       );
+
+      if (!reservedOrder.rowCount) {
+        throw new Error("Зарезервированный заказ не найден");
+      }
+
       await client.query(
         `
           INSERT INTO billing_payments (
@@ -356,14 +420,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
             amount_minor,
             currency,
             confirmation_url,
-            payment_method_token,
             paid_at,
             created_at,
             updated_at
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $13
+            $12
           )
         `,
         [
@@ -377,10 +440,17 @@ export class PostgresPaymentRepository implements PaymentRepository {
           input.money.amountMinor,
           input.money.currency,
           input.confirmationUrl,
-          input.paymentMethodToken ?? null,
           input.status === "succeeded" ? input.updatedAt : null,
           input.createdAt,
         ],
+      );
+      await client.query(
+        `
+          UPDATE billing_orders
+          SET status = $2, updated_at = now()
+          WHERE id = $1
+        `,
+        [input.orderId, orderStatusForPayment(input.status)],
       );
       await client.query(
         `
@@ -522,8 +592,6 @@ export class PostgresPaymentRepository implements PaymentRepository {
       const updatedCheckout: StoredCheckout = {
         ...checkout,
         status: input.status,
-        paymentMethodToken:
-          input.paymentMethodToken ?? checkout.paymentMethodToken,
         updatedAt: new Date().toISOString(),
       };
 
@@ -532,9 +600,8 @@ export class PostgresPaymentRepository implements PaymentRepository {
           UPDATE billing_payments
           SET
             status = $2,
-            payment_method_token = COALESCE($3, payment_method_token),
             paid_at = CASE
-              WHEN $2 = 'succeeded' THEN COALESCE(paid_at, $4)
+              WHEN $2 = 'succeeded' THEN COALESCE(paid_at, $3)
               ELSE paid_at
             END,
             updated_at = now()
@@ -543,7 +610,6 @@ export class PostgresPaymentRepository implements PaymentRepository {
         [
           checkout.paymentId,
           input.status,
-          input.paymentMethodToken ?? null,
           input.occurredAt,
         ],
       );

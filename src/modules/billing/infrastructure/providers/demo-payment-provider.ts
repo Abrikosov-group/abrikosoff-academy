@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { BillingError } from "../../domain/errors";
 import type {
-  ChargeSavedMethodInput,
   CreateProviderCheckoutInput,
   PaymentProvider,
   ProviderPayment,
@@ -41,30 +40,6 @@ export class DemoPaymentProvider implements PaymentProvider {
       status: "succeeded",
       money: input.plan.price,
       confirmationUrl: confirmationUrl.toString(),
-      paymentMethodToken: deterministicId(
-        "demo_method",
-        input.customerId,
-      ),
-      paymentMethodReusable: input.savePaymentMethod,
-      paidAt: new Date().toISOString(),
-    };
-
-    getDemoPaymentRegistry().set(payment.externalPaymentId, payment);
-    return payment;
-  }
-
-  async chargeSavedMethod(
-    input: ChargeSavedMethodInput,
-  ): Promise<ProviderPayment> {
-    const payment: ProviderPayment = {
-      externalPaymentId: deterministicId(
-        "demo_payment",
-        input.idempotencyKey,
-      ),
-      status: "succeeded",
-      money: input.plan.price,
-      paymentMethodToken: input.paymentMethodToken,
-      paymentMethodReusable: true,
       paidAt: new Date().toISOString(),
     };
 

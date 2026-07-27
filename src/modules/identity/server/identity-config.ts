@@ -1,6 +1,6 @@
 import "server-only";
 
-export const privacyDocumentVersion = "2026-07-27";
+export const privacyDocumentVersion = "2026-07-28";
 
 export type IdentityConfig = {
   demoAuthEnabled: boolean;

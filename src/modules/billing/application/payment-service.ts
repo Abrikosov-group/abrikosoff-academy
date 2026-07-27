@@ -3,6 +3,7 @@ import { getSubscriptionPlan } from "../domain/catalog";
 import { BillingError } from "../domain/errors";
 import type {
   CheckoutCommand,
+  CheckoutReservation,
   CheckoutResult,
   StoredCheckout,
 } from "../domain/types";
@@ -25,7 +26,7 @@ function toCheckoutResult(checkout: StoredCheckout): CheckoutResult {
 }
 
 function assertCheckoutMatchesCommand(
-  checkout: StoredCheckout,
+  checkout: CheckoutReservation,
   command: CheckoutCommand,
 ) {
   if (
@@ -57,33 +58,66 @@ export class PaymentService {
     }
 
     const plan = getSubscriptionPlan(command.planId);
-    const { provider, route } = this.options.router.resolve({
-      legalEntityId: command.legalEntityId,
-      countryCode: command.countryCode,
-      currency: plan.price.currency,
-    });
-    const orderId = randomUUID();
-    const paymentId = randomUUID();
+    const reservedAt = new Date().toISOString();
+    let reservation =
+      await this.options.repository.findCheckoutReservationByIdempotencyKey(
+        command.idempotencyKey,
+      );
+
+    if (!reservation) {
+      const { provider: routedProvider, route } =
+        this.options.router.resolve({
+          legalEntityId: command.legalEntityId,
+          countryCode: command.countryCode,
+          currency: plan.price.currency,
+        });
+
+      reservation = await this.options.repository.reserveCheckout({
+        orderId: randomUUID(),
+        customerId: command.customerId,
+        planId: command.planId,
+        legalEntityId: command.legalEntityId,
+        countryCode: command.countryCode,
+        merchantAccountId: route.merchantAccountId,
+        money: plan.price,
+        idempotencyKey: command.idempotencyKey,
+        provider: routedProvider.id,
+        offerAcceptedAt: command.offerAcceptance.acceptedAt,
+        offerVersion: command.offerAcceptance.offerVersion,
+        receiptContact: command.receiptContact,
+        createdAt: reservedAt,
+        updatedAt: reservedAt,
+      });
+    }
+
+    assertCheckoutMatchesCommand(reservation, command);
+
+    const provider = this.options.router.getProvider(
+      reservation.provider,
+    );
+    const reservedPlan = {
+      ...plan,
+      price: reservation.money,
+    };
     const returnUrl = new URL("/payment/success", command.publicBaseUrl);
-    returnUrl.searchParams.set("orderId", orderId);
+    returnUrl.searchParams.set("orderId", reservation.orderId);
     returnUrl.searchParams.set("plan", command.planId);
     returnUrl.searchParams.set("provider", provider.id);
 
     const providerPayment = await provider.createCheckout({
-      orderId,
+      orderId: reservation.orderId,
       customerId: command.customerId,
       legalEntityId: command.legalEntityId,
-      merchantAccountId: route.merchantAccountId,
-      plan,
-      receiptContact: command.receiptContact,
-      savePaymentMethod: true,
+      merchantAccountId: reservation.merchantAccountId,
+      plan: reservedPlan,
+      receiptContact: reservation.receiptContact,
       idempotencyKey: command.idempotencyKey,
       returnUrl: returnUrl.toString(),
     });
 
     if (
-      providerPayment.money.amountMinor !== plan.price.amountMinor ||
-      providerPayment.money.currency !== plan.price.currency
+      providerPayment.money.amountMinor !== reservation.money.amountMinor ||
+      providerPayment.money.currency !== reservation.money.currency
     ) {
       throw new BillingError(
         "PROVIDER_REQUEST_FAILED",
@@ -92,29 +126,14 @@ export class PaymentService {
       );
     }
 
-    const now = new Date().toISOString();
     const stored = await this.options.repository.saveCheckout({
-      orderId,
-      paymentId,
-      customerId: command.customerId,
-      planId: command.planId,
-      legalEntityId: command.legalEntityId,
-      countryCode: command.countryCode,
-      merchantAccountId: route.merchantAccountId,
-      money: plan.price,
-      idempotencyKey: command.idempotencyKey,
-      provider: provider.id,
+      ...reservation,
+      paymentId: randomUUID(),
       externalPaymentId: providerPayment.externalPaymentId,
       status: providerPayment.status,
       confirmationUrl:
         providerPayment.confirmationUrl ?? returnUrl.toString(),
-      paymentMethodToken: providerPayment.paymentMethodToken,
-      recurringConsentAcceptedAt: command.recurringConsent.acceptedAt,
-      recurringConsentOfferVersion:
-        command.recurringConsent.offerVersion,
-      receiptContact: command.receiptContact,
-      createdAt: now,
-      updatedAt: now,
+      updatedAt: new Date().toISOString(),
     });
 
     assertCheckoutMatchesCommand(stored, command);
@@ -139,7 +158,6 @@ export class PaymentService {
       eventType: event.eventType,
       externalPaymentId: event.externalPaymentId,
       status: event.payment.status,
-      paymentMethodToken: event.payment.paymentMethodToken,
       occurredAt: event.occurredAt,
       payloadSha256,
       payload: event.rawPayload,

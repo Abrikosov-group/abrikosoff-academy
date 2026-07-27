@@ -20,7 +20,6 @@ export function CheckoutButton({
   );
   const [processing, setProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const annual = plan === "annual";
 
   async function startPayment() {
     if (processing || !accepted) return;
@@ -48,7 +47,7 @@ export function CheckoutButton({
         },
         body: JSON.stringify({
           plan,
-          recurringConsent: true,
+          offerAccepted: true,
           receiptEmail: receiptEmail || undefined,
         }),
       });
@@ -104,10 +103,12 @@ export function CheckoutButton({
           type="checkbox"
         />
         <span>
-          Принимаю <Link href="/terms">оферту</Link> и соглашаюсь на
-          автоматическое продление с периодическим списанием{" "}
-          {annual ? "14 000 ₽ каждые 12 месяцев" : "1 500 ₽ каждый месяц"}.
-          Продление можно отключить в любой момент.
+          Принимаю <Link href="/terms">оферту</Link> и подтверждаю разовую
+          оплату{" "}
+          {plan === "annual"
+            ? "14 000 ₽ за 12 месяцев"
+            : "1 500 ₽ за 1 месяц"}{" "}
+          доступа. Автоматического продления и повторных списаний нет.
         </span>
       </label>
       <button

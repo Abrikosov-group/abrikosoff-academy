@@ -15,7 +15,6 @@ type LoginPanelProps = {
   emailAuthEnabled: boolean;
   telegram?: {
     botUsername: string;
-    authUrl: string;
   };
 };
 
@@ -190,7 +189,7 @@ export function LoginPanel({
       ) : telegram && privacyAccepted ? (
         <TelegramLoginWidget
           botUsername={telegram.botUsername}
-          authUrl={telegram.authUrl}
+          plan={plan}
         />
       ) : (
         <button

@@ -12,7 +12,6 @@ function createUnusedProvider(id: PaymentProviderId): PaymentProvider {
   return {
     id,
     createCheckout: unused,
-    chargeSavedMethod: unused,
     refund: unused,
     getPayment: unused,
     parseAndVerifyWebhook: unused,

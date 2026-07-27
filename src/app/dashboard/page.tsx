@@ -4,6 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { TelegramLogoIcon } from "@phosphor-icons/react/dist/ssr";
 import { getDatabasePool } from "@/lib/database";
+import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
@@ -39,7 +40,11 @@ export default async function DashboardPage() {
     getDatabasePool(),
     user.id,
   );
-  const subscriptionActive = subscription?.status === "active";
+  const subscriptionActive =
+    hasCurrentSubscriptionAccess(subscription);
+  const subscriptionEnded = Boolean(
+    subscription?.currentPeriodEnd && !subscriptionActive,
+  );
   const periodEnd = subscription?.currentPeriodEnd
     ? new Intl.DateTimeFormat("ru-RU", {
         day: "numeric",
@@ -69,7 +74,11 @@ export default async function DashboardPage() {
               subscriptionActive ? "badge-success" : "badge-neutral"
             }`}
           >
-            {subscriptionActive ? "Подписка активна" : "Нет подписки"}
+            {subscriptionActive
+              ? "Подписка активна"
+              : subscriptionEnded
+                ? "Доступ завершён"
+                : "Нет подписки"}
           </span>
           <span className="header-avatar">{initials}</span>
         </div>
@@ -134,7 +143,11 @@ export default async function DashboardPage() {
                     subscriptionActive ? "badge-success" : "badge-neutral"
                   }`}
                 >
-                  {subscriptionActive ? "Активна" : "Не оформлена"}
+                  {subscriptionActive
+                    ? "Активна"
+                    : subscriptionEnded
+                      ? "Завершена"
+                      : "Не оформлена"}
                 </span>
               </header>
               {subscriptionActive ? (
@@ -142,21 +155,22 @@ export default async function DashboardPage() {
                   {subscription?.planId === "annual"
                     ? "Годовой тариф"
                     : "Месячный тариф"}{" "}
-                  · следующее списание
+                  · доступ до
                   <br />
                   <strong>
-                    {periodEnd} ·{" "}
-                    {subscription?.planId === "annual"
-                      ? "14 000 ₽"
-                      : "1 500 ₽"}
+                    {periodEnd} · без повторного списания
                   </strong>
                 </p>
               ) : (
-                <p>Выберите тариф, чтобы открыть все курсы Академии.</p>
+                <p>
+                  {subscriptionEnded
+                    ? `Оплаченный период завершён ${periodEnd}. Выберите тариф, чтобы снова открыть курсы.`
+                    : "Выберите тариф, чтобы открыть все курсы Академии."}
+                </p>
               )}
               <Link href="/pricing">
                 {subscriptionActive
-                  ? "Управлять подпиской"
+                  ? "Посмотреть тарифы"
                   : "Выбрать тариф"}
               </Link>
               <div className="cabinet-total-progress">

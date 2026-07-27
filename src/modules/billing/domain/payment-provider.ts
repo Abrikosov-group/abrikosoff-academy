@@ -13,19 +13,8 @@ export type CreateProviderCheckoutInput = {
   merchantAccountId: string;
   plan: SubscriptionPlan;
   receiptContact: ReceiptContact;
-  savePaymentMethod: boolean;
   idempotencyKey: string;
   returnUrl: string;
-};
-
-export type ChargeSavedMethodInput = {
-  orderId: string;
-  customerId: string;
-  merchantAccountId: string;
-  paymentMethodToken: string;
-  plan: SubscriptionPlan;
-  receiptContact: ReceiptContact;
-  idempotencyKey: string;
 };
 
 export type RefundProviderPaymentInput = {
@@ -41,8 +30,6 @@ export type ProviderPayment = {
   status: PaymentStatus;
   money: Money;
   confirmationUrl?: string;
-  paymentMethodToken?: string;
-  paymentMethodReusable?: boolean;
   paidAt?: string;
 };
 
@@ -67,10 +54,6 @@ export interface PaymentProvider {
 
   createCheckout(
     input: CreateProviderCheckoutInput,
-  ): Promise<ProviderPayment>;
-
-  chargeSavedMethod(
-    input: ChargeSavedMethodInput,
   ): Promise<ProviderPayment>;
 
   refund(

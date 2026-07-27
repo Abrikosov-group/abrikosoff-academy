@@ -2,15 +2,18 @@ import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
   PaymentRepository,
+  ReserveCheckoutInput,
   SaveCheckoutInput,
 } from "../application/payment-repository";
 import type {
+  CheckoutReservation,
   OrderStatus,
   PaymentStatus,
   StoredCheckout,
 } from "../domain/types";
 
 type RepositoryState = {
+  reservationsByIdempotencyKey: Map<string, CheckoutReservation>;
   checkoutsByIdempotencyKey: Map<string, StoredCheckout>;
   checkoutKeyByExternalPayment: Map<string, string>;
   processedEvents: Set<string>;
@@ -43,6 +46,33 @@ function orderStatusForPayment(status: PaymentStatus): OrderStatus {
 
 export class InMemoryPaymentRepository implements PaymentRepository {
   constructor(private readonly state: RepositoryState) {}
+
+  async findCheckoutReservationByIdempotencyKey(
+    idempotencyKey: string,
+  ) {
+    return (
+      this.state.reservationsByIdempotencyKey.get(idempotencyKey) ??
+      null
+    );
+  }
+
+  async reserveCheckout(
+    input: ReserveCheckoutInput,
+  ): Promise<CheckoutReservation> {
+    const existing = this.state.reservationsByIdempotencyKey.get(
+      input.idempotencyKey,
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    this.state.reservationsByIdempotencyKey.set(
+      input.idempotencyKey,
+      input,
+    );
+    return input;
+  }
 
   async findCheckoutByIdempotencyKey(
     idempotencyKey: string,
@@ -115,8 +145,6 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     const updated: StoredCheckout = {
       ...checkout,
       status: input.status,
-      paymentMethodToken:
-        input.paymentMethodToken ?? checkout.paymentMethodToken,
       updatedAt: new Date().toISOString(),
     };
 
@@ -141,11 +169,14 @@ export function getInMemoryPaymentRepository() {
   const globalScope = globalThis as GlobalWithBillingRepository;
 
   globalScope.__academyBillingRepositoryState ??= {
+    reservationsByIdempotencyKey: new Map(),
     checkoutsByIdempotencyKey: new Map(),
     checkoutKeyByExternalPayment: new Map(),
     processedEvents: new Set(),
     orderStatuses: new Map(),
   };
+  globalScope.__academyBillingRepositoryState.reservationsByIdempotencyKey ??=
+    new Map();
 
   return new InMemoryPaymentRepository(
     globalScope.__academyBillingRepositoryState,

@@ -2,6 +2,7 @@ import { isSubscriptionPlanId } from "@/modules/billing/domain/catalog";
 import { BillingError } from "@/modules/billing/domain/errors";
 import {
   academyLegalEntityId,
+  offerDocumentVersion,
   resolvePublicBaseUrl,
 } from "@/modules/billing/server/billing-config";
 import { getPaymentRuntime } from "@/modules/billing/server/get-payment-service";
@@ -16,7 +17,7 @@ export const runtime = "nodejs";
 type CheckoutRequestBody = {
   plan?: unknown;
   receiptEmail?: unknown;
-  recurringConsent?: unknown;
+  offerAccepted?: unknown;
 };
 
 function validateIdempotencyKey(value: string | null) {
@@ -82,10 +83,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (body.recurringConsent !== true) {
+    if (body.offerAccepted !== true) {
       throw new BillingError(
         "INVALID_REQUEST",
-        "Подтвердите условия подписки и автоматического продления.",
+        "Подтвердите условия разовой оплаты доступа.",
         400,
       );
     }
@@ -102,9 +103,9 @@ export async function POST(request: Request) {
       receiptContact: {
         email: receiptEmail ?? user.receiptEmail,
       },
-      recurringConsent: {
+      offerAcceptance: {
         acceptedAt: new Date().toISOString(),
-        offerVersion: "2026-07-27",
+        offerVersion: offerDocumentVersion,
       },
       idempotencyKey,
       publicBaseUrl: resolvePublicBaseUrl(request.url, config),

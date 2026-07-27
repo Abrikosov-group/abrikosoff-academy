@@ -3,7 +3,6 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { BillingError } from "../../domain/errors";
 import type {
-  ChargeSavedMethodInput,
   CreateProviderCheckoutInput,
   PaymentProvider,
   ProviderPayment,
@@ -148,14 +147,9 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
   }
 
   const confirmation = asRecord(payment.confirmation);
-  const paymentMethod = asRecord(payment.payment_method);
   const confirmationUrl =
     confirmation && typeof confirmation.confirmation_url === "string"
       ? confirmation.confirmation_url
-      : undefined;
-  const paymentMethodToken =
-    paymentMethod && typeof paymentMethod.id === "string"
-      ? paymentMethod.id
       : undefined;
   const paidAt =
     typeof payment.captured_at === "string"
@@ -169,9 +163,6 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
     status: mapPaymentStatus(requiredString(payment, "status")),
     money: parseMoney(payment.amount),
     confirmationUrl,
-    paymentMethodToken,
-    paymentMethodReusable:
-      paymentMethod?.saved === true && Boolean(paymentMethodToken),
     paidAt,
   };
 }
@@ -266,7 +257,7 @@ export class YooKassaPaymentProvider implements PaymentProvider {
             type: "redirect",
             return_url: input.returnUrl,
           },
-          save_payment_method: input.savePaymentMethod,
+          save_payment_method: false,
           description: `${input.plan.title} — Академия Абрикософф`,
           receipt: buildReceipt(input.plan, input.receiptContact),
           metadata: {
@@ -274,32 +265,6 @@ export class YooKassaPaymentProvider implements PaymentProvider {
             customer_id: input.customerId,
             plan_id: input.plan.id,
             legal_entity_id: input.legalEntityId,
-          },
-        }),
-      },
-      input.idempotencyKey,
-    );
-
-    return parseProviderPayment(payload);
-  }
-
-  async chargeSavedMethod(
-    input: ChargeSavedMethodInput,
-  ): Promise<ProviderPayment> {
-    const payload = await this.request(
-      "/payments",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          amount: formatMoney(input.plan.price),
-          capture: true,
-          payment_method_id: input.paymentMethodToken,
-          description: `Продление: ${input.plan.title} — Академия Абрикософф`,
-          receipt: buildReceipt(input.plan, input.receiptContact),
-          metadata: {
-            internal_order_id: input.orderId,
-            customer_id: input.customerId,
-            plan_id: input.plan.id,
           },
         }),
       },

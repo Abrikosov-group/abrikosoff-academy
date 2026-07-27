@@ -3,10 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { LoginPanel } from "@/components/academy/login-panel";
-import {
-  getIdentityConfig,
-  privacyDocumentVersion,
-} from "@/modules/identity/server/identity-config";
+import { getIdentityConfig } from "@/modules/identity/server/identity-config";
 
 export const metadata: Metadata = {
   title: "Вход",
@@ -24,23 +21,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   let telegram:
     | {
         botUsername: string;
-        authUrl: string;
       }
     | undefined;
 
   if (identityConfig.telegram) {
-    const publicBaseUrl =
-      process.env.APP_BASE_URL?.trim() ||
-      "https://academy.abrikosoff.com";
-    const authUrl = new URL(
-      "/api/auth/telegram/callback",
-      publicBaseUrl,
-    );
-    authUrl.searchParams.set("plan", selectedPlan);
-    authUrl.searchParams.set("consent", privacyDocumentVersion);
     telegram = {
       botUsername: identityConfig.telegram.botUsername,
-      authUrl: authUrl.toString(),
     };
   }
 

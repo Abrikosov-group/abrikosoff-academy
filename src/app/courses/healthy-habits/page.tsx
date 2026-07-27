@@ -30,7 +30,7 @@ const sections = [
 const subscriptionBenefits = [
   "Вся библиотека курсов сразу",
   "Новые материалы без доплат",
-  "Отмена продления в один клик",
+  "Без автоматического продления",
 ];
 
 export default function HealthyHabitsPage() {

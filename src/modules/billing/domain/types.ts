@@ -47,7 +47,7 @@ export type CheckoutCommand = {
   countryCode: string;
   legalEntityId: string;
   receiptContact: ReceiptContact;
-  recurringConsent: {
+  offerAcceptance: {
     acceptedAt: string;
     offerVersion: string;
   };
@@ -63,7 +63,8 @@ export type CheckoutResult = {
   confirmationUrl: string;
 };
 
-export type StoredCheckout = CheckoutResult & {
+export type CheckoutReservation = {
+  orderId: string;
   customerId: string;
   planId: SubscriptionPlanId;
   legalEntityId: string;
@@ -71,14 +72,18 @@ export type StoredCheckout = CheckoutResult & {
   merchantAccountId: string;
   money: Money;
   idempotencyKey: string;
-  externalPaymentId: string;
-  paymentMethodToken?: string;
-  recurringConsentAcceptedAt: string;
-  recurringConsentOfferVersion: string;
+  provider: PaymentProviderId;
+  offerAcceptedAt: string;
+  offerVersion: string;
   receiptContact: ReceiptContact;
   createdAt: string;
   updatedAt: string;
 };
+
+export type StoredCheckout = CheckoutReservation &
+  Omit<CheckoutResult, "orderId" | "provider"> & {
+    externalPaymentId: string;
+  };
 
 export type ProviderRoute = {
   provider: PaymentProviderId;

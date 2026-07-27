@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDatabasePool } from "@/lib/database";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
+import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export async function getAccessContext() {
@@ -23,8 +24,6 @@ export async function getAccessContext() {
   return {
     user,
     subscription,
-    canReadCourses:
-      subscription?.status === "active" ||
-      subscription?.status === "grace_period",
+    canReadCourses: hasCurrentSubscriptionAccess(subscription),
   };
 }

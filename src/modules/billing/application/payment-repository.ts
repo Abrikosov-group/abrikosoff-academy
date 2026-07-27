@@ -1,9 +1,11 @@
 import type {
+  CheckoutReservation,
   PaymentProviderId,
   PaymentStatus,
   StoredCheckout,
 } from "../domain/types";
 
+export type ReserveCheckoutInput = CheckoutReservation;
 export type SaveCheckoutInput = StoredCheckout;
 
 export type ApplyPaymentEventInput = {
@@ -13,7 +15,6 @@ export type ApplyPaymentEventInput = {
   eventType: string;
   externalPaymentId: string;
   status: PaymentStatus;
-  paymentMethodToken?: string;
   occurredAt: string;
   payloadSha256: string;
   payload: unknown;
@@ -25,6 +26,14 @@ export type ApplyPaymentEventResult =
   | { outcome: "unmatched"; checkout: null };
 
 export interface PaymentRepository {
+  findCheckoutReservationByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<CheckoutReservation | null>;
+
+  reserveCheckout(
+    input: ReserveCheckoutInput,
+  ): Promise<CheckoutReservation>;
+
   findCheckoutByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<StoredCheckout | null>;

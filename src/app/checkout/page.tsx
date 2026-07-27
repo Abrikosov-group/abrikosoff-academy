@@ -42,16 +42,16 @@ export default async function CheckoutPage({
       : user.primaryMethod.type === "email"
         ? "электронная почта"
         : "телефон";
-  const renewalDate = addSubscriptionPeriod(
+  const accessEndDate = addSubscriptionPeriod(
     new Date(),
     selectedPlan,
   );
-  const renewalDateLabel = new Intl.DateTimeFormat("ru-RU", {
+  const accessEndDateLabel = new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "long",
     year: "numeric",
     timeZone: "Europe/Moscow",
-  }).format(renewalDate);
+  }).format(accessEndDate);
 
   return (
     <main className="checkout-page">
@@ -88,8 +88,8 @@ export default async function CheckoutPage({
           </div>
 
           <p className="checkout-account">
-            Аккаунт: <strong>{accountLabel}</strong> ({methodLabel}). Продлится
-            автоматически {renewalDateLabel} — напомним за 3 дня.
+            Аккаунт: <strong>{accountLabel}</strong> ({methodLabel}). Доступ
+            действует до {accessEndDateLabel}. Повторного списания не будет.
           </p>
 
           <CheckoutButton

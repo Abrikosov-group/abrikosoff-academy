@@ -9,7 +9,6 @@ import {
 import { PaymentProviderRouter } from "@/modules/billing/application/provider-router";
 import { PaymentService } from "@/modules/billing/application/payment-service";
 import type {
-  ChargeSavedMethodInput,
   CreateProviderCheckoutInput,
   PaymentProvider,
   ProviderPayment,
@@ -52,16 +51,6 @@ class PendingPaymentProvider implements PaymentProvider {
     };
     this.payments.set(payment.externalPaymentId, payment);
     return payment;
-  }
-
-  async chargeSavedMethod(
-    input: ChargeSavedMethodInput,
-  ): Promise<ProviderPayment> {
-    return {
-      externalPaymentId: `recurring_${input.idempotencyKey}`,
-      status: "pending",
-      money: input.plan.price,
-    };
   }
 
   async refund(input: RefundProviderPaymentInput) {
@@ -195,9 +184,9 @@ describe("Identity и Billing с PostgreSQL", () => {
       receiptContact: {
         email: "payer@example.test",
       },
-      recurringConsent: {
+      offerAcceptance: {
         acceptedAt: "2026-07-28T08:10:00.000Z",
-        offerVersion: "2026-07-27",
+        offerVersion: "2026-07-28",
       },
       idempotencyKey: "integration-checkout-001",
       publicBaseUrl: "https://academy.example.test",
@@ -235,7 +224,6 @@ describe("Identity и Billing с PostgreSQL", () => {
       eventType: "payment.succeeded",
       externalPaymentId: storedCheckout!.externalPaymentId,
       status: "succeeded" as const,
-      paymentMethodToken: "integration-method-001",
       occurredAt: "2026-07-28T08:15:00.000Z",
       payloadSha256: "a".repeat(64),
       payload: {
@@ -254,7 +242,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     expect(activeSubscription).toMatchObject({
       status: "active",
       planId: "monthly",
-      autoRenew: true,
+      autoRenew: false,
     });
     expect(activeSubscription?.currentPeriodEnd).toBeTruthy();
 
@@ -266,19 +254,29 @@ describe("Identity и Billing с PostgreSQL", () => {
       session.user.id,
     );
     const counts = await pool.query<{
+      mandates: string;
+      saved_payment_methods: string;
       subscriptions: string;
       webhooks: string;
     }>(
       `
         SELECT
           (SELECT count(*) FROM billing_subscriptions) AS subscriptions,
-          (SELECT count(*) FROM billing_webhook_events) AS webhooks
+          (SELECT count(*) FROM billing_webhook_events) AS webhooks,
+          (SELECT count(*) FROM billing_payment_mandates) AS mandates,
+          (
+            SELECT count(*)
+            FROM billing_payments
+            WHERE payment_method_token IS NOT NULL
+          ) AS saved_payment_methods
       `,
     );
 
     expect(duplicate.outcome).toBe("duplicate");
     expect(subscriptionAfterDuplicate?.currentPeriodEnd).toBe(periodEnd);
     expect(counts.rows[0]).toEqual({
+      mandates: "0",
+      saved_payment_methods: "0",
       subscriptions: "1",
       webhooks: "1",
     });

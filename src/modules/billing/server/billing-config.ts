@@ -9,6 +9,7 @@ import type {
 export type PaymentsMode = "demo" | "live" | "disabled";
 
 export const academyLegalEntityId = "ip-fedotova";
+export const offerDocumentVersion = "2026-07-28";
 
 export type BillingConfig = {
   mode: PaymentsMode;
