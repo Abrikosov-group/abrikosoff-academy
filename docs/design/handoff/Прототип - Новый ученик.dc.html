@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800&amp;family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8E1D3;font-family:'Golos Text',sans-serif;}
+a{color:#C2532F;} a:hover{color:#A84526;}
+@keyframes om-spin{to{transform:rotate(360deg)}}
+@keyframes om-bob{0%,100%{transform:translateY(2px)}50%{transform:translateY(-4px)}}
+</style>
+</helmet>
+<div data-screen-label="Прототип — Новый ученик" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:28px 16px 48px;box-sizing:border-box;">
+  <div style="width:390px;margin-bottom:14px;display:grid;gap:10px;">
+    <div style="display:flex;gap:6px;align-items:center;justify-content:space-between;">
+      <div style="display:flex;gap:6px;">
+        <div onClick="{{ setScenario1 }}" style="padding:7px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #C9BFA9;background:{{ tab1Bg }};color:{{ tab1Color }};">1 · Новый</div>
+        <div onClick="{{ setScenario2 }}" style="padding:7px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #C9BFA9;background:{{ tab2Bg }};color:{{ tab2Color }};">2 · Возвращение</div>
+        <div onClick="{{ setScenario3 }}" style="padding:7px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #C9BFA9;background:{{ tab3Bg }};color:{{ tab3Color }};">3 · Подписка</div>
+      </div>
+      <div onClick="{{ resetFlow }}" style="border:1.5px solid #14233C;color:#14233C;font-size:13px;font-weight:600;padding:7px 12px;border-radius:10px;background:#FFFFFF;cursor:pointer;">Сначала</div>
+    </div>
+    <div style="font-size:14px;font-weight:700;color:#14233C;">Шаг {{ stepNum }} из {{ stepTotal }} · {{ stepLabel }}</div>
+  </div>
+  <div style="width:390px;position:relative;background:#F6F0E7;border:1px solid #C9BFA9;border-radius:24px;overflow:hidden;box-shadow:0 24px 60px rgba(20,35,60,0.18);">
+
+    <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #E4DCCC;">
+          <div style="display:flex;align-items:center;gap:9px;"><svg width="28" height="28" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:16px;font-weight:800;color:#14233C;">Абрикософф</div></div>
+          <div onClick="{{ goLogin }}" style="font-size:14px;font-weight:600;color:#14233C;cursor:pointer;padding:8px 4px;">Войти</div>
+        </div>
+        <div style="padding:30px 20px 34px;">
+          <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия Абрикософф</div>
+          <div style="font-size:31px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.14;margin-top:10px;text-wrap:pretty;">Здоровые привычки — спокойно и по системе</div>
+          <div style="font-size:16px;color:#5E6A80;line-height:1.6;margin-top:12px;">Подписка на библиотеку практических курсов о привычках, здоровье и качестве жизни. Короткие текстовые уроки — в удобном темпе.</div>
+          <div style="display:grid;gap:10px;margin-top:22px;">
+            <div onClick="{{ goPricing }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;cursor:pointer;">Выбрать тариф</div>
+            <div onClick="{{ goPricing }}" style="border:1.5px solid #14233C;color:#14233C;font-size:16px;font-weight:600;padding:13px;border-radius:10px;text-align:center;background:#FFFFFF;cursor:pointer;">Смотреть первый курс</div>
+          </div>
+          <div style="font-size:13px;color:#8A8272;margin-top:10px;text-align:center;">От 1&nbsp;167&nbsp;₽ в месяц · отмена в один клик</div>
+          <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,35,60,0.06);margin-top:26px;">
+            <div style="height:130px;background:#FAF3E6;position:relative;overflow:hidden;"><div style="position:absolute;right:-70px;top:-70px;width:135px;height:135px;border:2px solid #D96C4A;border-radius:50%;"></div><span style="position:absolute;left:16px;top:13px;background:#F7E3DB;color:#A84526;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Первый курс</span><div style="position:absolute;left:16px;bottom:12px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#C2532F;font-weight:600;">Курс Академии</div></div>
+            <div style="padding:16px;"><div style="font-size:17px;font-weight:700;color:#14233C;">Здоровые привычки</div><div style="font-size:14px;color:#5E6A80;line-height:1.5;margin-top:4px;">Система на каждый день: сон, питание, движение и внимание.</div><div style="font-size:13px;color:#8A8272;margin-top:10px;">12 уроков · 6 разделов</div></div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isPricing }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #E4DCCC;"><div onClick="{{ goHome }}" style="cursor:pointer;display:flex;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="font-size:16px;font-weight:700;color:#14233C;">Подписка</div></div>
+        <div style="padding:24px 20px 34px;">
+          <div style="font-size:24px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Один тариф — вся Академия</div>
+          <div style="border:2px solid #C2532F;border-radius:14px;padding:22px 20px;position:relative;background:#FFFFFF;box-shadow:0 4px 12px rgba(20,35,60,0.08);margin-top:22px;">
+            <span style="position:absolute;top:-12px;left:18px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+            <div style="font-size:15px;font-weight:600;color:#14233C;margin-top:6px;">Годовой</div>
+            <div style="font-size:32px;font-weight:800;color:#14233C;letter-spacing:-0.015em;margin-top:2px;">14&nbsp;000&nbsp;₽<span style="font-size:15px;font-weight:500;color:#5E6A80;"> / год</span></div>
+            <div style="font-size:14px;color:#5E6A80;margin-top:4px;">≈ 1&nbsp;167&nbsp;₽ в месяц вместо 1&nbsp;500&nbsp;₽</div>
+            <div onClick="{{ goLogin }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;margin-top:16px;cursor:pointer;">Продолжить с годовым</div>
+          </div>
+          <div style="border:1px solid #E4DCCC;border-radius:14px;padding:20px;background:#FFFFFF;margin-top:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;"><div style="font-size:15px;font-weight:600;color:#14233C;">Месячный</div><div style="font-size:24px;font-weight:800;color:#14233C;">1&nbsp;500&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;"> / мес</span></div></div>
+            <div onClick="{{ goLogin }}" style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;background:#FFFFFF;margin-top:14px;cursor:pointer;">Выбрать месячный</div>
+          </div>
+          <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:13px 15px;margin-top:16px;font-size:13px;color:#26334B;line-height:1.55;">Продление отключается в один клик — доступ сохранится до конца оплаченного периода.</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="padding:18px 20px 0;"><div onClick="{{ goPricing }}" style="cursor:pointer;display:inline-flex;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+        <div style="padding:10px 24px 40px;">
+          <div style="display:flex;justify-content:center;"><svg width="52" height="52" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg></div>
+          <div style="font-size:25px;font-weight:800;color:#14233C;letter-spacing:-0.015em;text-align:center;margin-top:12px;">Вход в Академию</div>
+          <div style="font-size:14.5px;color:#5E6A80;text-align:center;line-height:1.55;margin-top:8px;">{{ loginContext }}</div>
+          <sc-if value="{{ emailSent }}" hint-placeholder-val="{{ false }}">
+            <div style="text-align:center;margin-top:24px;">
+              <div style="width:60px;height:60px;border-radius:50%;background:#E7F0E9;display:flex;align-items:center;justify-content:center;margin:0 auto;"><svg width="28" height="28" viewBox="0 0 24 24"><path d="M4 7.5 12 13l8-5.5M5 6h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 6Z" fill="none" stroke="#3E7A54" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+              <div style="font-size:19px;font-weight:800;color:#14233C;margin-top:12px;">Проверьте почту</div>
+              <div style="font-size:14px;color:#5E6A80;line-height:1.6;margin-top:8px;">Ссылка отправлена на an···@example.ru<br>и действует 15 минут.</div>
+              <div onClick="{{ openEmailLink }}" style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 22px;border-radius:10px;display:inline-block;margin-top:16px;cursor:pointer;">Открыть ссылку из письма · демо</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ emailNotSent }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;gap:10px;margin-top:24px;">
+              <div onClick="{{ loginTelegram }}" style="background:#229ED9;color:#FFFFFF;font-size:15.5px;font-weight:600;padding:14px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="#FFFFFF" d="M21.9 4.6 18.6 19.2c-.2 1-.9 1.2-1.8.8l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1L18 6.1c.4-.4-.1-.6-.6-.2L6 13.2 1.1 11.7c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.6.2 1.4 1.6Z"></path></svg>Войти через Telegram</div>
+              <div style="display:flex;align-items:center;gap:12px;margin:6px 0;"><div style="flex:1;height:1px;background:#E4DCCC;"></div><div style="font-size:12.5px;color:#8A8272;">или по почте</div><div style="flex:1;height:1px;background:#E4DCCC;"></div></div>
+              <div style="border:1.5px solid #D8CFBE;border-radius:10px;background:#FFFFFF;padding:13px 14px;font-size:16px;color:#9A9284;">name@example.ru</div>
+              <div onClick="{{ sendEmailLink }}" style="border:1.5px solid #14233C;color:#14233C;font-size:15.5px;font-weight:600;padding:13px;border-radius:10px;text-align:center;background:#FFFFFF;cursor:pointer;">Получить ссылку для входа</div>
+            </div>
+            <div style="font-size:12.5px;color:#8A8272;line-height:1.55;text-align:center;margin-top:16px;">Продолжая, вы принимаете условия и политику конфиденциальности.</div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isCheckout }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #E4DCCC;"><div onClick="{{ goLogin }}" style="cursor:pointer;display:flex;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="font-size:16px;font-weight:700;color:#14233C;">Оформление подписки</div></div>
+        <div style="padding:24px 20px 36px;">
+          <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:15px;font-weight:700;color:#14233C;">Годовой тариф</div><span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;">−22%</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:14.5px;color:#26334B;margin-top:12px;"><span>Подписка на 12 месяцев</span><span style="font-weight:600;">14&nbsp;000&nbsp;₽</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;color:#5E6A80;margin-top:6px;"><span>Вместо 12 × 1&nbsp;500&nbsp;₽</span><span style="text-decoration:line-through;">18&nbsp;000&nbsp;₽</span></div>
+            <div style="border-top:1px solid #F0E9DB;margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;font-size:16px;font-weight:700;color:#14233C;"><span>Итого</span><span>14&nbsp;000&nbsp;₽</span></div>
+          </div>
+          <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:14px;font-size:13.5px;color:#26334B;line-height:1.55;">Аккаунт: <span style="font-weight:600;">@anna_k</span> (Telegram). Продлится автоматически 27 июля 2027 — напомним за 3 дня.</div>
+          <div onClick="{{ payNow }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:15px;border-radius:10px;text-align:center;margin-top:18px;cursor:pointer;">Перейти к оплате</div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;"><svg width="15" height="15" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="#5E6A80" stroke-width="1.8"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="#5E6A80" stroke-width="1.8"></path></svg><div style="font-size:12.5px;color:#5E6A80;">Защищённая страница ЮKassa · демо пропускает этот шаг</div></div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isProcessing }}" hint-placeholder-val="{{ false }}">
+      <div style="height:640px;display:flex;align-items:center;justify-content:center;">
+        <div style="text-align:center;padding:0 40px;">
+          <div style="position:relative;width:96px;height:96px;margin:0 auto;">
+            <svg width="96" height="96" viewBox="0 0 96 96" style="position:absolute;left:0;top:0;animation:om-spin 1.6s linear infinite;"><circle cx="48" cy="48" r="42" fill="none" stroke="#EDE5D5" stroke-width="4"></circle><path d="M48 6a42 42 0 0 1 36.4 21" fill="none" stroke="#C2532F" stroke-width="4" stroke-linecap="round"></path></svg>
+            <div style="position:absolute;left:0;top:0;width:96px;height:96px;display:flex;align-items:center;justify-content:center;animation:om-bob 2.4s ease-in-out infinite;"><svg width="46" height="46" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg></div>
+          </div>
+          <div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;margin-top:20px;">Платёж обрабатывается</div>
+          <div style="font-size:14.5px;color:#5E6A80;line-height:1.6;margin-top:10px;">Обычно это занимает меньше минуты. Страница обновится автоматически.</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSuccess }}" hint-placeholder-val="{{ false }}">
+      <div style="padding:56px 24px 40px;text-align:center;">
+        <div style="width:72px;height:72px;border-radius:50%;background:#E7F0E9;display:flex;align-items:center;justify-content:center;margin:0 auto;"><svg width="34" height="34" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#3E7A54" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+        <div style="font-size:26px;font-weight:800;color:#14233C;letter-spacing:-0.015em;margin-top:18px;">Подписка активна</div>
+        <div style="font-size:15px;color:#5E6A80;line-height:1.6;margin-top:10px;">Годовой тариф оплачен — 14&nbsp;000&nbsp;₽.<br>Доступ до 27 июля 2027. Чек отправлен в Telegram.</div>
+        <div onClick="{{ goLesson }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:15px;border-radius:10px;text-align:center;margin-top:26px;cursor:pointer;">Начать первый урок</div>
+        <div onClick="{{ goCabinet }}" style="margin-top:14px;cursor:pointer;"><span style="font-size:14.5px;font-weight:500;color:#C2532F;">В личный кабинет</span></div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isCabinet }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #E4DCCC;">
+          <div style="display:flex;align-items:center;gap:9px;"><svg width="28" height="28" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:16px;font-weight:800;color:#14233C;">Абрикософф</div></div>
+          <div style="width:36px;height:36px;border-radius:50%;background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;">АК</div>
+        </div>
+        <div style="padding:24px 20px 34px;">
+          <div style="font-size:24px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Добрый день, Анна</div>
+          <div style="display:flex;gap:8px;margin-top:8px;"><span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Подписка активна</span><span style="font-size:12.5px;color:#8A8272;align-self:center;">до 27 июля 2027</span></div>
+          <div style="background:#14233C;border-radius:14px;padding:20px;margin-top:18px;position:relative;overflow:hidden;">
+            <div style="position:absolute;right:-60px;bottom:-90px;width:170px;height:170px;border:1.5px solid #D2A84C;border-radius:50%;opacity:0.5;"></div>
+            <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#E8906F;font-weight:600;">{{ cabEyebrow }}</div>
+            <div style="font-size:18px;font-weight:700;color:#F6F0E7;line-height:1.3;margin-top:6px;">{{ cabTitle }}</div>
+            <div style="font-size:13px;color:#9AA5B8;margin-top:4px;">{{ cabMeta }}</div>
+            <div onClick="{{ goCurrentLesson }}" style="background:#F6F0E7;color:#14233C;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;margin-top:16px;cursor:pointer;">Открыть урок</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:24px;"><div style="font-size:19px;font-weight:700;color:#14233C;">Мои курсы</div></div>
+          <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:16px;margin-top:12px;">
+            <div style="display:flex;gap:12px;align-items:center;">
+              <div style="width:52px;height:64px;background:#FAF3E6;border:1px solid #E4DCCC;border-radius:8px;position:relative;overflow:hidden;flex:none;"><div style="position:absolute;right:-22px;top:-22px;width:44px;height:44px;border:1.5px solid #D96C4A;border-radius:50%;"></div></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:15.5px;font-weight:700;color:#14233C;">Здоровые привычки</div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;color:#8A8272;margin-top:8px;margin-bottom:5px;"><span>{{ progressLabel }}</span><span>{{ progressPct }}</span></div>
+                <div style="height:5px;border-radius:3px;background:#EDE5D5;overflow:hidden;"><div style="width:{{ progressWidth }};height:100%;background:#C2532F;border-radius:3px;"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="border:1px solid #E4DCCC;border-radius:12px;background:#FFFFFF;margin-top:16px;overflow:hidden;">
+            <div onClick="{{ goSubs }}" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;cursor:pointer;border-bottom:1px solid #F0E9DB;"><div style="font-size:14.5px;font-weight:600;color:#14233C;">Подписка</div><div style="display:flex;gap:8px;align-items:center;"><span style="font-size:12.5px;color:#8A8272;">Годовой тариф</span><svg width="15" height="15" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6" fill="none" stroke="#8A8272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;"><div style="font-size:14.5px;font-weight:600;color:#14233C;">Профиль и способы входа</div><svg width="15" height="15" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6" fill="none" stroke="#8A8272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLesson3 }}" hint-placeholder-val="{{ false }}">
+      <div style="background:#FFFDF8;">
+        <div style="border-bottom:1px solid #EDE5D5;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;">
+            <div onClick="{{ goCabinet }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:600;color:#14233C;">Здоровые привычки</div></div>
+            <div style="font-size:13px;color:#8A8272;">Урок 3 из 12</div>
+          </div>
+          <div style="height:3px;background:#EDE5D5;"><div style="width:25%;height:100%;background:#C2532F;"></div></div>
+        </div>
+        <div style="padding:26px 24px 40px;">
+          <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#C2532F;font-weight:600;">Раздел 2 · Утренний распорядок</div>
+          <div style="font-size:25px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.2;margin-top:8px;text-wrap:pretty;">Утренний якорь: с чего начинается система</div>
+          <div style="font-size:13.5px;color:#8A8272;margin-top:8px;">Вы остановились на середине · осталось 4 минуты</div>
+          <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin-top:20px;">Якорь — это привязка нового действия к уже существующему распорядку. Сигналом становится сама жизнь: <strong style="color:#14233C;">после того как я налью утренний чай — я открою блокнот</strong>.</div>
+          <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:20px;display:flex;gap:10px;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#C2532F"></circle><path d="M8 4.6v4.2M8 11.4h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:15px;color:#26334B;line-height:1.55;"><span style="font-weight:600;color:#14233C;">Задание на сегодня.</span> Выберите один якорь и запишите его формулой «после X — я сделаю Y».</div></div>
+          <sc-if value="{{ lesson3NotDone }}" hint-placeholder-val="{{ true }}">
+            <div onClick="{{ markLesson3 }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:15px;border-radius:10px;text-align:center;margin-top:26px;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;"><svg width="18" height="18" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан</div>
+          </sc-if>
+          <sc-if value="{{ lesson3Done }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;gap:10px;align-items:flex-start;background:#E7F0E9;border-radius:10px;padding:13px 15px;margin-top:26px;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:1px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;color:#26463A;line-height:1.5;"><span style="font-weight:600;">Урок отмечен прочитанным.</span> Прогресс: 4 из 12.</div></div>
+            <div onClick="{{ goCabinet }}" style="border:1px solid #E4DCCC;border-radius:12px;padding:16px;background:#FFFFFF;margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;">
+              <div><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;">Дальше</div><div style="font-size:15px;font-weight:700;color:#14233C;margin-top:4px;line-height:1.3;">Урок 4. Вечерняя рутина</div><div style="font-size:13px;color:#5E6A80;margin-top:2px;">Конец сценария — вернуться в кабинет</div></div>
+              <svg width="20" height="20" viewBox="0 0 24 24" style="flex:none;"><path d="M10 6l6 6-6 6" fill="none" stroke="#C2532F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSubs }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #E4DCCC;"><div onClick="{{ goCabinet }}" style="cursor:pointer;display:flex;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="font-size:16px;font-weight:700;color:#14233C;">Подписка</div></div>
+        <div style="padding:24px 20px 36px;">
+          <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:17px;font-weight:700;color:#14233C;">Годовой тариф</div><span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Активна</span></div>
+            <div style="display:grid;gap:10px;margin-top:16px;">
+              <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:#5E6A80;">Следующее списание</span><span style="font-weight:600;color:#14233C;">27 июля 2027</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:#5E6A80;">Сумма</span><span style="font-weight:600;color:#14233C;">14&nbsp;000&nbsp;₽</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:#5E6A80;">Способ оплаты</span><span style="font-weight:600;color:#14233C;">Карта ····4212</span></div>
+            </div>
+            <div style="font-size:12.5px;color:#8A8272;margin-top:12px;">Напомним о списании за 3 дня — в Telegram.</div>
+          </div>
+          <div onClick="{{ openSubsModal }}" style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:13px;border-radius:10px;text-align:center;background:#FFFFFF;margin-top:16px;cursor:pointer;">Отключить автопродление</div>
+          <div style="display:flex;justify-content:center;gap:20px;margin-top:12px;"><a href="#subs" style="font-size:14px;font-weight:500;">Сменить тариф</a><a href="#subs" style="font-size:14px;font-weight:500;">Изменить карту</a></div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSubsOff }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #E4DCCC;"><div onClick="{{ goCabinet }}" style="cursor:pointer;display:flex;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="font-size:16px;font-weight:700;color:#14233C;">Подписка</div></div>
+        <div style="padding:24px 20px 36px;">
+          <div style="display:flex;gap:10px;align-items:flex-start;background:#E7F0E9;border-radius:10px;padding:13px 15px;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:1px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;color:#26463A;line-height:1.5;"><span style="font-weight:600;">Автопродление отключено.</span> Деньги больше не спишутся.</div></div>
+          <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:20px;margin-top:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:17px;font-weight:700;color:#14233C;">Годовой тариф</div><span style="background:#EDE5D5;color:#5F5745;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Продление отключено</span></div>
+            <div style="font-size:14.5px;color:#26334B;line-height:1.6;margin-top:14px;">Доступ ко всем курсам сохранится до <span style="font-weight:700;">27 июля 2027</span>. После этого подписка завершится — прогресс останется в кабинете.</div>
+          </div>
+          <div onClick="{{ reEnableSubs }}" style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:14px;border-radius:10px;text-align:center;margin-top:16px;cursor:pointer;">Включить продление</div>
+          <div style="font-size:12.5px;color:#8A8272;text-align:center;margin-top:10px;">Спишем 14&nbsp;000&nbsp;₽ только 27 июля 2027 — не раньше.</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ subsModal }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;left:0;top:0;right:0;bottom:0;background:rgba(20,35,60,0.45);display:flex;align-items:center;justify-content:center;padding:24px;">
+        <div style="width:100%;background:#FFFFFF;border-radius:16px;box-shadow:0 12px 32px rgba(20,35,60,0.2);padding:24px;">
+          <div style="font-size:18px;font-weight:700;color:#14233C;">Отключить автопродление?</div>
+          <div style="font-size:14px;color:#5E6A80;line-height:1.55;margin-top:8px;">Доступ сохранится до 27 июля 2027 года. После этого подписка завершится, а прогресс останется в вашем кабинете.</div>
+          <div style="display:grid;gap:8px;margin-top:16px;">
+            <div onClick="{{ closeSubsModal }}" style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;cursor:pointer;">Оставить подписку</div>
+            <div onClick="{{ confirmSubsOff }}" style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:11px;border-radius:10px;text-align:center;background:#FFFFFF;cursor:pointer;">Отключить продление</div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLesson }}" hint-placeholder-val="{{ false }}">
+      <div style="background:#FFFDF8;">
+        <div style="border-bottom:1px solid #EDE5D5;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;">
+            <div onClick="{{ goCabinet }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:600;color:#14233C;">Здоровые привычки</div></div>
+            <div style="font-size:13px;color:#8A8272;">Урок 1 из 12</div>
+          </div>
+          <div style="height:3px;background:#EDE5D5;"><div style="width:8%;height:100%;background:#C2532F;"></div></div>
+        </div>
+        <div style="padding:26px 24px 40px;">
+          <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#C2532F;font-weight:600;">Раздел 1 · Основы</div>
+          <div style="font-size:25px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.2;margin-top:8px;text-wrap:pretty;">Почему сила воли не работает</div>
+          <div style="font-size:13.5px;color:#8A8272;margin-top:8px;">5 минут чтения</div>
+          <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin-top:20px;">Сила воли — ограниченный ресурс: к вечеру её почти не остаётся. Поэтому привычки, построенные на «просто заставлю себя», живут неделю-две.</div>
+          <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin-top:14px;">Работает другое: <strong style="color:#14233C;">системы</strong> — маленькие действия, встроенные в уже существующий день. В этом курсе мы будем строить именно их.</div>
+          <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:20px;display:flex;gap:10px;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#C2532F"></circle><path d="M8 4.6v4.2M8 11.4h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:15px;color:#26334B;line-height:1.55;"><span style="font-weight:600;color:#14233C;">Задание.</span> Вспомните одну привычку, которая «не прижилась». Что было сигналом к действию?</div></div>
+          <sc-if value="{{ lessonNotDone }}" hint-placeholder-val="{{ true }}">
+            <div onClick="{{ markLesson }}" style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:15px;border-radius:10px;text-align:center;margin-top:26px;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;"><svg width="18" height="18" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан</div>
+          </sc-if>
+          <sc-if value="{{ lessonDone }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;gap:10px;align-items:flex-start;background:#E7F0E9;border-radius:10px;padding:13px 15px;margin-top:26px;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:1px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;color:#26463A;line-height:1.5;"><span style="font-weight:600;">Урок отмечен прочитанным.</span> Прогресс: 1 из 12.</div></div>
+            <div onClick="{{ goCabinet }}" style="border:1px solid #E4DCCC;border-radius:12px;padding:16px;background:#FFFFFF;margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;">
+              <div><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;">Дальше</div><div style="font-size:15px;font-weight:700;color:#14233C;margin-top:4px;line-height:1.3;">Урок 2. Сигналы и награды</div><div style="font-size:13px;color:#5E6A80;margin-top:2px;">Конец прототипа — вернуться в кабинет</div></div>
+              <svg width="20" height="20" viewBox="0 0 24 24" style="flex:none;"><path d="M10 6l6 6-6 6" fill="none" stroke="#C2532F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+  <div style="width:390px;font-size:12.5px;color:#8A8272;line-height:1.55;margin-top:14px;">Три сценария из ТЗ: <span style="font-weight:600;color:#14233C;">1</span> — новый ученик (тариф → вход → оплата → урок 1); <span style="font-weight:600;color:#14233C;">2</span> — возвращение (вход → продолжить урок 3 → отметить); <span style="font-weight:600;color:#14233C;">3</span> — подписка (кабинет → отключить автопродление с подтверждением). Экран самой оплаты — на стороне ЮKassa, в демо пропускается.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: &quot;480px&quot;, &quot;height&quot;: &quot;960px&quot;}, &quot;startScreen&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;home&quot;, &quot;options&quot;: [&quot;home&quot;, &quot;pricing&quot;, &quot;login&quot;, &quot;checkout&quot;, &quot;processing&quot;, &quot;success&quot;, &quot;cabinet&quot;, &quot;lesson&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Демо&quot;}}">
+class Component extends DCLogic {
+  state = { scenario: 1, screen: 'home', emailSent: false, lessonDone: false, lesson3Done: false, subsModal: false };
+  componentDidMount() {
+    const s = this.props.startScreen;
+    if (s && s !== 'home') this.setState({ screen: s });
+  }
+  componentWillUnmount() { if (this._t) clearTimeout(this._t); }
+  go(screen) { if (this._t) clearTimeout(this._t); this.setState({ screen }); }
+  setScenario(n) {
+    if (this._t) clearTimeout(this._t);
+    this.setState({ scenario: n, screen: n === 3 ? 'cabinet' : 'home', emailSent: false, lessonDone: false, lesson3Done: false, subsModal: false });
+  }
+  renderVals() {
+    const { scenario: sn, screen: sc, subsModal, lessonDone, lesson3Done, emailSent } = this.state;
+    const stepMaps = {
+      1: { total: 6, map: { home: [1,'Главная'], pricing: [2,'Выбор тарифа'], login: [3,'Вход'], checkout: [4,'Оплата'], processing: [4,'Оплата'], success: [4,'Оплата — успех'], cabinet: [5,'Кабинет'], lesson: [6,'Первый урок'] } },
+      2: { total: 5, map: { home: [1,'Главная'], login: [2,'Вход'], cabinet: [3,'Кабинет'], lesson3: [lesson3Done ? 5 : 4, lesson3Done ? 'Урок отмечен' : 'Продолжение урока'] } },
+      3: { total: 4, map: { cabinet: [1,'Кабинет'], subs: [subsModal ? 3 : 2, subsModal ? 'Подтверждение' : 'Подписка'], subsOff: [4,'Продление отключено'] } }
+    };
+    const cfg = stepMaps[sn];
+    const st = cfg.map[sc] || [1, 'Начало'];
+    const returning = sn !== 1;
+    const started = returning || lessonDone;
+    const cnt = sn === 1 ? (lessonDone ? 1 : 0) : (lesson3Done ? 4 : 3);
+    const pct = Math.round(cnt / 12 * 100) + '%';
+    const active = { background: '#14233C', color: '#F6F0E7' }, idle = { background: '#FFFFFF', color: '#5E6A80' };
+    return {
+      isHome: sc==='home', isPricing: sc==='pricing', isLogin: sc==='login', isCheckout: sc==='checkout',
+      isProcessing: sc==='processing', isSuccess: sc==='success', isCabinet: sc==='cabinet',
+      isLesson: sc==='lesson', isLesson3: sc==='lesson3', isSubs: sc==='subs', isSubsOff: sc==='subsOff',
+      subsModal,
+      emailSent, emailNotSent: !emailSent,
+      lessonDone, lessonNotDone: !lessonDone,
+      lesson3Done, lesson3NotDone: !lesson3Done,
+      stepNum: st[0], stepLabel: st[1], stepTotal: cfg.total,
+      tab1Bg: (sn===1?active:idle).background, tab1Color: (sn===1?active:idle).color,
+      tab2Bg: (sn===2?active:idle).background, tab2Color: (sn===2?active:idle).color,
+      tab3Bg: (sn===3?active:idle).background, tab3Color: (sn===3?active:idle).color,
+      loginContext: sn === 1 ? 'Выбран годовой тариф. Если вы впервые — аккаунт создастся автоматически.' : 'С возвращением! Войдите, чтобы продолжить с того места, где остановились.',
+      cabEyebrow: returning ? 'Продолжить' : 'Начните здесь',
+      cabTitle: returning ? 'Урок 3. Утренний якорь: с чего начинается система' : 'Урок 1. Почему сила воли не работает',
+      cabMeta: returning ? 'Здоровые привычки · осталось 4 минуты' : 'Здоровые привычки · 5 минут чтения',
+      progressLabel: started ? cnt + ' из 12 уроков' : 'Ещё не начат',
+      progressPct: pct, progressWidth: pct,
+      setScenario1: () => this.setScenario(1),
+      setScenario2: () => this.setScenario(2),
+      setScenario3: () => this.setScenario(3),
+      goHome: () => this.go('home'),
+      goPricing: () => this.go('pricing'),
+      goLogin: () => this.go('login'),
+      goCabinet: () => this.go('cabinet'),
+      goLesson: () => this.go('lesson'),
+      goCurrentLesson: () => this.go(returning ? 'lesson3' : 'lesson'),
+      goSubs: () => this.go('subs'),
+      loginTelegram: () => this.go(sn === 1 ? 'checkout' : 'cabinet'),
+      sendEmailLink: () => this.setState({ emailSent: true }),
+      openEmailLink: () => this.go(sn === 1 ? 'checkout' : 'cabinet'),
+      payNow: () => { this.go('processing'); this._t = setTimeout(() => this.setState({ screen: 'success' }), 2200); },
+      markLesson: () => this.setState({ lessonDone: true }),
+      markLesson3: () => this.setState({ lesson3Done: true }),
+      openSubsModal: () => this.setState({ subsModal: true }),
+      closeSubsModal: () => this.setState({ subsModal: false }),
+      confirmSubsOff: () => this.setState({ subsModal: false, screen: 'subsOff' }),
+      reEnableSubs: () => this.go('subs'),
+      resetFlow: () => this.setScenario(this.state.scenario)
+    };
+  }
+}
+</script>
+</body>
+</html>

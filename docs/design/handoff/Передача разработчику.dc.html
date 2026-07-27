@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800&amp;family=Literata:opsz,wght@7..72,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E8E1D3;font-family:'Golos Text',sans-serif;}
+a{color:#C2532F;} a:hover{color:#A84526;}
+</style>
+</helmet>
+<section data-screen-label="Handoff — передача разработчику" style="padding:48px 56px 96px;display:grid;gap:32px;justify-items:start;">
+  <div>
+    <div style="font-size:12px;letter-spacing:0.22em;text-transform:uppercase;color:#8A8272;font-weight:600;">Академия Абрикософф · Этап 4 · handoff</div>
+    <h1 style="font-size:38px;font-weight:800;color:#14233C;letter-spacing:-0.015em;margin:8px 0 10px;">Передача разработчику</h1>
+    <p style="font-size:16px;color:#5E6A80;max-width:760px;line-height:1.55;margin:0;">Ассеты, токены, правила и открытые вопросы — всё, что нужно, чтобы собрать MVP без догадок.</p>
+  </div>
+
+  <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;max-width:2000px;">
+
+    <div id="5a" data-screen-label="Ассеты" style="width:620px;background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:28px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">5a</div><div style="font-size:19px;font-weight:800;color:#14233C;">Ассеты · SVG</div></div>
+      <div style="font-size:13px;color:#5E6A80;margin-bottom:16px;">Файлы лежат в папке <span style="font-family:monospace;background:#FAF6EE;padding:1px 6px;border-radius:5px;">assets/</span> проекта — по клику открываются.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <a href="assets/logo-horizontal.svg" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:14px;display:grid;gap:10px;background:#FAF6EE;"><img src="assets/logo-horizontal.svg" alt="Основной логотип" style="height:44px;justify-self:start;"><span style="font-size:12.5px;font-weight:600;color:#14233C;">logo-horizontal.svg</span></a>
+        <a href="assets/logo-horizontal-dark.svg" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:14px;display:grid;gap:10px;background:#FAF6EE;"><img src="assets/logo-horizontal-dark.svg" alt="Логотип на тёмном" style="height:44px;justify-self:start;border-radius:6px;"><span style="font-size:12.5px;font-weight:600;color:#14233C;">logo-horizontal-dark.svg</span></a>
+        <a href="assets/logo-vertical.svg" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:14px;display:grid;gap:10px;background:#FAF6EE;"><img src="assets/logo-vertical.svg" alt="Вертикальная версия" style="height:74px;justify-self:center;"><span style="font-size:12.5px;font-weight:600;color:#14233C;">logo-vertical.svg</span></a>
+        <div style="border:1px solid #EDE5D5;border-radius:10px;padding:14px;display:grid;gap:10px;background:#FAF6EE;grid-template-columns:repeat(3,auto);align-items:center;justify-content:start;">
+          <a href="assets/logo-mark.svg"><img src="assets/logo-mark.svg" alt="Знак" style="height:44px;"></a>
+          <a href="assets/favicon.svg"><img src="assets/favicon.svg" alt="Фавикон" style="height:40px;"></a>
+          <a href="assets/avatar-bot.svg"><img src="assets/avatar-bot.svg" alt="Аватар бота" style="height:44px;border-radius:50%;"></a>
+          <span style="font-size:12.5px;font-weight:600;color:#14233C;grid-column:1/-1;">logo-mark · favicon · avatar-bot</span>
+        </div>
+        <a href="assets/logo-mark-mono.svg" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:14px;display:grid;gap:10px;background:#FAF6EE;"><img src="assets/logo-mark-mono.svg" alt="Одноцветный знак" style="height:44px;justify-self:start;"><span style="font-size:12.5px;font-weight:600;color:#14233C;">logo-mark-mono.svg</span></a>
+        <div style="border:1px solid #EDE5D5;border-radius:10px;padding:14px;background:#FFFFFF;font-size:12.5px;color:#5E6A80;line-height:1.55;">Правила: охранное поле — ½ высоты знака; минимум 24 px на экране; на тёмном фоне ножка светлая (#F6F0E7). Буква «А» — во всех размерах.</div>
+      </div>
+    </div>
+
+    <div id="5b" data-screen-label="Токены" style="width:560px;background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:28px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">5b</div><div style="font-size:19px;font-weight:800;color:#14233C;">Токены · CSS-переменные</div></div>
+      <pre style="margin:0;background:#14233C;color:#DDE3EE;border-radius:12px;padding:18px 20px;font-size:12.5px;line-height:1.75;overflow:auto;font-family:ui-monospace,Menlo,monospace;">:root {
+  --background-page:    #F6F0E7;
+  --background-surface: #FFFFFF;
+  --background-subtle:  #FAF6EE;
+  --text-primary:       #14233C;
+  --text-secondary:     #5E6A80;
+  --text-lecture:       #26334B;
+  --action-primary:       #C2532F;
+  --action-primary-hover: #A84526;
+  --brand-terracotta:   #D96C4A;
+  --accent-gold:        #D2A84C; /* только декор */
+  --border-default:     #E4DCCC;
+  --border-strong:      #D8CFBE;
+  --status-success:     #3E7A54; /* тинт #E7F0E9 */
+  --status-warning:     #A6731D; /* тинт #F6ECD9 */
+  --status-error:       #B42318; /* тинт #F7E5E2 */
+  --disabled-bg:        #EBE4D6;
+  --disabled-text:      #9A9284;
+  --focus-ring: 0 0 0 3px rgba(194,83,47,.35);
+
+  --radius-control: 10px;  /* кнопки, поля */
+  --radius-card:    12px;
+  --radius-modal:   16px;
+
+  --shadow-sm: 0 1px 2px  rgba(20,35,60,.06);
+  --shadow-md: 0 4px 12px rgba(20,35,60,.08);
+  --shadow-lg: 0 12px 32px rgba(20,35,60,.14);
+
+  /* отступы: 4 8 12 16 24 32 48 64 */
+  /* брейкпоинты: 320 390 768 1024 1440 */
+  /* контейнер 1140 · колонка лекции 680 */
+}</pre>
+      <div style="font-size:12.5px;color:#5E6A80;line-height:1.55;margin-top:12px;">Шрифты: <span style="font-weight:600;color:#14233C;">Golos Text</span> (400–800, интерфейс и заголовки), <span style="font-weight:600;color:#14233C;">Literata</span> (400/600 + курсив, текст лекций 17–18/1.75). Оба — Google Fonts, лицензия SIL OFL: сайт, приложение, встраивание — свободно. Полная кириллица и «₽».</div>
+    </div>
+
+    <div id="5c" data-screen-label="Нерешённые вопросы" style="width:520px;background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:28px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">5c</div><div style="font-size:19px;font-weight:800;color:#14233C;">Нерешённые вопросы</div></div>
+      <div style="display:grid;gap:10px;">
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">1</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Реквизиты ИП и финальные юридические тексты (оферта, политика) — от юриста; шаблон страницы готов (<a href="Экраны - Публичные.dc.html">3e</a>).</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">2</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Все маркетинговые тексты — черновые; финальные согласовать до вёрстки.</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">3</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Настоящие фотографии: слоты на главной и в уроке готовы — нужна предметная тёплая съёмка без людей.</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">4</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Текст в SVG-логотипах пока шрифтом (не кривые) — перевести в кривые при финальном экспорте.</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">5</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Фавикон 16 px: буква «А» на грани различимости — проверить на устройствах; при необходимости вернуть упрощённую младшую версию.</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">6</div><div style="font-size:14px;color:#26334B;line-height:1.5;">Письмо со ссылкой входа (email-шаблон) — не входило в MVP-экраны, понадобится при разработке.</div></div>
+        <div style="display:flex;gap:10px;"><div style="width:22px;height:22px;border-radius:50%;background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">7</div><div style="font-size:14px;color:#26334B;line-height:1.5;">EN-версия и валюты: переключатель «RU · ₽» заложен, детали (второй продавец, платёжка) — при выходе в Европу.</div></div>
+      </div>
+    </div>
+
+    <div id="5d" data-screen-label="Состав передачи" style="width:520px;background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:28px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">5d</div><div style="font-size:19px;font-weight:800;color:#14233C;">Состав передачи</div></div>
+      <div style="display:grid;gap:8px;">
+        <a href="Айдентика.dc.html" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">Айдентика</span><span style="font-size:12.5px;color:#8A8272;">этап 1 · знак, палитра, шрифты</span></a>
+        <a href="Основа интерфейса.dc.html" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">Основа интерфейса</span><span style="font-size:12.5px;color:#8A8272;">токены, компоненты, ключевые экраны, 768</span></a>
+        <a href="Экраны - Публичные.dc.html" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">Экраны — Публичные</span><span style="font-size:12.5px;color:#8A8272;">каталог, курс, вход, оплата, юр</span></a>
+        <a href="Экраны - Кабинет.dc.html" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">Экраны — Кабинет</span><span style="font-size:12.5px;color:#8A8272;">кабинет, подписка, профиль, состояния</span></a>
+        <a href="Прототип - Новый ученик.dc.html" style="text-decoration:none;border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">Прототип</span><span style="font-size:12.5px;color:#8A8272;">сценарии 1–3, кликабельный</span></a>
+        <div style="border:1px solid #EDE5D5;border-radius:10px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;background:#FAF6EE;"><span style="font-size:14.5px;font-weight:600;color:#14233C;">assets/</span><span style="font-size:12.5px;color:#8A8272;">7 SVG: лого, знак, фавикон, аватар</span></div>
+      </div>
+      <div style="border-top:1px solid #EDE5D5;margin-top:16px;padding-top:14px;font-size:12.5px;color:#5E6A80;line-height:1.6;">Принципы: состояние не передаётся только цветом; сенсорные цели ≥ 44 px; текст ≥ 16 px; фокус — кольцо rgba(194,83,47,.35); интерфейс не зависит от наведения. Тон текстов — спокойный, на «вы», без инфобизнес-приёмов.</div>
+    </div>
+  </div>
+</section>
+</x-dc>
+</body>
+</html>

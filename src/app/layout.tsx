@@ -1,5 +1,18 @@
 import type { Metadata } from "next";
+import { Golos_Text, Literata } from "next/font/google";
 import "./globals.css";
+
+const golos = Golos_Text({
+  subsets: ["cyrillic", "latin"],
+  variable: "--font-interface",
+  display: "swap",
+});
+
+const literata = Literata({
+  subsets: ["cyrillic", "latin"],
+  variable: "--font-reading",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://academy.abrikosoff.com"),
@@ -8,7 +21,10 @@ export const metadata: Metadata = {
     template: "%s — Академия Абрикософф",
   },
   description:
-    "Образовательная платформа с курсами и практическими системами на каждый день.",
+    "Практические курсы о привычках, здоровье и качестве жизни — спокойно и по системе.",
+  icons: {
+    icon: "/brand/favicon.svg",
+  },
   robots: {
     index: false,
     follow: false,
@@ -21,7 +37,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ru">
+    <html
+      lang="ru"
+      className={`${golos.variable} ${literata.variable}`}
+      data-scroll-behavior="smooth"
+    >
       <body>{children}</body>
     </html>
   );

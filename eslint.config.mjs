@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Exported design handoff is a read-only browser artifact.
+    "docs/design/handoff/**",
   ]),
 ]);
 

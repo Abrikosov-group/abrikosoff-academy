@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800&amp;family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&amp;display=swap" rel="stylesheet">
+<script src="./image-slot.js"></script>
+<style>
+body{margin:0;background:#E8E1D3;font-family:'Golos Text',sans-serif;}
+a{color:#C2532F;} a:hover{color:#A84526;}
+@keyframes om-pulse{0%,100%{opacity:.55}50%{opacity:1}}
+</style>
+</helmet>
+<section data-screen-label="Этап 2 — Основа интерфейса" style="padding:48px 56px 96px;display:grid;gap:40px;justify-items:start;">
+  <div>
+    <div style="font-size:12px;letter-spacing:0.22em;text-transform:uppercase;color:#8A8272;font-weight:600;">Академия Абрикософф · Этап 2 · вариация 1a утверждена</div>
+    <h1 style="font-size:38px;font-weight:800;color:#14233C;letter-spacing:-0.015em;margin:8px 0 10px;">Основа интерфейса: токены, компоненты, ключевые экраны</h1>
+    <p style="font-size:16px;color:#5E6A80;max-width:780px;line-height:1.55;margin:0;">Все тексты на экранах — черновые, размечены по утверждённым данным (1 500 ₽ / 14 000 ₽ / −22%). В серые рамки с подписью можно перетащить настоящие фотографии.</p>
+  </div>
+
+  <!-- 2a ТОКЕНЫ -->
+  <div id="2a" data-screen-label="Токены" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;width:1180px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2a</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Токены</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px;">
+      <div>
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Цвета</div>
+        <div style="display:grid;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#F6F0E7;border:1px solid #E4DCCC;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">background-page</div><div style="font-size:12px;color:#8A8272;">#F6F0E7</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#FFFFFF;border:1px solid #E4DCCC;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">background-surface</div><div style="font-size:12px;color:#8A8272;">#FFFFFF</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#FAF6EE;border:1px solid #E4DCCC;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">background-subtle</div><div style="font-size:12px;color:#8A8272;">#FAF6EE</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#14233C;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">text-primary / surface-dark</div><div style="font-size:12px;color:#8A8272;">#14233C</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#5E6A80;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">text-secondary</div><div style="font-size:12px;color:#8A8272;">#5E6A80</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#26334B;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">text-lecture</div><div style="font-size:12px;color:#8A8272;">#26334B</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#C2532F;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">action-primary</div><div style="font-size:12px;color:#8A8272;">#C2532F · AA на белом</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#A84526;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">action-primary-hover</div><div style="font-size:12px;color:#8A8272;">#A84526</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#D96C4A;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">brand-terracotta</div><div style="font-size:12px;color:#8A8272;">#D96C4A · знак и декор</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#D2A84C;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">accent-gold</div><div style="font-size:12px;color:#8A8272;">#D2A84C · только декор и графика</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#E4DCCC;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">border-default</div><div style="font-size:12px;color:#8A8272;">#E4DCCC · сильная #D8CFBE</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#3E7A54;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">status-success</div><div style="font-size:12px;color:#8A8272;">#3E7A54 · тинт #E7F0E9 · и бейдж выгоды</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#A6731D;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">status-warning</div><div style="font-size:12px;color:#8A8272;">#A6731D · тинт #F6ECD9</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#B42318;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">status-error</div><div style="font-size:12px;color:#8A8272;">#B42318 · тинт #F7E5E2</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#EBE4D6;flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">disabled</div><div style="font-size:12px;color:#8A8272;">фон #EBE4D6 · текст #9A9284</div></div>
+          <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#FFFFFF;border:3px solid rgba(194,83,47,0.35);flex:none;"></div><div style="font-size:13px;font-weight:600;color:#14233C;width:210px;">focus-ring</div><div style="font-size:12px;color:#8A8272;">rgba(194,83,47,.35) · 3px, смещение 2px</div></div>
+        </div>
+      </div>
+      <div style="display:grid;gap:24px;align-content:start;">
+        <div>
+          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Текстовые стили</div>
+          <div style="display:grid;gap:8px;">
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:34px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.15;">Display</div><div style="font-size:12px;color:#8A8272;">Golos 800 · 34–44 / 1.15</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:28px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">H1</div><div style="font-size:12px;color:#8A8272;">Golos 800 · 28–34 / 1.2</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">H2</div><div style="font-size:12px;color:#8A8272;">Golos 700 · 22–26 / 1.25</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:18px;font-weight:700;color:#14233C;">H3</div><div style="font-size:12px;color:#8A8272;">Golos 700 · 18 / 1.35</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:16px;color:#14233C;">Основной текст</div><div style="font-size:12px;color:#8A8272;">Golos 400 · 16 / 1.6 · минимум</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:14px;color:#5E6A80;">Второстепенный</div><div style="font-size:12px;color:#8A8272;">Golos 400 · 14 / 1.5</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-size:12.5px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;">Надзаголовок</div><div style="font-size:12px;color:#8A8272;">Golos 600 · 12–13 / +0.14em</div></div>
+            <div style="display:flex;align-items:baseline;gap:12px;"><div style="font-family:'Literata',serif;font-size:17px;color:#26334B;">Текст лекции</div><div style="font-size:12px;color:#8A8272;">Literata 400 · 17–18 / 1.75 · до 68 знаков</div></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Отступы · база 4 px</div>
+          <div style="display:flex;align-items:flex-end;gap:8px;">
+            <div style="width:4px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:8px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:12px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:16px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:24px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:32px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:48px;height:16px;background:#D96C4A;border-radius:2px;"></div><div style="width:64px;height:16px;background:#D96C4A;border-radius:2px;"></div>
+            <div style="font-size:12px;color:#8A8272;margin-left:6px;">4 · 8 · 12 · 16 · 24 · 32 · 48 · 64</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+          <div>
+            <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Радиусы</div>
+            <div style="display:flex;gap:10px;align-items:flex-end;">
+              <div style="width:52px;height:40px;border:1.5px solid #14233C;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#14233C;">10</div>
+              <div style="width:52px;height:40px;border:1.5px solid #14233C;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#14233C;">12</div>
+              <div style="width:52px;height:40px;border:1.5px solid #14233C;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#14233C;">16</div>
+              <div style="width:52px;height:40px;border:1.5px solid #14233C;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#14233C;">пилюля</div>
+            </div>
+            <div style="font-size:12px;color:#8A8272;margin-top:8px;">10 — кнопки и поля · 12 — карточки · 16 — модальные</div>
+          </div>
+          <div>
+            <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Тени</div>
+            <div style="display:flex;gap:12px;">
+              <div style="width:64px;height:44px;background:#FFFFFF;border-radius:10px;box-shadow:0 1px 2px rgba(20,35,60,0.06);border:1px solid #EDE5D5;"></div>
+              <div style="width:64px;height:44px;background:#FFFFFF;border-radius:10px;box-shadow:0 4px 12px rgba(20,35,60,0.08);"></div>
+              <div style="width:64px;height:44px;background:#FFFFFF;border-radius:10px;box-shadow:0 12px 32px rgba(20,35,60,0.14);"></div>
+            </div>
+            <div style="font-size:12px;color:#8A8272;margin-top:8px;">sm — карточки · md — наведение · lg — модальные</div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Сетка и правила</div>
+          <div style="font-size:13px;color:#26334B;line-height:1.65;">Контрольные точки: 320 (минимум) · 390 · 768 · 1024 · 1440. Контейнер — 1140 px, колонка лекции — 680 px, поля на мобильном — 20 px. Иконки 24 px, штрих 1.75, скруглённые концы, без эмодзи. Сенсорные цели ≥ 44×44 px. Состояние никогда не передаётся только цветом.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2b КОМПОНЕНТЫ -->
+  <div id="2b" data-screen-label="Компоненты" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;width:1180px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2b</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Компоненты и состояния</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Кнопки</div>
+        <div style="display:grid;gap:10px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;">Первичная</div>
+            <div style="background:#A84526;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;">hover</div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;outline:3px solid rgba(194,83,47,0.35);outline-offset:2px;">focus</div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;display:flex;align-items:center;gap:8px;"><svg width="16" height="16" viewBox="0 0 16 16" style="animation:om-pulse 1s linear infinite;"><circle cx="8" cy="8" r="6" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-dasharray="26 12"></circle></svg>Загрузка…</div>
+            <div style="background:#EBE4D6;color:#9A9284;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;">Недоступна</div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div style="border:1.5px solid #14233C;color:#14233C;background:#FFFFFF;font-size:15px;font-weight:600;padding:11px 20px;border-radius:10px;">Вторичная</div>
+            <div style="border:1.5px solid #14233C;color:#14233C;background:#F6F0E7;font-size:15px;font-weight:600;padding:11px 20px;border-radius:10px;">hover</div>
+            <div style="border:1.5px solid #D8CFBE;color:#9A9284;background:#FFFFFF;font-size:15px;font-weight:600;padding:11px 20px;border-radius:10px;">недоступна</div>
+            <a href="#2b" style="font-size:15px;font-weight:500;">Текстовая ссылка</a>
+            <a href="#2b" style="font-size:15px;font-weight:500;color:#A84526;text-decoration-thickness:2px;">hover</a>
+          </div>
+          <div style="font-size:12px;color:#8A8272;">Высота 48 px · радиус 10 · на мобильном первичная — на всю ширину</div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Вход</div>
+        <div style="display:grid;gap:10px;max-width:360px;">
+          <div style="background:#229ED9;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 20px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:10px;"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="#FFFFFF" d="M21.9 4.6 18.6 19.2c-.2 1-.9 1.2-1.8.8l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1L18 6.1c.4-.4-.1-.6-.6-.2L6 13.2 1.1 11.7c-1-.3-1-1 .2-1.5L20.5 3c.9-.3 1.6.2 1.4 1.6Z"></path></svg>Войти через Telegram</div>
+          <div style="border:1.5px solid #14233C;color:#14233C;background:#FFFFFF;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;text-align:center;">Получить ссылку на почту</div>
+          <div style="font-size:12px;color:#8A8272;">Telegram — основной способ; почта — резервный. Пароли не используются.</div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Поля ввода</div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:14px;max-width:360px;">
+          <div><div style="font-size:13px;font-weight:600;color:#14233C;margin-bottom:6px;">Электронная почта</div><div style="border:1.5px solid #D8CFBE;border-radius:10px;background:#FFFFFF;padding:13px 14px;font-size:16px;color:#9A9284;">name@example.ru</div><div style="font-size:12px;color:#8A8272;margin-top:5px;">Пришлём одноразовую ссылку для входа</div></div>
+          <div><div style="font-size:13px;font-weight:600;color:#14233C;margin-bottom:6px;">Электронная почта</div><div style="border:1.5px solid #C2532F;border-radius:10px;background:#FFFFFF;padding:13px 14px;font-size:16px;color:#14233C;outline:3px solid rgba(194,83,47,0.35);outline-offset:1px;">anna.long-address@example</div></div>
+          <div><div style="font-size:13px;font-weight:600;color:#14233C;margin-bottom:6px;">Электронная почта</div><div style="border:1.5px solid #B42318;border-radius:10px;background:#FFFFFF;padding:13px 14px;font-size:16px;color:#14233C;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ekaterina.aleksandrovna.dlinnaya-pochta@very-long-domain-name.example.ru</div><div style="display:flex;gap:6px;align-items:center;margin-top:5px;"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#B42318"></circle><path d="M8 4.5v4M8 11h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:12px;color:#B42318;font-weight:500;">Проверьте адрес: похоже, в нём опечатка. Длинный адрес обрезается многоточием.</div></div></div>
+          <div><div style="font-size:13px;font-weight:600;color:#14233C;margin-bottom:6px;">Электронная почта</div><div style="border:1.5px solid #3E7A54;border-radius:10px;background:#FFFFFF;padding:13px 14px;font-size:16px;color:#14233C;display:flex;align-items:center;justify-content:space-between;gap:10px;"><span>anna.petrova@example.ru</span><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="display:flex;gap:6px;align-items:center;margin-top:5px;"><div style="font-size:12px;color:#3E7A54;font-weight:500;">Адрес корректен — можно отправлять ссылку</div></div></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Бейджи и статусы</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+          <span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+          <span style="background:#F7E3DB;color:#A84526;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Новое</span>
+          <span style="background:#5E6A80;color:#FFFFFF;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Скоро</span>
+          <span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Подписка активна</span>
+          <span style="background:#F6ECD9;color:#A6731D;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Льготный период</span>
+          <span style="background:#F7E5E2;color:#B42318;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Платёж не прошёл</span>
+        </div>
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:10px;">Прогресс</div>
+        <div style="max-width:320px;"><div style="display:flex;justify-content:space-between;font-size:13px;color:#5E6A80;margin-bottom:6px;"><span style="font-weight:600;color:#14233C;">Здоровые привычки</span><span>5 из 12</span></div><div style="height:6px;border-radius:3px;background:#EDE5D5;overflow:hidden;"><div style="width:42%;height:100%;background:#C2532F;border-radius:3px;"></div></div></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+          <div style="width:44px;height:44px;border-radius:50%;background:#14233C;color:#F6F0E7;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center;">АК</div>
+          <div style="font-size:13px;color:#5E6A80;">Аватар — инициалы на синем; фото не обязательно</div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Карточка курса</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;">
+          <div style="width:250px;background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,35,60,0.06);">
+            <div style="height:120px;background:#F6F0E7;position:relative;overflow:hidden;"><div style="position:absolute;right:-70px;top:-70px;width:130px;height:130px;border:2px solid #D96C4A;border-radius:50%;"></div><div style="position:absolute;left:16px;bottom:12px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#C2532F;font-weight:600;">Курс Академии</div></div>
+            <div style="padding:14px 16px 16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Здоровые привычки</div><div style="font-size:13px;color:#5E6A80;margin-top:4px;line-height:1.45;">Система на каждый день: сон, еда, движение, внимание.</div><div style="height:5px;border-radius:3px;background:#EDE5D5;margin-top:12px;overflow:hidden;"><div style="width:42%;height:100%;background:#C2532F;"></div></div><div style="font-size:12px;color:#5E6A80;margin-top:6px;">Пройдено 5 из 12 уроков</div></div>
+          </div>
+          <div style="width:250px;background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;opacity:0.92;">
+            <div style="height:120px;background:#EFE8DB;position:relative;"><span style="position:absolute;left:16px;top:12px;background:#5E6A80;color:#FFFFFF;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Скоро</span></div>
+            <div style="padding:14px 16px 16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Сон: восстановление как навык — и что делать при сбитом режиме</div><div style="font-size:13px;color:#5E6A80;margin-top:4px;">Длинное название переносится на 2 строки, дальше — многоточие.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Тарифы и переключатель</div>
+        <div style="display:inline-flex;background:#EDE5D5;border-radius:999px;padding:4px;margin-bottom:14px;">
+          <div style="padding:8px 18px;border-radius:999px;font-size:14px;font-weight:600;color:#5E6A80;">Месяц</div>
+          <div style="padding:8px 18px;border-radius:999px;font-size:14px;font-weight:600;color:#14233C;background:#FFFFFF;box-shadow:0 1px 2px rgba(20,35,60,0.08);">Год · −22%</div>
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;">
+          <div style="width:240px;border:2px solid #C2532F;border-radius:12px;padding:18px;position:relative;background:#FFFFFF;box-shadow:0 4px 12px rgba(20,35,60,0.08);">
+            <span style="position:absolute;top:-11px;left:16px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+            <div style="font-size:14px;font-weight:600;color:#14233C;margin-top:4px;">Годовой</div>
+            <div style="font-size:28px;font-weight:800;color:#14233C;letter-spacing:-0.01em;margin-top:2px;">14&nbsp;000&nbsp;₽<span style="font-size:14px;font-weight:500;color:#5E6A80;"> / год</span></div>
+            <div style="font-size:13px;color:#5E6A80;margin-top:4px;">≈ 1&nbsp;167&nbsp;₽ в месяц · продлевается автоматически</div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;margin-top:14px;">Выбрать годовой</div>
+          </div>
+          <div style="width:240px;border:1px solid #E4DCCC;border-radius:12px;padding:18px;background:#FFFFFF;">
+            <div style="font-size:14px;font-weight:600;color:#14233C;margin-top:4px;">Месячный</div>
+            <div style="font-size:28px;font-weight:800;color:#14233C;letter-spacing:-0.01em;margin-top:2px;">1&nbsp;500&nbsp;₽<span style="font-size:14px;font-weight:500;color:#5E6A80;"> / месяц</span></div>
+            <div style="font-size:13px;color:#5E6A80;margin-top:4px;">Продлевается автоматически · отмена в любой момент</div>
+            <div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:11px;border-radius:10px;text-align:center;margin-top:14px;background:#FFFFFF;">Выбрать месячный</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Навигация</div>
+        <div style="display:grid;gap:12px;">
+          <div style="font-size:13px;color:#5E6A80;display:flex;gap:6px;align-items:center;"><a href="#2b" style="color:#5E6A80;">Курсы</a><span>›</span><a href="#2b" style="color:#5E6A80;">Здоровые привычки</a><span>›</span><span style="color:#14233C;font-weight:600;">Урок 3</span></div>
+          <div style="display:flex;gap:20px;border-bottom:1.5px solid #E4DCCC;">
+            <div style="font-size:15px;font-weight:600;color:#14233C;padding:8px 2px;border-bottom:2.5px solid #C2532F;margin-bottom:-1.5px;">Обзор</div>
+            <div style="font-size:15px;font-weight:500;color:#5E6A80;padding:8px 2px;">Содержание</div>
+            <div style="font-size:15px;font-weight:500;color:#5E6A80;padding:8px 2px;">Подписка</div>
+          </div>
+          <div style="border:1px solid #E4DCCC;border-radius:10px;overflow:hidden;max-width:420px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:13px 16px;background:#FAF6EE;"><div style="font-size:15px;font-weight:600;color:#14233C;">Раздел 2. Утренний распорядок</div><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+            <div style="padding:4px 16px 12px;display:grid;gap:2px;">
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F0E9DB;"><div style="font-size:14px;color:#3E7A54;display:flex;gap:8px;align-items:center;"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок 2. Сигналы и награды</div><div style="font-size:12px;color:#8A8272;">6 мин</div></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;"><div style="font-size:14px;color:#14233C;font-weight:600;display:flex;gap:8px;align-items:center;"><span style="width:16px;height:16px;border-radius:50%;border:2px solid #C2532F;display:inline-block;"></span>Урок 3. Утренний якорь</div><div style="font-size:12px;color:#8A8272;">7 мин</div></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:center;"><div style="border:1.5px solid #14233C;color:#14233C;font-size:14px;font-weight:600;padding:10px 22px;border-radius:10px;background:#FFFFFF;">Показать ещё 8 курсов</div></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Модальное окно и уведомления</div>
+        <div style="background:#14233C14;border-radius:12px;padding:18px;display:flex;justify-content:center;background-color:rgba(20,35,60,0.35);">
+          <div style="width:320px;background:#FFFFFF;border-radius:16px;box-shadow:0 12px 32px rgba(20,35,60,0.2);padding:22px;">
+            <div style="font-size:18px;font-weight:700;color:#14233C;">Отключить автопродление?</div>
+            <div style="font-size:14px;color:#5E6A80;line-height:1.55;margin-top:8px;">Доступ сохранится до 12 марта 2027 года. После этого подписка завершится, а прогресс останется в вашем кабинете.</div>
+            <div style="display:grid;gap:8px;margin-top:16px;">
+              <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;">Оставить подписку</div>
+              <div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:11px;border-radius:10px;text-align:center;background:#FFFFFF;">Отключить продление</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;gap:8px;margin-top:14px;max-width:420px;">
+          <div style="display:flex;gap:10px;align-items:flex-start;background:#E7F0E9;border-radius:10px;padding:12px 14px;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:1px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;color:#26463A;line-height:1.45;"><span style="font-weight:600;">Урок отмечен прочитанным.</span> Следующий — «Вечерняя рутина».</div></div>
+          <div style="display:flex;gap:10px;align-items:flex-start;background:#F6ECD9;border-radius:10px;padding:12px 14px;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:1px;"><path d="M8 1.5 15 14H1Z" fill="#A6731D"></path><path d="M8 6v4M8 12.2h.01" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"></path></svg><div style="font-size:14px;color:#5F470F;line-height:1.45;"><span style="font-weight:600;">Не удалось продлить подписку.</span> Доступ сохранён до 19 марта — обновите способ оплаты. <a href="#2b" style="color:#A6731D;font-weight:600;">Повторить оплату</a></div></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Загрузка и пустые состояния</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+          <div style="width:230px;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;">
+            <div style="height:100px;background:#EDE5D5;animation:om-pulse 1.6s ease-in-out infinite;"></div>
+            <div style="padding:14px;display:grid;gap:8px;"><div style="height:14px;width:70%;background:#EDE5D5;border-radius:4px;animation:om-pulse 1.6s ease-in-out infinite;"></div><div style="height:10px;width:90%;background:#F0E9DB;border-radius:4px;animation:om-pulse 1.6s ease-in-out infinite;"></div><div style="height:10px;width:55%;background:#F0E9DB;border-radius:4px;animation:om-pulse 1.6s ease-in-out infinite;"></div></div>
+          </div>
+          <div style="width:250px;border:1px dashed #D8CFBE;border-radius:12px;padding:22px;text-align:center;">
+            <svg width="40" height="40" viewBox="0 0 100 100" style="opacity:0.5;"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path></svg>
+            <div style="font-size:15px;font-weight:700;color:#14233C;margin-top:8px;">Пока нет начатых курсов</div>
+            <div style="font-size:13px;color:#5E6A80;line-height:1.5;margin-top:4px;">Откройте каталог и начните с первого урока — это займёт 7 минут.</div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:14px;font-weight:600;padding:10px 16px;border-radius:10px;display:inline-block;margin-top:12px;">К каталогу</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">История платежей</div>
+        <div style="max-width:460px;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;">
+          <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:10px 16px;background:#FAF6EE;font-size:12px;color:#8A8272;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;"><span>Платёж</span><span>Сумма</span><span>Статус</span></div>
+          <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:13px 16px;border-top:1px solid #F0E9DB;align-items:center;"><div><div style="font-size:14px;font-weight:600;color:#14233C;">Годовая подписка</div><div style="font-size:12px;color:#8A8272;">12 июля 2026 · ЮKassa · карта ····4212</div></div><div style="font-size:14px;font-weight:600;color:#14233C;">14&nbsp;000&nbsp;₽</div><span style="background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;">Оплачен</span></div>
+          <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:13px 16px;border-top:1px solid #F0E9DB;align-items:center;"><div><div style="font-size:14px;font-weight:600;color:#14233C;">Месячная подписка</div><div style="font-size:12px;color:#8A8272;">12 июня 2026 · ЮKassa · карта ····4212</div></div><div style="font-size:14px;font-weight:600;color:#14233C;">1&nbsp;500&nbsp;₽</div><span style="background:#F7E5E2;color:#B42318;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;">Отклонён</span></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #EDE5D5;border-radius:12px;padding:20px;grid-column:1/-1;">
+        <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;margin-bottom:14px;">Блоки лекции</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;">
+          <div style="width:560px;">
+            <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;">Начните с одного действия, которое занимает меньше двух минут. Привязка к <a href="#2b">существующему распорядку</a> работает лучше, чем напоминания: <strong style="color:#14233C;">сигналом становится сама жизнь</strong>, а не телефон.</div>
+            <div style="margin:18px 0;padding:4px 0 4px 0;display:flex;gap:14px;"><div style="font-family:'Literata',serif;font-size:44px;line-height:1;color:#D96C4A;flex:none;">«</div><div><div style="font-family:'Literata',serif;font-style:italic;font-size:18px;color:#26334B;line-height:1.6;">Мы не поднимаемся до уровня своих целей — мы опускаемся до уровня своих систем.</div><div style="font-size:13px;color:#8A8272;margin-top:6px;">Джеймс Клир, «Атомные привычки»</div></div></div>
+            <ul style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin:0;padding-left:22px;">
+              <li>сигнал — уже существующее событие дня;</li>
+              <li>действие — короче двух минут;</li>
+              <li>награда — заметная и немедленная.</li>
+            </ul>
+            <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:18px;display:flex;gap:10px;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#C2532F"></circle><path d="M8 4.6v4.2M8 11.4h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:15px;color:#26334B;line-height:1.55;"><span style="font-weight:600;color:#14233C;">Важно.</span> Якорь должен уже существовать в вашем дне. Не создавайте новый ритуал ради ритуала.</div></div>
+          </div>
+          <div style="width:320px;display:grid;gap:14px;align-content:start;">
+            <div><div style="width:320px;height:200px;"><image-slot id="comp-lesson-img" shape="rounded" radius="12" placeholder="Фото к уроку: утренний стол, блокнот"></image-slot></div><div style="font-size:13px;color:#8A8272;margin-top:6px;">Подпись: якорь может быть простым предметом.</div></div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;display:flex;align-items:center;justify-content:center;gap:10px;"><svg width="18" height="18" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан</div>
+            <div style="border:1px solid #E4DCCC;border-radius:12px;padding:14px 16px;background:#FFFFFF;"><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;">Дальше</div><div style="font-size:15px;font-weight:700;color:#14233C;margin-top:4px;">Урок 4. Вечерняя рутина: как закрывать день</div><div style="font-size:13px;color:#5E6A80;margin-top:2px;">6 минут чтения</div></div>
+            <div style="border:1px solid #E4DCCC;border-radius:12px;padding:14px 16px;background:#FAF6EE;"><div style="font-size:14px;font-weight:600;color:#14233C;">Нужна помощь?</div><div style="font-size:13px;color:#5E6A80;line-height:1.5;margin-top:4px;">Напишите в поддержку — отвечаем в течение дня: <a href="#2b">@AbrikosoffBot</a> или support@abrikosoff.com</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2c ГЛАВНАЯ -->
+  <div id="2c" data-screen-label="Главная" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2c</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Главная страница</div><div style="font-size:13px;color:#8A8272;">390 и 1440 · тексты черновые</div></div>
+    <div style="display:flex;gap:32px;align-items:flex-start;">
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Мобильный · 390</div>
+        <div style="width:390px;background:#F6F0E7;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:#F6F0E7;border-bottom:1px solid #E4DCCC;">
+            <div style="display:flex;align-items:center;gap:9px;"><svg width="28" height="28" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:16px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Абрикософф</div></div>
+            <div style="display:flex;align-items:center;gap:14px;"><div style="font-size:14px;font-weight:600;color:#14233C;">Войти</div><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="#14233C" stroke-width="2" stroke-linecap="round"></path></svg></div>
+          </div>
+          <div style="padding:32px 20px 8px;">
+            <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия Абрикософф</div>
+            <div style="font-size:32px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.14;margin-top:10px;text-wrap:pretty;">Здоровые привычки — спокойно и по системе</div>
+            <div style="font-size:16px;color:#5E6A80;line-height:1.6;margin-top:12px;">Подписка на библиотеку практических курсов о привычках, здоровье и качестве жизни. Короткие текстовые уроки — читайте с телефона в удобном темпе.</div>
+            <div style="display:grid;gap:10px;margin-top:20px;">
+              <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;">Выбрать тариф</div>
+              <div style="border:1.5px solid #14233C;color:#14233C;font-size:16px;font-weight:600;padding:13px;border-radius:10px;text-align:center;background:#FFFFFF;">Смотреть первый курс</div>
+            </div>
+            <div style="font-size:13px;color:#8A8272;margin-top:10px;text-align:center;">От 1&nbsp;167&nbsp;₽ в месяц · отмена продления в один клик</div>
+          </div>
+          <div style="padding:8px 20px 28px;"><div style="width:100%;height:210px;"><image-slot id="home-hero-m" shape="rounded" radius="14" placeholder="Фото: утренний свет, стол, блокнот"></image-slot></div></div>
+          <div style="padding:0 20px 28px;">
+            <div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">Что такое Академия</div>
+            <div style="font-size:16px;color:#26334B;line-height:1.6;margin-top:10px;">Это авторская образовательная среда: последовательные курсы без инфошума и обещаний «результата за неделю». Мы объясняем, как устроены привычки, и помогаем встроить их в обычную жизнь.</div>
+          </div>
+          <div style="padding:0 20px 28px;">
+            <div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">Для кого</div>
+            <div style="display:grid;gap:10px;margin-top:12px;">
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:14px 16px;"><div style="font-size:15px;font-weight:600;color:#14233C;">Хотите системности</div><div style="font-size:14px;color:#5E6A80;line-height:1.5;margin-top:3px;">Устали от разрозненных советов и хотите понятную последовательность шагов.</div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:14px 16px;"><div style="font-size:15px;font-weight:600;color:#14233C;">Цените своё время</div><div style="font-size:14px;color:#5E6A80;line-height:1.5;margin-top:3px;">Уроки по 5–10 минут, которые удобно читать между делами.</div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:14px 16px;"><div style="font-size:15px;font-weight:600;color:#14233C;">Без крайностей</div><div style="font-size:14px;color:#5E6A80;line-height:1.5;margin-top:3px;">Никаких марафонов и жёстких ограничений — только устойчивые изменения.</div></div>
+            </div>
+          </div>
+          <div style="background:#14233C;padding:28px 20px;">
+            <div style="font-size:22px;font-weight:700;color:#F6F0E7;letter-spacing:-0.01em;">Что входит в подписку</div>
+            <div style="display:grid;gap:12px;margin-top:14px;">
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15px;color:#DDE3EE;line-height:1.5;"><span style="font-weight:600;color:#F6F0E7;">Все курсы библиотеки</span> — одна подписка открывает всё.</div></div>
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15px;color:#DDE3EE;line-height:1.5;"><span style="font-weight:600;color:#F6F0E7;">Новые материалы каждый месяц</span> — без доплат.</div></div>
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15px;color:#DDE3EE;line-height:1.5;"><span style="font-weight:600;color:#F6F0E7;">Прогресс и продолжение</span> — вернётесь ровно туда, где остановились.</div></div>
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15px;color:#DDE3EE;line-height:1.5;"><span style="font-weight:600;color:#F6F0E7;">Отмена в один клик</span> — доступ до конца оплаченного периода.</div></div>
+            </div>
+          </div>
+          <div style="padding:28px 20px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;"><div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">Курсы</div><a href="#2c" style="font-size:14px;font-weight:600;">Каталог</a></div>
+            <div style="display:grid;gap:14px;margin-top:14px;">
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,35,60,0.06);">
+                <div style="height:150px;background:#FAF3E6;position:relative;overflow:hidden;"><div style="position:absolute;right:-80px;top:-80px;width:150px;height:150px;border:2px solid #D96C4A;border-radius:50%;"></div><span style="position:absolute;left:16px;top:14px;background:#F7E3DB;color:#A84526;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">Первый курс</span><div style="position:absolute;left:16px;bottom:12px;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#C2532F;font-weight:600;">Курс Академии</div></div>
+                <div style="padding:16px;"><div style="font-size:18px;font-weight:700;color:#14233C;">Здоровые привычки</div><div style="font-size:14px;color:#5E6A80;line-height:1.5;margin-top:4px;">Система на каждый день: сон, питание, движение и внимание — маленькими шагами.</div><div style="font-size:13px;color:#8A8272;margin-top:10px;">12 уроков · 6 разделов · обновляется</div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:14px;"><span style="background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span><div style="font-size:14px;font-weight:700;color:#14233C;margin-top:8px;line-height:1.3;">Сон: восстановление как навык</div></div>
+                <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:14px;"><span style="background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span><div style="font-size:14px;font-weight:700;color:#14233C;margin-top:8px;line-height:1.3;">Питание без крайностей</div></div>
+              </div>
+            </div>
+            <div style="font-size:13px;color:#5E6A80;line-height:1.55;margin-top:14px;">Библиотека пополняется каждый месяц — новые курсы и уроки сразу входят в подписку.</div>
+          </div>
+          <div style="padding:0 20px 28px;">
+            <div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">Подписка</div>
+            <div style="display:grid;gap:12px;margin-top:14px;">
+              <div style="border:2px solid #C2532F;border-radius:12px;padding:18px;position:relative;background:#FFFFFF;">
+                <span style="position:absolute;top:-11px;left:16px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px;"><div style="font-size:15px;font-weight:600;color:#14233C;">Годовой</div><div style="font-size:24px;font-weight:800;color:#14233C;">14&nbsp;000&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;">/год</span></div></div>
+                <div style="font-size:13px;color:#5E6A80;margin-top:2px;">≈ 1&nbsp;167&nbsp;₽ в месяц</div>
+              </div>
+              <div style="border:1px solid #E4DCCC;border-radius:12px;padding:18px;background:#FFFFFF;">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;"><div style="font-size:15px;font-weight:600;color:#14233C;">Месячный</div><div style="font-size:24px;font-weight:800;color:#14233C;">1&nbsp;500&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;">/мес</span></div></div>
+              </div>
+              <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;">Смотреть тарифы</div>
+            </div>
+          </div>
+          <div style="padding:0 20px 28px;">
+            <div style="font-size:22px;font-weight:700;color:#14233C;letter-spacing:-0.01em;">Частые вопросы</div>
+            <div style="border:1px solid #E4DCCC;border-radius:12px;background:#FFFFFF;margin-top:12px;overflow:hidden;">
+              <div style="padding:14px 16px;border-bottom:1px solid #F0E9DB;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:15px;font-weight:600;color:#14233C;">Как отменить продление?</div><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div><div style="font-size:14px;color:#5E6A80;line-height:1.55;margin-top:8px;">В кабинете, в разделе «Подписка», одним нажатием. Доступ сохранится до конца оплаченного периода.</div></div>
+              <div style="padding:14px 16px;border-bottom:1px solid #F0E9DB;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:15px;font-weight:600;color:#14233C;">Как войти без Telegram?</div><svg width="18" height="18" viewBox="0 0 24 24" style="transform:rotate(-90deg);"><path d="M6 9l6 6 6-6" fill="none" stroke="#5E6A80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+              <div style="padding:14px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-size:15px;font-weight:600;color:#14233C;">Что будет с прогрессом после отмены?</div><svg width="18" height="18" viewBox="0 0 24 24" style="transform:rotate(-90deg);"><path d="M6 9l6 6 6-6" fill="none" stroke="#5E6A80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+            </div>
+          </div>
+          <div style="background:#14233C;padding:26px 20px;">
+            <div style="display:flex;align-items:center;gap:9px;"><svg width="24" height="24" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#F6F0E7"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:15px;font-weight:800;color:#F6F0E7;">Академия Абрикософф</div></div>
+            <div style="display:grid;gap:8px;margin-top:14px;font-size:14px;">
+              <a href="#2c" style="color:#B8C2D4;">Каталог курсов</a><a href="#2c" style="color:#B8C2D4;">Тарифы</a><a href="#2c" style="color:#B8C2D4;">Оферта</a><a href="#2c" style="color:#B8C2D4;">Политика конфиденциальности</a>
+            </div>
+            <div style="font-size:13px;color:#8A96AC;line-height:1.6;margin-top:14px;">Поддержка: <a href="#2c" style="color:#E8906F;">@AbrikosoffBot</a> · support@abrikosoff.com<br>Продавец — ИП (реквизиты на юридической странице).<br>Оплата проходит через защищённую страницу ЮKassa.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Настольный · 1440</div>
+        <div style="width:1440px;background:#F6F0E7;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0 56px;height:72px;border-bottom:1px solid #E4DCCC;">
+            <div style="display:flex;align-items:center;gap:11px;"><svg width="34" height="34" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div><div style="font-size:10px;letter-spacing:0.26em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия</div><div style="font-size:17px;font-weight:800;color:#14233C;letter-spacing:-0.01em;line-height:1;">Абрикософф</div></div></div>
+            <div style="display:flex;align-items:center;gap:28px;">
+              <a href="#2c" style="font-size:15px;font-weight:500;color:#14233C;">Курсы</a>
+              <a href="#2c" style="font-size:15px;font-weight:500;color:#14233C;">Тарифы</a>
+              <a href="#2c" style="font-size:15px;font-weight:500;color:#14233C;">Об Академии</a>
+              <div style="display:flex;align-items:center;gap:7px;border:1px solid #D8CFBE;border-radius:999px;padding:8px 14px;font-size:13.5px;font-weight:600;color:#14233C;"><svg width="15" height="15" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#14233C" stroke-width="1.8"></circle><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18" fill="none" stroke="#14233C" stroke-width="1.4"></path></svg>RU · ₽</div><div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:10px 20px;border-radius:10px;background:#FFFFFF;">Войти</div>
+            </div>
+          </div>
+          <div style="max-width:1140px;margin:0 auto;padding:72px 0 64px;display:grid;grid-template-columns:1fr 480px;gap:64px;align-items:center;">
+            <div>
+              <div style="font-size:13px;letter-spacing:0.18em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия Абрикософф</div>
+              <div style="font-size:46px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.12;margin-top:14px;text-wrap:pretty;">Здоровые привычки — спокойно и по системе</div>
+              <div style="font-size:18px;color:#5E6A80;line-height:1.6;margin-top:16px;max-width:520px;">Подписка на библиотеку практических курсов о привычках, здоровье и качестве жизни. Короткие текстовые уроки — читайте в удобном темпе.</div>
+              <div style="display:flex;gap:12px;margin-top:28px;">
+                <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px 26px;border-radius:10px;">Выбрать тариф</div>
+                <div style="border:1.5px solid #14233C;color:#14233C;font-size:16px;font-weight:600;padding:13px 24px;border-radius:10px;background:#FFFFFF;">Смотреть первый курс</div>
+              </div>
+              <div style="font-size:14px;color:#8A8272;margin-top:12px;">От 1&nbsp;167&nbsp;₽ в месяц · отмена продления в один клик</div>
+            </div>
+            <div style="width:480px;height:340px;"><image-slot id="home-hero-d" shape="rounded" radius="16" placeholder="Фото: утренний свет, стол, блокнот, чай"></image-slot></div>
+          </div>
+          <div style="max-width:1140px;margin:0 auto;padding-bottom:64px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:22px;"><div style="font-size:16px;font-weight:700;color:#14233C;">Хотите системности</div><div style="font-size:14.5px;color:#5E6A80;line-height:1.55;margin-top:6px;">Устали от разрозненных советов и хотите понятную последовательность шагов.</div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:22px;"><div style="font-size:16px;font-weight:700;color:#14233C;">Цените своё время</div><div style="font-size:14.5px;color:#5E6A80;line-height:1.55;margin-top:6px;">Уроки по 5–10 минут, которые удобно читать между делами.</div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;padding:22px;"><div style="font-size:16px;font-weight:700;color:#14233C;">Без крайностей</div><div style="font-size:14.5px;color:#5E6A80;line-height:1.55;margin-top:6px;">Никаких марафонов и жёстких ограничений — только устойчивые изменения.</div></div>
+            </div>
+          </div>
+          <div style="background:#14233C;">
+            <div style="max-width:1140px;margin:0 auto;padding:56px 0;display:grid;grid-template-columns:340px 1fr;gap:64px;align-items:start;">
+              <div style="font-size:30px;font-weight:800;color:#F6F0E7;letter-spacing:-0.015em;line-height:1.2;">Что входит в подписку</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px 40px;">
+                <div style="display:flex;gap:12px;align-items:flex-start;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15.5px;color:#DDE3EE;line-height:1.55;"><span style="font-weight:600;color:#F6F0E7;">Все курсы библиотеки</span> — одна подписка открывает всё.</div></div>
+                <div style="display:flex;gap:12px;align-items:flex-start;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15.5px;color:#DDE3EE;line-height:1.55;"><span style="font-weight:600;color:#F6F0E7;">Новые материалы каждый месяц</span> — без доплат.</div></div>
+                <div style="display:flex;gap:12px;align-items:flex-start;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15.5px;color:#DDE3EE;line-height:1.55;"><span style="font-weight:600;color:#F6F0E7;">Прогресс и продолжение</span> — вернётесь туда, где остановились.</div></div>
+                <div style="display:flex;gap:12px;align-items:flex-start;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#D96C4A"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#F6F0E7" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:15.5px;color:#DDE3EE;line-height:1.55;"><span style="font-weight:600;color:#F6F0E7;">Отмена в один клик</span> — доступ до конца оплаченного периода.</div></div>
+              </div>
+            </div>
+          </div>
+          <div style="max-width:1140px;margin:0 auto;padding:64px 0;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;"><div style="font-size:30px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Курсы</div><a href="#2c" style="font-size:15px;font-weight:600;">Весь каталог</a></div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:20px;">
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,35,60,0.06);">
+                <div style="height:130px;background:#FAF3E6;position:relative;overflow:hidden;"><div style="position:absolute;right:-70px;top:-70px;width:130px;height:130px;border:2px solid #D96C4A;border-radius:50%;"></div><span style="position:absolute;left:14px;top:12px;background:#F7E3DB;color:#A84526;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Первый курс</span></div>
+                <div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Здоровые привычки</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Система на каждый день — маленькими шагами.</div><div style="font-size:12.5px;color:#8A8272;margin-top:10px;">12 уроков · 6 разделов</div></div>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;opacity:0.94;"><div style="height:130px;background:#EFE8DB;position:relative;"><span style="position:absolute;left:14px;top:12px;background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span></div><div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Сон: восстановление как навык</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Режим, среда и вечерние ритуалы.</div></div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;opacity:0.94;"><div style="height:130px;background:#EFE8DB;position:relative;"><span style="position:absolute;left:14px;top:12px;background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span></div><div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Питание без крайностей</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Спокойные отношения с едой.</div></div></div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;opacity:0.94;"><div style="height:130px;background:#EFE8DB;position:relative;"><span style="position:absolute;left:14px;top:12px;background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span></div><div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Внимание и фокус</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Работа без постоянных отвлечений.</div></div></div>
+            </div>
+            <div style="font-size:14px;color:#5E6A80;margin-top:16px;">Библиотека пополняется каждый месяц — новые курсы и уроки сразу входят в подписку.</div>
+          </div>
+          <div style="max-width:1140px;margin:0 auto;padding-bottom:64px;">
+            <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:16px;padding:40px 48px;display:grid;grid-template-columns:1fr 380px;gap:48px;align-items:center;">
+              <div>
+                <div style="font-size:26px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Одна подписка — вся Академия</div>
+                <div style="font-size:15.5px;color:#5E6A80;line-height:1.6;margin-top:8px;">Годовой тариф — 14&nbsp;000&nbsp;₽ (выгода 4&nbsp;000&nbsp;₽, −22%), месячный — 1&nbsp;500&nbsp;₽. Продление отключается в один клик; доступ сохраняется до конца оплаченного периода.</div>
+                <div style="display:flex;gap:12px;margin-top:20px;"><div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 24px;border-radius:10px;">Смотреть тарифы</div><a href="#2c" style="font-size:15px;font-weight:500;align-self:center;">Условия подписки</a></div>
+              </div>
+              <div style="border:2px solid #C2532F;border-radius:12px;padding:20px;position:relative;">
+                <span style="position:absolute;top:-11px;left:16px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;"><div style="font-size:15px;font-weight:600;color:#14233C;">Годовой</div><div style="font-size:26px;font-weight:800;color:#14233C;">14&nbsp;000&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;">/год</span></div></div>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;padding-top:10px;border-top:1px solid #F0E9DB;"><div style="font-size:15px;font-weight:600;color:#14233C;">Месячный</div><div style="font-size:20px;font-weight:700;color:#14233C;">1&nbsp;500&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;">/мес</span></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="background:#14233C;">
+            <div style="max-width:1140px;margin:0 auto;padding:44px 0;display:grid;grid-template-columns:1fr auto auto auto;gap:64px;align-items:start;">
+              <div><div style="display:flex;align-items:center;gap:9px;"><svg width="26" height="26" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#F6F0E7"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:15px;font-weight:800;color:#F6F0E7;">Академия Абрикософф</div></div><div style="font-size:13px;color:#8A96AC;line-height:1.6;margin-top:12px;max-width:300px;">Продавец — ИП (реквизиты на юридической странице). Оплата через защищённую страницу ЮKassa.</div></div>
+              <div style="display:grid;gap:8px;font-size:14px;"><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A96AC;font-weight:600;">Академия</div><a href="#2c" style="color:#B8C2D4;">Каталог</a><a href="#2c" style="color:#B8C2D4;">Тарифы</a><a href="#2c" style="color:#B8C2D4;">Об Академии</a></div>
+              <div style="display:grid;gap:8px;font-size:14px;"><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A96AC;font-weight:600;">Документы</div><a href="#2c" style="color:#B8C2D4;">Оферта</a><a href="#2c" style="color:#B8C2D4;">Конфиденциальность</a></div>
+              <div style="display:grid;gap:8px;font-size:14px;"><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A96AC;font-weight:600;">Поддержка</div><a href="#2c" style="color:#E8906F;">@AbrikosoffBot</a><a href="#2c" style="color:#B8C2D4;">support@abrikosoff.com</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2d ТАРИФЫ -->
+  <div id="2d" data-screen-label="Тарифы" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2d</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Тарифы</div><div style="font-size:13px;color:#8A8272;">390 и 1440</div></div>
+    <div style="display:flex;gap:32px;align-items:flex-start;">
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Мобильный · 390</div>
+        <div style="width:390px;background:#F6F0E7;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #E4DCCC;">
+            <div style="display:flex;align-items:center;gap:9px;"><svg width="28" height="28" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:16px;font-weight:800;color:#14233C;">Абрикософф</div></div>
+            <svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="#14233C" stroke-width="2" stroke-linecap="round"></path></svg>
+          </div>
+          <div style="padding:28px 20px 32px;">
+            <div style="font-size:28px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Подписка на Академию</div>
+            <div style="font-size:15px;color:#5E6A80;line-height:1.55;margin-top:8px;">Один тариф — вся библиотека курсов и все новые материалы.</div>
+            <div style="display:flex;background:#EDE5D5;border-radius:999px;padding:4px;margin-top:18px;">
+              <div style="flex:1;padding:10px;border-radius:999px;font-size:14px;font-weight:600;color:#5E6A80;text-align:center;">Месяц</div>
+              <div style="flex:1;padding:10px;border-radius:999px;font-size:14px;font-weight:600;color:#14233C;background:#FFFFFF;box-shadow:0 1px 2px rgba(20,35,60,0.08);text-align:center;">Год · −22%</div>
+            </div>
+            <div style="border:2px solid #C2532F;border-radius:14px;padding:22px 20px;position:relative;background:#FFFFFF;box-shadow:0 4px 12px rgba(20,35,60,0.08);margin-top:22px;">
+              <span style="position:absolute;top:-12px;left:18px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+              <div style="font-size:15px;font-weight:600;color:#14233C;margin-top:6px;">Годовой</div>
+              <div style="font-size:34px;font-weight:800;color:#14233C;letter-spacing:-0.015em;margin-top:2px;">14&nbsp;000&nbsp;₽<span style="font-size:15px;font-weight:500;color:#5E6A80;"> / год</span></div>
+              <div style="font-size:14px;color:#5E6A80;margin-top:4px;">≈ 1&nbsp;167&nbsp;₽ в месяц вместо 1&nbsp;500&nbsp;₽</div>
+              <div style="display:grid;gap:9px;margin-top:16px;">
+                <div style="display:flex;gap:9px;align-items:flex-start;"><svg width="17" height="17" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;">Все курсы библиотеки и новые материалы</div></div>
+                <div style="display:flex;gap:9px;align-items:flex-start;"><svg width="17" height="17" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;">Чтение с телефона и компьютера</div></div>
+                <div style="display:flex;gap:9px;align-items:flex-start;"><svg width="17" height="17" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;">Отмена продления в один клик</div></div>
+              </div>
+              <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:14px;border-radius:10px;text-align:center;margin-top:18px;">Продолжить с годовым</div>
+              <div style="font-size:12.5px;color:#8A8272;text-align:center;margin-top:8px;">Продлевается автоматически 12 июля 2027 · <a href="#2d">условия</a></div>
+            </div>
+            <div style="border:1px solid #E4DCCC;border-radius:14px;padding:20px;background:#FFFFFF;margin-top:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;"><div style="font-size:15px;font-weight:600;color:#14233C;">Месячный</div><div style="font-size:24px;font-weight:800;color:#14233C;">1&nbsp;500&nbsp;₽<span style="font-size:13px;font-weight:500;color:#5E6A80;"> / мес</span></div></div>
+              <div style="font-size:13.5px;color:#5E6A80;margin-top:4px;">Тот же полный доступ · продлевается автоматически</div>
+              <div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;background:#FFFFFF;margin-top:14px;">Выбрать месячный</div>
+            </div>
+            <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:18px;display:flex;gap:10px;"><svg width="19" height="19" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#5E6A80"></circle><path d="M8 7.2v4M8 4.6h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:13.5px;color:#26334B;line-height:1.55;">Оплата проходит на защищённой странице ЮKassa. Отключить продление можно в любой момент — доступ сохранится до конца оплаченного периода.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Настольный · 1440</div>
+        <div style="width:1440px;background:#F6F0E7;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0 56px;height:72px;border-bottom:1px solid #E4DCCC;">
+            <div style="display:flex;align-items:center;gap:11px;"><svg width="34" height="34" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div><div style="font-size:10px;letter-spacing:0.26em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия</div><div style="font-size:17px;font-weight:800;color:#14233C;line-height:1;">Абрикософф</div></div></div>
+            <div style="display:flex;align-items:center;gap:28px;"><a href="#2d" style="font-size:15px;font-weight:500;color:#14233C;">Курсы</a><a href="#2d" style="font-size:15px;font-weight:600;color:#C2532F;">Тарифы</a><a href="#2d" style="font-size:15px;font-weight:500;color:#14233C;">Об Академии</a><div style="display:flex;align-items:center;gap:7px;border:1px solid #D8CFBE;border-radius:999px;padding:8px 14px;font-size:13.5px;font-weight:600;color:#14233C;"><svg width="15" height="15" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#14233C" stroke-width="1.8"></circle><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18" fill="none" stroke="#14233C" stroke-width="1.4"></path></svg>RU · ₽</div><div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:10px 20px;border-radius:10px;background:#FFFFFF;">Войти</div></div>
+          </div>
+          <div style="max-width:880px;margin:0 auto;padding:64px 0 72px;text-align:center;">
+            <div style="font-size:38px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">Подписка на Академию</div>
+            <div style="font-size:17px;color:#5E6A80;margin-top:10px;">Один тариф — вся библиотека курсов и все новые материалы.</div>
+            <div style="display:inline-flex;background:#EDE5D5;border-radius:999px;padding:4px;margin-top:24px;">
+              <div style="padding:10px 26px;border-radius:999px;font-size:14px;font-weight:600;color:#5E6A80;">Месяц</div>
+              <div style="padding:10px 26px;border-radius:999px;font-size:14px;font-weight:600;color:#14233C;background:#FFFFFF;box-shadow:0 1px 2px rgba(20,35,60,0.08);">Год · −22%</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:32px;text-align:left;">
+              <div style="border:2px solid #C2532F;border-radius:16px;padding:28px;position:relative;background:#FFFFFF;box-shadow:0 4px 12px rgba(20,35,60,0.08);">
+                <span style="position:absolute;top:-12px;left:20px;background:#E7F0E9;color:#3E7A54;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;">−22% · выгода 4&nbsp;000&nbsp;₽</span>
+                <div style="font-size:15px;font-weight:600;color:#14233C;margin-top:6px;">Годовой</div>
+                <div style="font-size:36px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">14&nbsp;000&nbsp;₽<span style="font-size:15px;font-weight:500;color:#5E6A80;"> / год</span></div>
+                <div style="font-size:14px;color:#5E6A80;margin-top:2px;">≈ 1&nbsp;167&nbsp;₽ в месяц вместо 1&nbsp;500&nbsp;₽</div>
+                <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px;border-radius:10px;text-align:center;margin-top:20px;">Продолжить с годовым</div>
+                <div style="font-size:12.5px;color:#8A8272;text-align:center;margin-top:8px;">Продлевается автоматически · <a href="#2d">условия</a></div>
+              </div>
+              <div style="border:1px solid #E4DCCC;border-radius:16px;padding:28px;background:#FFFFFF;">
+                <div style="font-size:15px;font-weight:600;color:#14233C;margin-top:6px;">Месячный</div>
+                <div style="font-size:36px;font-weight:800;color:#14233C;letter-spacing:-0.015em;">1&nbsp;500&nbsp;₽<span style="font-size:15px;font-weight:500;color:#5E6A80;"> / месяц</span></div>
+                <div style="font-size:14px;color:#5E6A80;margin-top:2px;">Тот же полный доступ</div>
+                <div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:12px;border-radius:10px;text-align:center;background:#FFFFFF;margin-top:20px;">Выбрать месячный</div>
+                <div style="font-size:12.5px;color:#8A8272;text-align:center;margin-top:8px;">Продлевается автоматически · <a href="#2d">условия</a></div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:32px;text-align:left;">
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;line-height:1.5;">Все курсы библиотеки и новые материалы без доплат</div></div>
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;line-height:1.5;">Вход через Telegram или по ссылке на почту</div></div>
+              <div style="display:flex;gap:10px;align-items:flex-start;"><svg width="18" height="18" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14.5px;color:#26334B;line-height:1.5;">Оплата на защищённой странице ЮKassa</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2e УРОК -->
+  <div id="2e" data-screen-label="Текстовый урок" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2e</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Текстовый урок</div><div style="font-size:13px;color:#8A8272;">главный экран продукта · 390 и 1440</div></div>
+    <div style="display:flex;gap:32px;align-items:flex-start;">
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Мобильный · 390</div>
+        <div style="width:390px;background:#FFFDF8;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="background:#FFFDF8;border-bottom:1px solid #EDE5D5;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;">
+              <div style="display:flex;align-items:center;gap:8px;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:600;color:#14233C;">Здоровые привычки</div></div>
+              <div style="font-size:13px;color:#8A8272;">Урок 3 из 12</div>
+            </div>
+            <div style="height:3px;background:#EDE5D5;"><div style="width:25%;height:100%;background:#C2532F;"></div></div>
+          </div>
+          <div style="padding:28px 24px 36px;">
+            <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#C2532F;font-weight:600;">Раздел 2 · Утренний распорядок</div>
+            <div style="font-size:26px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.2;margin-top:8px;text-wrap:pretty;">Утренний якорь: с чего начинается система</div>
+            <div style="font-size:13.5px;color:#8A8272;margin-top:8px;">7 минут чтения</div>
+            <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin-top:22px;">Самая частая ошибка при построении привычек — надеяться на силу воли. Она заканчивается раньше, чем день. Вместо этого мы построим систему, которая начинается с одного маленького утреннего действия — якоря.</div>
+            <div style="font-size:21px;font-weight:700;color:#14233C;letter-spacing:-0.01em;margin-top:26px;">Почему якорь работает</div>
+            <div style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin-top:12px;">Якорь — это привязка нового действия к <a href="#2e">уже существующему распорядку</a>. Сигналом становится сама жизнь: <strong style="color:#14233C;">после того как я налью утренний чай — я открою блокнот</strong>. Телефон и напоминания больше не нужны.</div>
+            <ul style="font-family:'Literata',serif;font-size:17px;color:#26334B;line-height:1.75;margin:14px 0 0;padding-left:22px;">
+              <li>сигнал — событие, которое уже происходит каждый день;</li>
+              <li>действие — короче двух минут;</li>
+              <li>награда — заметная сразу.</li>
+            </ul>
+            <div style="margin-top:22px;"><div style="width:100%;height:200px;"><image-slot id="lesson-img-m" shape="rounded" radius="12" placeholder="Фото: утренний стол с блокнотом"></image-slot></div><div style="font-size:13px;color:#8A8272;margin-top:7px;">Якорь может быть простым предметом — блокнот рядом с чайником.</div></div>
+            <div style="margin-top:24px;display:flex;gap:14px;"><div style="font-family:'Literata',serif;font-size:44px;line-height:1;color:#D96C4A;flex:none;">«</div><div><div style="font-family:'Literata',serif;font-style:italic;font-size:18px;color:#26334B;line-height:1.6;">Мы не поднимаемся до уровня своих целей — мы опускаемся до уровня своих систем.</div><div style="font-size:13px;color:#8A8272;margin-top:6px;">Джеймс Клир, «Атомные привычки»</div></div></div>
+            <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:14px 16px;margin-top:24px;display:flex;gap:10px;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:2px;"><circle cx="8" cy="8" r="7" fill="#C2532F"></circle><path d="M8 4.6v4.2M8 11.4h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:15px;color:#26334B;line-height:1.55;"><span style="font-weight:600;color:#14233C;">Задание на сегодня.</span> Выберите один якорь и запишите его формулой «после X — я сделаю Y».</div></div>
+            <div style="background:#C2532F;color:#FFFFFF;font-size:16px;font-weight:600;padding:15px;border-radius:10px;text-align:center;margin-top:28px;display:flex;align-items:center;justify-content:center;gap:10px;"><svg width="18" height="18" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан</div>
+            <div style="border:1px solid #E4DCCC;border-radius:12px;padding:16px;background:#FFFFFF;margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <div><div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8A8272;font-weight:600;">Дальше</div><div style="font-size:15px;font-weight:700;color:#14233C;margin-top:4px;line-height:1.3;">Урок 4. Вечерняя рутина: как закрывать день</div></div>
+              <svg width="20" height="20" viewBox="0 0 24 24" style="flex:none;"><path d="M10 6l6 6-6 6" fill="none" stroke="#C2532F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+            <div style="border:1px solid #E4DCCC;border-radius:12px;background:#FFFFFF;margin-top:22px;overflow:hidden;">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:#FAF6EE;"><div style="font-size:15px;font-weight:600;color:#14233C;">Содержание курса</div><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+              <div style="padding:6px 16px 12px;">
+                <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #F0E9DB;"><div style="font-size:14px;color:#3E7A54;display:flex;gap:8px;align-items:center;"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Раздел 1. Основы</div><div style="font-size:12px;color:#8A8272;">2 из 2</div></div>
+                <div style="display:flex;justify-content:space-between;padding:9px 0;"><div style="font-size:14px;color:#14233C;font-weight:600;display:flex;gap:8px;align-items:center;"><span style="width:16px;height:16px;border-radius:50%;border:2px solid #C2532F;display:inline-block;"></span>Раздел 2. Утренний распорядок</div><div style="font-size:12px;color:#8A8272;">1 из 3</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Настольный · 1440</div>
+        <div style="width:1440px;background:#FFFDF8;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0 40px;height:64px;border-bottom:1px solid #EDE5D5;background:#FFFDF8;">
+            <div style="display:flex;align-items:center;gap:16px;">
+              <svg width="28" height="28" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg>
+              <div style="font-size:13px;color:#5E6A80;display:flex;gap:6px;align-items:center;"><a href="#2e" style="color:#5E6A80;">Мои курсы</a><span>›</span><a href="#2e" style="color:#5E6A80;">Здоровые привычки</a><span>›</span><span style="color:#14233C;font-weight:600;">Урок 3</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;"><div style="font-size:13px;color:#8A8272;">Прогресс курса: 25%</div><div style="width:44px;height:44px;border-radius:50%;background:#14233C;color:#F6F0E7;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;">АК</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:300px 1fr;min-height:900px;">
+            <div style="border-right:1px solid #EDE5D5;background:#FAF6EE;padding:28px 24px;">
+              <div style="font-size:16px;font-weight:700;color:#14233C;line-height:1.3;">Здоровые привычки: система на каждый день</div>
+              <div style="margin-top:12px;"><div style="display:flex;justify-content:space-between;font-size:12.5px;color:#8A8272;margin-bottom:5px;"><span>3 из 12 уроков</span><span>25%</span></div><div style="height:5px;border-radius:3px;background:#EDE5D5;overflow:hidden;"><div style="width:25%;height:100%;background:#C2532F;"></div></div></div>
+              <div style="display:grid;gap:4px;margin-top:22px;">
+                <div style="font-size:13px;font-weight:600;color:#3E7A54;display:flex;gap:8px;align-items:center;padding:8px 10px;"><svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Раздел 1. Основы</div>
+                <div style="font-size:13px;font-weight:700;color:#14233C;padding:8px 10px;background:#F1E7D4;border-radius:8px;">Раздел 2. Утренний распорядок</div>
+                <div style="display:grid;gap:2px;padding-left:10px;">
+                  <div style="display:flex;justify-content:space-between;padding:7px 10px;border-radius:8px;"><div style="font-size:13.5px;color:#3E7A54;display:flex;gap:7px;align-items:center;"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#3E7A54"></circle><path d="M5 8.2 7.2 10.4 11 6" stroke="#FFFFFF" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Сигналы и награды</div><span style="font-size:12px;color:#8A8272;">6 мин</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:7px 10px;border-radius:8px;background:#FFFFFF;border:1px solid #E4DCCC;"><div style="font-size:13.5px;color:#14233C;font-weight:600;display:flex;gap:7px;align-items:center;"><span style="width:14px;height:14px;border-radius:50%;border:2px solid #C2532F;display:inline-block;flex:none;"></span>Утренний якорь</div><span style="font-size:12px;color:#8A8272;">7 мин</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:7px 10px;"><div style="font-size:13.5px;color:#5E6A80;display:flex;gap:7px;align-items:center;"><span style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C9BFA9;display:inline-block;flex:none;"></span>Вечерняя рутина</div><span style="font-size:12px;color:#8A8272;">6 мин</span></div>
+                </div>
+                <div style="font-size:13px;font-weight:600;color:#5E6A80;padding:8px 10px;">Раздел 3. Питание и энергия</div>
+                <div style="font-size:13px;font-weight:600;color:#5E6A80;padding:8px 10px;">Раздел 4. Движение</div>
+                <div style="font-size:13px;font-weight:600;color:#5E6A80;padding:8px 10px;">Раздел 5. Сон</div>
+                <div style="font-size:13px;font-weight:600;color:#5E6A80;padding:8px 10px;">Раздел 6. Система целиком</div>
+              </div>
+            </div>
+            <div style="padding:56px 0;display:flex;justify-content:center;">
+              <div style="width:680px;">
+                <div style="font-size:12.5px;letter-spacing:0.14em;text-transform:uppercase;color:#C2532F;font-weight:600;">Раздел 2 · Утренний распорядок · урок 3 из 12</div>
+                <div style="font-size:34px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.18;margin-top:10px;text-wrap:pretty;">Утренний якорь: с чего начинается система</div>
+                <div style="font-size:14px;color:#8A8272;margin-top:10px;">7 минут чтения · обновлён 12 июля 2026</div>
+                <div style="font-family:'Literata',serif;font-size:18px;color:#26334B;line-height:1.75;margin-top:28px;">Самая частая ошибка при построении привычек — надеяться на силу воли. Она заканчивается раньше, чем день. Вместо этого мы построим систему, которая начинается с одного маленького утреннего действия — якоря.</div>
+                <div style="font-size:23px;font-weight:700;color:#14233C;letter-spacing:-0.01em;margin-top:32px;">Почему якорь работает</div>
+                <div style="font-family:'Literata',serif;font-size:18px;color:#26334B;line-height:1.75;margin-top:14px;">Якорь — это привязка нового действия к <a href="#2e">уже существующему распорядку</a>. Сигналом становится сама жизнь: <strong style="color:#14233C;">после того как я налью утренний чай — я открою блокнот</strong>. Телефон и напоминания больше не нужны.</div>
+                <ul style="font-family:'Literata',serif;font-size:18px;color:#26334B;line-height:1.75;margin:16px 0 0;padding-left:24px;">
+                  <li>сигнал — событие, которое уже происходит каждый день;</li>
+                  <li>действие — короче двух минут;</li>
+                  <li>награда — заметная сразу.</li>
+                </ul>
+                <div style="margin-top:28px;"><div style="width:680px;height:360px;"><image-slot id="lesson-img-d" shape="rounded" radius="14" placeholder="Фото: утренний стол с блокнотом и чаем"></image-slot></div><div style="font-size:13.5px;color:#8A8272;margin-top:8px;">Якорь может быть простым предметом — блокнот рядом с чайником.</div></div>
+                <div style="margin-top:30px;display:flex;gap:16px;"><div style="font-family:'Literata',serif;font-size:52px;line-height:1;color:#D96C4A;flex:none;">«</div><div><div style="font-family:'Literata',serif;font-style:italic;font-size:20px;color:#26334B;line-height:1.6;">Мы не поднимаемся до уровня своих целей — мы опускаемся до уровня своих систем.</div><div style="font-size:14px;color:#8A8272;margin-top:8px;">Джеймс Клир, «Атомные привычки»</div></div></div>
+                <div style="background:#FAF6EE;border:1px solid #EDE5D5;border-radius:12px;padding:16px 18px;margin-top:30px;display:flex;gap:12px;"><svg width="20" height="20" viewBox="0 0 16 16" style="flex:none;margin-top:3px;"><circle cx="8" cy="8" r="7" fill="#C2532F"></circle><path d="M8 4.6v4.2M8 11.4h.01" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"></path></svg><div style="font-size:16px;color:#26334B;line-height:1.6;"><span style="font-weight:600;color:#14233C;">Задание на сегодня.</span> Выберите один якорь и запишите его формулой «после X — я сделаю Y».</div></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:36px;padding-top:24px;border-top:1px solid #EDE5D5;">
+                  <div style="display:flex;gap:8px;align-items:center;color:#5E6A80;"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#5E6A80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:500;">Урок 2. Сигналы и награды</div></div>
+                  <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 22px;border-radius:10px;display:flex;align-items:center;gap:10px;"><svg width="17" height="17" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан — дальше</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 2f ПЛАНШЕТ -->
+  <div id="2f" data-screen-label="Планшет 768 — принцип" style="background:#FFFFFF;border:1px solid #E0D8C8;border-radius:16px;padding:32px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;"><div style="background:#14233C;color:#F6F0E7;font-size:13px;font-weight:700;border-radius:999px;padding:4px 12px;">2f</div><div style="font-size:22px;font-weight:800;color:#14233C;letter-spacing:-0.01em;">Планшет · 768 — принцип адаптации</div></div>
+    <div style="font-size:13.5px;color:#5E6A80;line-height:1.55;max-width:760px;margin-bottom:20px;">Правило: контент мобильной версии + сетки настольной там, где хватает ширины. Карточки — в 2 колонки, поля 32 px, лекция остаётся одной колонкой 640 px, содержание курса — раскрывающаяся панель, а не боковая колонка.</div>
+    <div style="display:flex;gap:32px;align-items:flex-start;">
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Главная · 768</div>
+        <div style="width:768px;background:#F6F0E7;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0 32px;height:64px;border-bottom:1px solid #E4DCCC;">
+            <div style="display:flex;align-items:center;gap:10px;"><svg width="30" height="30" viewBox="0 0 100 100"><path d="M48.5 32 C50 24 52 18 56 13 L59.5 15.5 C55.5 20 53.5 25.5 52.5 32.5 Z" fill="#7A4A2E"></path><path d="M50 30 C46 25 39 23 33 25 C21 29 13 43 13 60 C13 79 29 94 50 94 C71 94 87 79 87 60 C87 43 79 29 67 25 C61 23 54 25 50 30 Z" fill="#D96C4A"></path><path d="M55 22 C58 11 70 5 81 8 C80 19 70 27 58 25 C56 24.6 55 23.4 55 22 Z" fill="#3E7A54"></path><path fill-rule="evenodd" d="M50 38 L66.5 84 L58.5 84 L55 74 L45 74 L41.5 84 L33.5 84 Z M50 50.5 L53.4 67 L46.6 67 Z" fill="#F6F0E7"></path></svg><div style="font-size:16px;font-weight:800;color:#14233C;">Абрикософф</div></div>
+            <div style="display:flex;align-items:center;gap:16px;"><div style="border:1.5px solid #14233C;color:#14233C;font-size:14px;font-weight:600;padding:9px 18px;border-radius:10px;background:#FFFFFF;">Войти</div><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="#14233C" stroke-width="2" stroke-linecap="round"></path></svg></div>
+          </div>
+          <div style="padding:40px 32px;display:grid;grid-template-columns:1fr 300px;gap:32px;align-items:center;">
+            <div>
+              <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#C2532F;font-weight:600;">Академия Абрикософф</div>
+              <div style="font-size:36px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.14;margin-top:10px;text-wrap:pretty;">Здоровые привычки — спокойно и по системе</div>
+              <div style="font-size:16px;color:#5E6A80;line-height:1.6;margin-top:12px;">Подписка на библиотеку практических курсов о привычках, здоровье и качестве жизни.</div>
+              <div style="display:flex;gap:10px;margin-top:20px;">
+                <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 20px;border-radius:10px;">Выбрать тариф</div>
+                <div style="border:1.5px solid #14233C;color:#14233C;font-size:15px;font-weight:600;padding:12px 18px;border-radius:10px;background:#FFFFFF;">Первый курс</div>
+              </div>
+            </div>
+            <div style="width:300px;height:240px;"><image-slot id="home-hero-t" shape="rounded" radius="14" placeholder="Фото: утренний свет"></image-slot></div>
+          </div>
+          <div style="padding:0 32px 40px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,35,60,0.06);">
+                <div style="height:120px;background:#FAF3E6;position:relative;overflow:hidden;"><div style="position:absolute;right:-65px;top:-65px;width:125px;height:125px;border:2px solid #D96C4A;border-radius:50%;"></div><span style="position:absolute;left:16px;top:12px;background:#F7E3DB;color:#A84526;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Первый курс</span></div>
+                <div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;">Здоровые привычки</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Система на каждый день — маленькими шагами.</div></div>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4DCCC;border-radius:12px;overflow:hidden;opacity:0.94;">
+                <div style="height:120px;background:#EFE8DB;position:relative;"><span style="position:absolute;left:16px;top:12px;background:#5E6A80;color:#FFFFFF;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;">Скоро</span></div>
+                <div style="padding:16px;"><div style="font-size:16px;font-weight:700;color:#14233C;">Сон: восстановление как навык</div><div style="font-size:13.5px;color:#5E6A80;line-height:1.5;margin-top:4px;">Режим, среда и вечерние ритуалы.</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:none;">
+        <div style="font-size:12px;color:#8A8272;font-weight:600;margin-bottom:8px;">Текстовый урок · 768</div>
+        <div style="width:768px;background:#FFFDF8;border:1px solid #D8CFBE;border-radius:18px;overflow:hidden;">
+          <div style="border-bottom:1px solid #EDE5D5;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 32px;">
+              <div style="display:flex;align-items:center;gap:8px;"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:600;color:#14233C;">Здоровые привычки</div></div>
+              <div style="display:flex;align-items:center;gap:14px;"><div style="font-size:13px;color:#8A8272;">Урок 3 из 12 · 25%</div><div style="border:1px solid #D8CFBE;color:#14233C;font-size:13px;font-weight:600;padding:8px 14px;border-radius:10px;background:#FFFFFF;display:flex;align-items:center;gap:7px;">Содержание<svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="#14233C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+            </div>
+            <div style="height:3px;background:#EDE5D5;"><div style="width:25%;height:100%;background:#C2532F;"></div></div>
+          </div>
+          <div style="padding:36px 0 48px;display:flex;justify-content:center;">
+            <div style="width:640px;">
+              <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#C2532F;font-weight:600;">Раздел 2 · Утренний распорядок</div>
+              <div style="font-size:30px;font-weight:800;color:#14233C;letter-spacing:-0.015em;line-height:1.2;margin-top:8px;text-wrap:pretty;">Утренний якорь: с чего начинается система</div>
+              <div style="font-family:'Literata',serif;font-size:17.5px;color:#26334B;line-height:1.75;margin-top:20px;">Самая частая ошибка при построении привычек — надеяться на силу воли. Она заканчивается раньше, чем день. Вместо этого мы построим систему, которая начинается с одного маленького утреннего действия — якоря.</div>
+              <div style="font-family:'Literata',serif;font-size:17.5px;color:#26334B;line-height:1.75;margin-top:14px;">Якорь — это привязка нового действия к <a href="#2f">уже существующему распорядку</a>: <strong style="color:#14233C;">после того как я налью утренний чай — я открою блокнот</strong>.</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid #EDE5D5;">
+                <div style="display:flex;gap:8px;align-items:center;color:#5E6A80;"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="#5E6A80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg><div style="font-size:14px;font-weight:500;">Урок 2</div></div>
+                <div style="background:#C2532F;color:#FFFFFF;font-size:15px;font-weight:600;padding:13px 22px;border-radius:10px;display:flex;align-items:center;gap:10px;"><svg width="17" height="17" viewBox="0 0 16 16"><path d="M2.5 8.5 6 12 13.5 4.5" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>Урок прочитан — дальше</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+</body>
+</html>
