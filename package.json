@@ -9,7 +9,12 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "check": "npm run lint && npm run typecheck && npm run build",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:db:prepare": "node scripts/prepare-test-database.mjs",
+    "test:integration": "npm run test:db:prepare && vitest run --config vitest.integration.config.ts",
+    "test:e2e": "npm run test:db:prepare && playwright test",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "audit:production": "npm audit --omit=dev --audit-level=high"
   },
   "engines": {
@@ -27,6 +32,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.20.0",
@@ -35,7 +41,8 @@
     "eslint": "9.39.5",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "minimatch": "10.2.5",

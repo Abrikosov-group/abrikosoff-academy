@@ -44,15 +44,25 @@ npm run dev
 ```bash
 npm run lint
 npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run test:e2e
 npm run build
 npm run audit:production
 ```
+
+Интеграционные и браузерные тесты используют отдельную базу из
+`TEST_DATABASE_URL`. Команда подготовки принимает только имя базы с суффиксом
+`_test` и не очищает основную базу разработки.
 
 Все основные проверки одной командой:
 
 ```bash
 npm run check
 ```
+
+`npm run check` включает модульные и PostgreSQL-интеграционные тесты.
+Браузерный сценарий запускается отдельно командой `npm run test:e2e`.
 
 ## Структура
 
@@ -62,6 +72,7 @@ src/app/api/             healthcheck и серверные платёжные м
 src/modules/identity/    пользователи, способы входа и серверные сессии
 src/modules/billing/     платёжное ядро и адаптеры провайдеров
 db/migrations/           версионируемая схема PostgreSQL
+tests/                   unit-, integration- и E2E-тесты
 deploy/                  production-конфигурация Docker и Caddy
 docs/                    архитектурные решения и эксплуатационные документы
 .github/workflows/       автоматические проверки

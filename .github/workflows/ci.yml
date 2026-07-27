@@ -15,9 +15,25 @@ concurrency:
 
 jobs:
   quality:
-    name: Код и production-сборка
+    name: Код, тесты и production-сборка
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      TEST_DATABASE_URL: postgresql://academy_test:academy-test-only@127.0.0.1:5432/academy_test
+    services:
+      postgres:
+        image: postgres:18.1-alpine3.23@sha256:aa6eb304ddb6dd26df23d05db4e5cb05af8951cda3e0dc57731b771e0ef4ab29
+        env:
+          POSTGRES_DB: academy_test
+          POSTGRES_PASSWORD: academy-test-only
+          POSTGRES_USER: academy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U academy_test -d academy_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Получить исходный код
@@ -120,8 +136,20 @@ jobs:
       - name: Проверить типы
         run: npm run typecheck
 
+      - name: Выполнить модульные тесты
+        run: npm run test:unit
+
+      - name: Выполнить интеграционные тесты с PostgreSQL
+        run: npm run test:integration
+
       - name: Проверить production-зависимости
         run: npm run audit:production
 
       - name: Собрать приложение
         run: npm run build
+
+      - name: Установить Chromium для браузерных тестов
+        run: npx playwright install --with-deps chromium
+
+      - name: Выполнить сквозной тест подписки и доступа
+        run: npm run test:e2e
