@@ -1,4 +1,5 @@
 import { IdentityError } from "../domain/errors";
+import { logUnexpectedServerError } from "@/lib/safe-server-log";
 
 export function identityErrorResponse(error: unknown) {
   if (error instanceof IdentityError) {
@@ -18,7 +19,7 @@ export function identityErrorResponse(error: unknown) {
     );
   }
 
-  console.error("Unexpected identity error", error);
+  logUnexpectedServerError("identity.request_failed", error);
 
   return Response.json(
     {

@@ -35,19 +35,39 @@ export type ProviderPayment = {
 
 export type ProviderRefund = {
   externalRefundId: string;
+  externalPaymentId: string;
   status: "pending" | "succeeded" | "canceled";
   money: Money;
+  occurredAt?: string;
 };
 
-export type VerifiedProviderWebhook = {
-  externalEventId: string;
+export type ProviderWebhookReference = {
+  kind: "payment" | "refund";
   eventType: string;
+  externalOperationId: string;
   externalPaymentId: string;
   merchantAccountId: string;
-  payment: ProviderPayment;
-  occurredAt: string;
-  rawPayload: unknown;
 };
+
+type VerifiedProviderWebhookBase = ProviderWebhookReference & {
+  externalEventId: string;
+  occurredAt: string;
+  auditPayload: unknown;
+};
+
+export type VerifiedPaymentWebhook = VerifiedProviderWebhookBase & {
+  kind: "payment";
+  payment: ProviderPayment;
+};
+
+export type VerifiedRefundWebhook = VerifiedProviderWebhookBase & {
+  kind: "refund";
+  refund: ProviderRefund;
+};
+
+export type VerifiedProviderWebhook =
+  | VerifiedPaymentWebhook
+  | VerifiedRefundWebhook;
 
 export interface PaymentProvider {
   readonly id: PaymentProviderId;
@@ -64,6 +84,16 @@ export interface PaymentProvider {
     externalPaymentId: string,
     merchantAccountId: string,
   ): Promise<ProviderPayment>;
+
+  getRefund(
+    externalRefundId: string,
+    merchantAccountId: string,
+  ): Promise<ProviderRefund>;
+
+  parseWebhookReference(
+    rawBody: string,
+    headers: Headers,
+  ): ProviderWebhookReference;
 
   parseAndVerifyWebhook(
     rawBody: string,

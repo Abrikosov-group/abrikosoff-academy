@@ -12,6 +12,7 @@ import {
   getTelegramLoginStateCookie,
   verifyTelegramLoginState,
 } from "@/modules/identity/server/telegram-login-state";
+import { logUnexpectedServerError } from "@/lib/safe-server-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
       return response;
     }
 
+    logUnexpectedServerError("identity.telegram_callback_failed", error);
     return response;
   }
 }

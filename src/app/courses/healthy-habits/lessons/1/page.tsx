@@ -7,7 +7,7 @@ import { LessonCompleteButton } from "@/components/academy/lesson-complete-butto
 import { getAccessContext } from "@/modules/access/server/get-access-context";
 
 export const metadata: Metadata = {
-  title: "Урок 3. Утренний якорь",
+  title: "Утренний якорь",
   description: "Текстовый урок курса «Здоровые привычки».",
 };
 
@@ -30,30 +30,24 @@ export default async function FirstLessonPage() {
           <span>Здоровые привычки</span>
         </Link>
         <div>
-          <span>Урок 3 из 12 · 25%</span>
+          <span>Материал курса · 7 минут</span>
           <a href="#course-content">Содержание</a>
         </div>
       </header>
-      <div className="lesson-top-progress">
-        <span />
-      </div>
 
       <div className="lesson-layout">
         <aside className="lesson-sidebar" id="course-content">
           <h2>Здоровые привычки: система на каждый день</h2>
           <div className="lesson-course-progress">
             <p>
-              <span>3 из 12 уроков</span>
-              <span>25%</span>
+              <span>12 уроков</span>
+              <span>6 разделов</span>
             </p>
-            <div className="progress-track">
-              <span />
-            </div>
           </div>
           <nav aria-label="Содержание курса">
-            <strong className="complete">Раздел 1. Основы</strong>
+            <strong>Раздел 1. Основы</strong>
             <strong className="active">Раздел 2. Утренний распорядок</strong>
-            <Link className="complete" href="#">
+            <Link href="#">
               Сигналы и награды <small>6 мин</small>
             </Link>
             <Link className="current" href="#">
@@ -71,7 +65,7 @@ export default async function FirstLessonPage() {
 
         <article className="lesson-content">
           <p className="overline">
-            Раздел 2 · Утренний распорядок · урок 3 из 12
+            Раздел 2 · Утренний распорядок
           </p>
           <h1>Утренний якорь: с чего начинается система</h1>
           <p className="lesson-meta">
@@ -136,9 +130,9 @@ export default async function FirstLessonPage() {
           </div>
 
           <div className="lesson-navigation">
-            <Link href="#">
+            <Link href="/courses/healthy-habits">
               <ArrowLeftIcon aria-hidden="true" size={18} />
-              Урок 2. Сигналы и награды
+              К описанию курса
             </Link>
             <LessonCompleteButton />
           </div>

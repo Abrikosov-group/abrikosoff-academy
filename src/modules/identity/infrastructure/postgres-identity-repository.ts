@@ -62,64 +62,112 @@ async function findIdentity(
   return result.rows[0] ? mapIdentityRow(result.rows[0]) : null;
 }
 
+async function recordPrivacyConsent(
+  client: Pool | PoolClient,
+  userId: string,
+  consent: UpsertIdentityInput["consent"],
+) {
+  await client.query(
+    `
+      INSERT INTO identity_consents (
+        id,
+        user_id,
+        document_type,
+        document_version,
+        accepted_at,
+        source
+      )
+      VALUES ($1, $2, 'privacy', $3, $4, $5)
+      ON CONFLICT (user_id, document_type, document_version)
+      DO NOTHING
+    `,
+    [
+      randomUUID(),
+      userId,
+      consent.documentVersion,
+      consent.acceptedAt,
+      consent.source,
+    ],
+  );
+}
+
+async function updateExistingIdentity(
+  client: PoolClient,
+  existing: AuthenticatedUser,
+  input: UpsertIdentityInput,
+) {
+  await client.query(
+    `
+      UPDATE identity_users
+      SET
+        display_name = $2,
+        receipt_email = COALESCE($3, receipt_email),
+        updated_at = now()
+      WHERE id = $1
+    `,
+    [existing.id, input.displayName, input.receiptEmail ?? null],
+  );
+  await client.query(
+    `
+      UPDATE identity_methods
+      SET metadata = $3::jsonb, verified_at = now(), updated_at = now()
+      WHERE method_type = $1 AND identifier = $2
+    `,
+    [
+      input.methodType,
+      input.identifier,
+      JSON.stringify(input.metadata),
+    ],
+  );
+  await recordPrivacyConsent(client, existing.id, input.consent);
+
+  return {
+    ...existing,
+    displayName: input.displayName,
+    receiptEmail: input.receiptEmail ?? existing.receiptEmail,
+    primaryMethod: {
+      type: input.methodType,
+      identifier: input.identifier,
+      metadata: input.metadata,
+    },
+  };
+}
+
+function isUniqueViolation(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "23505"
+  );
+}
+
 export class PostgresIdentityRepository implements IdentityRepository {
   constructor(private readonly pool: Pool) {}
 
   async upsertIdentity(
     input: UpsertIdentityInput,
   ): Promise<AuthenticatedUser> {
-    const existing = await findIdentity(
-      this.pool,
-      input.methodType,
-      input.identifier,
-    );
-
-    if (existing) {
-      await this.pool.query(
-        `
-          UPDATE identity_users
-          SET
-            display_name = $2,
-            receipt_email = COALESCE($3, receipt_email),
-            updated_at = now()
-          WHERE id = $1
-        `,
-        [existing.id, input.displayName, input.receiptEmail ?? null],
-      );
-      await this.pool.query(
-        `
-          UPDATE identity_methods
-          SET metadata = $3::jsonb, verified_at = now(), updated_at = now()
-          WHERE method_type = $1 AND identifier = $2
-        `,
-        [
-          input.methodType,
-          input.identifier,
-          JSON.stringify(input.metadata),
-        ],
-      );
-      await this.recordPrivacyConsent(
-        this.pool,
-        existing.id,
-        input.consent,
-      );
-
-      return {
-        ...existing,
-        displayName: input.displayName,
-        receiptEmail: input.receiptEmail ?? existing.receiptEmail,
-        primaryMethod: {
-          type: input.methodType,
-          identifier: input.identifier,
-          metadata: input.metadata,
-        },
-      };
-    }
-
     const client = await this.pool.connect();
 
     try {
       await client.query("BEGIN");
+      const existing = await findIdentity(
+        client,
+        input.methodType,
+        input.identifier,
+      );
+
+      if (existing) {
+        const updated = await updateExistingIdentity(
+          client,
+          existing,
+          input,
+        );
+        await client.query("COMMIT");
+        return updated;
+      }
+
       const userId = randomUUID();
 
       await client.query(
@@ -154,7 +202,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
           JSON.stringify(input.metadata),
         ],
       );
-      await this.recordPrivacyConsent(client, userId, input.consent);
+      await recordPrivacyConsent(client, userId, input.consent);
       await client.query("COMMIT");
 
       return {
@@ -170,20 +218,29 @@ export class PostgresIdentityRepository implements IdentityRepository {
     } catch (error) {
       await client.query("ROLLBACK");
 
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "23505"
-      ) {
-        const racedIdentity = await findIdentity(
-          this.pool,
-          input.methodType,
-          input.identifier,
-        );
+      if (isUniqueViolation(error)) {
+        try {
+          await client.query("BEGIN");
+          const racedIdentity = await findIdentity(
+            client,
+            input.methodType,
+            input.identifier,
+          );
 
-        if (racedIdentity) {
-          return racedIdentity;
+          if (!racedIdentity) {
+            throw error;
+          }
+
+          const updated = await updateExistingIdentity(
+            client,
+            racedIdentity,
+            input,
+          );
+          await client.query("COMMIT");
+          return updated;
+        } catch (retryError) {
+          await client.query("ROLLBACK");
+          throw retryError;
         }
       }
 
@@ -191,35 +248,6 @@ export class PostgresIdentityRepository implements IdentityRepository {
     } finally {
       client.release();
     }
-  }
-
-  private async recordPrivacyConsent(
-    client: Pool | PoolClient,
-    userId: string,
-    consent: UpsertIdentityInput["consent"],
-  ) {
-    await client.query(
-      `
-        INSERT INTO identity_consents (
-          id,
-          user_id,
-          document_type,
-          document_version,
-          accepted_at,
-          source
-        )
-        VALUES ($1, $2, 'privacy', $3, $4, $5)
-        ON CONFLICT (user_id, document_type, document_version)
-        DO NOTHING
-      `,
-      [
-        randomUUID(),
-        userId,
-        consent.documentVersion,
-        consent.acceptedAt,
-        consent.source,
-      ],
-    );
   }
 
   async createSession(input: {
@@ -263,12 +291,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
           FROM identity_methods
           WHERE user_id = users.id
           ORDER BY
-            CASE method_type
-              WHEN 'telegram' THEN 1
-              WHEN 'email' THEN 2
-              ELSE 3
-            END,
-            created_at
+            verified_at DESC NULLS LAST,
+            created_at DESC
           LIMIT 1
         ) methods ON true
         WHERE sessions.token_sha256 = $1

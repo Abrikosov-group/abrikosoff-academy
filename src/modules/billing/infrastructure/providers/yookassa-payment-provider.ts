@@ -7,6 +7,7 @@ import type {
   PaymentProvider,
   ProviderPayment,
   ProviderRefund,
+  ProviderWebhookReference,
   RefundProviderPaymentInput,
   VerifiedProviderWebhook,
 } from "../../domain/payment-provider";
@@ -167,6 +168,150 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
   };
 }
 
+function parseProviderRefund(payload: unknown): ProviderRefund {
+  const refund = asRecord(payload);
+
+  if (!refund) {
+    throw new BillingError(
+      "PROVIDER_REQUEST_FAILED",
+      "ЮKassa вернула некорректный ответ на возврат.",
+      502,
+    );
+  }
+
+  const rawStatus = requiredString(refund, "status");
+
+  if (
+    rawStatus !== "pending" &&
+    rawStatus !== "succeeded" &&
+    rawStatus !== "canceled"
+  ) {
+    throw new BillingError(
+      "PROVIDER_REQUEST_FAILED",
+      "ЮKassa вернула неизвестный статус возврата.",
+      502,
+    );
+  }
+
+  return {
+    externalRefundId: requiredString(refund, "id"),
+    externalPaymentId: requiredString(refund, "payment_id"),
+    status: rawStatus,
+    money: parseMoney(refund.amount),
+    occurredAt:
+      typeof refund.created_at === "string"
+        ? refund.created_at
+        : undefined,
+  };
+}
+
+type ParsedWebhookNotification = ProviderWebhookReference & {
+  notification: JsonRecord;
+  object: JsonRecord;
+};
+
+function parseWebhookNotification(
+  rawBody: string,
+  merchantAccountId: string,
+): ParsedWebhookNotification {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (error) {
+    throw new BillingError(
+      "WEBHOOK_REJECTED",
+      "Некорректное уведомление ЮKassa.",
+      400,
+      { cause: error },
+    );
+  }
+
+  const notification = asRecord(payload);
+  const object = notification ? asRecord(notification.object) : null;
+
+  if (
+    !notification ||
+    notification.type !== "notification" ||
+    typeof notification.event !== "string" ||
+    !object
+  ) {
+    throw new BillingError(
+      "WEBHOOK_REJECTED",
+      "Формат уведомления ЮKassa не поддерживается.",
+      400,
+    );
+  }
+
+  const eventType = notification.event;
+  const externalOperationId =
+    typeof object.id === "string" ? object.id : "";
+
+  if (!externalOperationId) {
+    throw new BillingError(
+      "WEBHOOK_REJECTED",
+      "В уведомлении ЮKassa отсутствует идентификатор операции.",
+      400,
+    );
+  }
+
+  if (eventType.startsWith("payment.")) {
+    return {
+      kind: "payment",
+      eventType,
+      externalOperationId,
+      externalPaymentId: externalOperationId,
+      merchantAccountId,
+      notification,
+      object,
+    };
+  }
+
+  if (eventType.startsWith("refund.")) {
+    const externalPaymentId =
+      typeof object.payment_id === "string" ? object.payment_id : "";
+
+    if (!externalPaymentId) {
+      throw new BillingError(
+        "WEBHOOK_REJECTED",
+        "В уведомлении о возврате отсутствует идентификатор платежа.",
+        400,
+      );
+    }
+
+    return {
+      kind: "refund",
+      eventType,
+      externalOperationId,
+      externalPaymentId,
+      merchantAccountId,
+      notification,
+      object,
+    };
+  }
+
+  throw new BillingError(
+    "WEBHOOK_REJECTED",
+    "Событие ЮKassa не поддерживается.",
+    400,
+  );
+}
+
+function buildWebhookAuditPayload(parsed: ParsedWebhookNotification) {
+  return {
+    type: "notification",
+    event: parsed.eventType,
+    object: {
+      id: parsed.externalOperationId,
+      paymentId: parsed.externalPaymentId,
+      status:
+        typeof parsed.object.status === "string"
+          ? parsed.object.status
+          : undefined,
+    },
+  };
+}
+
 export class YooKassaPaymentProvider implements PaymentProvider {
   readonly id = "yookassa" as const;
   private readonly apiBaseUrl = "https://api.yookassa.ru/v3";
@@ -202,6 +347,7 @@ export class YooKassaPaymentProvider implements PaymentProvider {
         ...init,
         headers,
         cache: "no-store",
+        signal: init.signal ?? AbortSignal.timeout(10_000),
       });
     } catch (error) {
       throw new BillingError(
@@ -234,7 +380,7 @@ export class YooKassaPaymentProvider implements PaymentProvider {
 
       throw new BillingError(
         "PROVIDER_REQUEST_FAILED",
-        "ЮKassa не смогла создать платёж. Попробуйте ещё раз.",
+        "ЮKassa отклонила операцию. Попробуйте ещё раз.",
         response.status >= 500 ? 502 : 422,
         { cause: new Error(description) },
       );
@@ -289,27 +435,7 @@ export class YooKassaPaymentProvider implements PaymentProvider {
       },
       input.idempotencyKey,
     );
-    const refund = asRecord(payload);
-
-    if (!refund) {
-      throw new BillingError(
-        "PROVIDER_REQUEST_FAILED",
-        "ЮKassa вернула некорректный ответ на возврат.",
-        502,
-      );
-    }
-
-    const rawStatus = requiredString(refund, "status");
-    const status =
-      rawStatus === "succeeded" || rawStatus === "canceled"
-        ? rawStatus
-        : "pending";
-
-    return {
-      externalRefundId: requiredString(refund, "id"),
-      status,
-      money: parseMoney(refund.amount),
-    };
+    return parseProviderRefund(payload);
   }
 
   async getPayment(
@@ -332,64 +458,114 @@ export class YooKassaPaymentProvider implements PaymentProvider {
     return parseProviderPayment(payload);
   }
 
+  async getRefund(
+    externalRefundId: string,
+    merchantAccountId: string,
+  ): Promise<ProviderRefund> {
+    if (merchantAccountId !== this.options.merchantAccountId) {
+      throw new BillingError(
+        "PROVIDER_NOT_CONFIGURED",
+        "Не найдена конфигурация магазина ЮKassa.",
+        500,
+      );
+    }
+
+    const payload = await this.request(
+      `/refunds/${encodeURIComponent(externalRefundId)}`,
+      { method: "GET" },
+    );
+
+    return parseProviderRefund(payload);
+  }
+
+  parseWebhookReference(
+    rawBody: string,
+    _headers: Headers,
+  ): ProviderWebhookReference {
+    void _headers;
+    const parsed = parseWebhookNotification(
+      rawBody,
+      this.options.merchantAccountId,
+    );
+
+    return {
+      kind: parsed.kind,
+      eventType: parsed.eventType,
+      externalOperationId: parsed.externalOperationId,
+      externalPaymentId: parsed.externalPaymentId,
+      merchantAccountId: parsed.merchantAccountId,
+    };
+  }
+
   async parseAndVerifyWebhook(
     rawBody: string,
     _headers: Headers,
   ): Promise<VerifiedProviderWebhook> {
     void _headers;
-
-    let payload: unknown;
-
-    try {
-      payload = JSON.parse(rawBody);
-    } catch (error) {
-      throw new BillingError(
-        "WEBHOOK_REJECTED",
-        "Некорректное уведомление ЮKassa.",
-        400,
-        { cause: error },
-      );
-    }
-
-    const notification = asRecord(payload);
-    const object = notification ? asRecord(notification.object) : null;
-
-    if (
-      !notification ||
-      notification.type !== "notification" ||
-      typeof notification.event !== "string" ||
-      !object
-    ) {
-      throw new BillingError(
-        "WEBHOOK_REJECTED",
-        "Формат уведомления ЮKassa не поддерживается.",
-        400,
-      );
-    }
-
-    const externalPaymentId = requiredString(object, "id");
-
-    // Источником истины служит ответ API ЮKassa, а не тело уведомления.
-    const payment = await this.getPayment(
-      externalPaymentId,
+    const parsed = parseWebhookNotification(
+      rawBody,
       this.options.merchantAccountId,
     );
+    const auditPayload = buildWebhookAuditPayload(parsed);
+
+    if (parsed.kind === "payment") {
+      // Источником истины служит ответ API ЮKassa, а не тело уведомления.
+      const payment = await this.getPayment(
+        parsed.externalPaymentId,
+        parsed.merchantAccountId,
+      );
+      const eventSeed = [
+        parsed.eventType,
+        parsed.externalOperationId,
+        payment.status,
+      ].join(":");
+
+      return {
+        kind: "payment",
+        externalEventId: createHash("sha256")
+          .update(eventSeed)
+          .digest("hex"),
+        eventType: parsed.eventType,
+        externalOperationId: parsed.externalOperationId,
+        externalPaymentId: parsed.externalPaymentId,
+        merchantAccountId: parsed.merchantAccountId,
+        payment,
+        occurredAt: payment.paidAt ?? new Date().toISOString(),
+        auditPayload,
+      };
+    }
+
+    const refund = await this.getRefund(
+      parsed.externalOperationId,
+      parsed.merchantAccountId,
+    );
+
+    if (refund.externalPaymentId !== parsed.externalPaymentId) {
+      throw new BillingError(
+        "WEBHOOK_REJECTED",
+        "Возврат не связан с ожидаемым платежом.",
+        400,
+      );
+    }
+
     const eventSeed = [
-      notification.event,
-      externalPaymentId,
-      payment.status,
+      parsed.eventType,
+      parsed.externalOperationId,
+      refund.status,
     ].join(":");
 
     return {
+      kind: "refund",
       externalEventId: createHash("sha256")
         .update(eventSeed)
         .digest("hex"),
-      eventType: notification.event,
-      externalPaymentId,
-      merchantAccountId: this.options.merchantAccountId,
-      payment,
-      occurredAt: payment.paidAt ?? new Date().toISOString(),
-      rawPayload: notification,
+      eventType: parsed.eventType,
+      externalOperationId: parsed.externalOperationId,
+      externalPaymentId: parsed.externalPaymentId,
+      merchantAccountId: parsed.merchantAccountId,
+      refund,
+      occurredAt: refund.occurredAt ?? new Date().toISOString(),
+      auditPayload,
     };
   }
 }

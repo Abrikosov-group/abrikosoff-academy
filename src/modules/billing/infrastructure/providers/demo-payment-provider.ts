@@ -4,6 +4,8 @@ import type {
   CreateProviderCheckoutInput,
   PaymentProvider,
   ProviderPayment,
+  ProviderRefund,
+  ProviderWebhookReference,
   RefundProviderPaymentInput,
   VerifiedProviderWebhook,
 } from "../../domain/payment-provider";
@@ -14,12 +16,54 @@ function deterministicId(prefix: string, value: string) {
 
 type GlobalWithDemoPayments = typeof globalThis & {
   __academyDemoPayments?: Map<string, ProviderPayment>;
+  __academyDemoRefunds?: Map<string, ProviderRefund>;
 };
 
 function getDemoPaymentRegistry() {
   const globalScope = globalThis as GlobalWithDemoPayments;
   globalScope.__academyDemoPayments ??= new Map();
   return globalScope.__academyDemoPayments;
+}
+
+function getDemoRefundRegistry() {
+  const globalScope = globalThis as GlobalWithDemoPayments;
+  globalScope.__academyDemoRefunds ??= new Map();
+  return globalScope.__academyDemoRefunds;
+}
+
+function parseDemoWebhookBody(rawBody: string) {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (error) {
+    throw new BillingError(
+      "WEBHOOK_REJECTED",
+      "Некорректное тестовое платёжное уведомление.",
+      400,
+      { cause: error },
+    );
+  }
+
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("externalPaymentId" in payload) ||
+    typeof payload.externalPaymentId !== "string"
+  ) {
+    throw new BillingError(
+      "WEBHOOK_REJECTED",
+      "В тестовом уведомлении отсутствует идентификатор платежа.",
+      400,
+    );
+  }
+
+  return {
+    externalPaymentId: payload.externalPaymentId,
+    auditPayload: {
+      externalPaymentId: payload.externalPaymentId,
+    },
+  };
 }
 
 export class DemoPaymentProvider implements PaymentProvider {
@@ -48,14 +92,19 @@ export class DemoPaymentProvider implements PaymentProvider {
   }
 
   async refund(input: RefundProviderPaymentInput) {
-    return {
+    const refund: ProviderRefund = {
       externalRefundId: deterministicId(
         "demo_refund",
         input.idempotencyKey,
       ),
+      externalPaymentId: input.externalPaymentId,
       status: "succeeded" as const,
       money: input.amount,
+      occurredAt: new Date().toISOString(),
     };
+
+    getDemoRefundRegistry().set(refund.externalRefundId, refund);
+    return refund;
   }
 
   async getPayment(
@@ -76,10 +125,28 @@ export class DemoPaymentProvider implements PaymentProvider {
     return payment;
   }
 
-  async parseAndVerifyWebhook(
+  async getRefund(
+    externalRefundId: string,
+    _merchantAccountId: string,
+  ): Promise<ProviderRefund> {
+    void _merchantAccountId;
+    const refund = getDemoRefundRegistry().get(externalRefundId);
+
+    if (!refund) {
+      throw new BillingError(
+        "PAYMENT_NOT_FOUND",
+        "Тестовый возврат не найден.",
+        404,
+      );
+    }
+
+    return refund;
+  }
+
+  parseWebhookReference(
     rawBody: string,
     headers: Headers,
-  ): Promise<VerifiedProviderWebhook> {
+  ): ProviderWebhookReference {
     if (headers.get("x-demo-webhook-secret") !== this.webhookSecret) {
       throw new BillingError(
         "WEBHOOK_REJECTED",
@@ -88,42 +155,35 @@ export class DemoPaymentProvider implements PaymentProvider {
       );
     }
 
-    let payload: unknown;
-
-    try {
-      payload = JSON.parse(rawBody);
-    } catch (error) {
-      throw new BillingError(
-        "WEBHOOK_REJECTED",
-        "Некорректное тестовое платёжное уведомление.",
-        400,
-        { cause: error },
-      );
-    }
-
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      !("externalPaymentId" in payload) ||
-      typeof payload.externalPaymentId !== "string"
-    ) {
-      throw new BillingError(
-        "WEBHOOK_REJECTED",
-        "В тестовом уведомлении отсутствует идентификатор платежа.",
-        400,
-      );
-    }
-
-    const payment = await this.getPayment(payload.externalPaymentId, "");
+    const payload = parseDemoWebhookBody(rawBody);
 
     return {
-      externalEventId: deterministicId("demo_event", rawBody),
+      kind: "payment",
       eventType: "payment.succeeded",
+      externalOperationId: payload.externalPaymentId,
       externalPaymentId: payload.externalPaymentId,
       merchantAccountId: "demo-primary",
+    };
+  }
+
+  async parseAndVerifyWebhook(
+    rawBody: string,
+    headers: Headers,
+  ): Promise<VerifiedProviderWebhook> {
+    const reference = this.parseWebhookReference(rawBody, headers);
+    const payload = parseDemoWebhookBody(rawBody);
+    const payment = await this.getPayment(
+      reference.externalPaymentId,
+      reference.merchantAccountId,
+    );
+
+    return {
+      ...reference,
+      kind: "payment",
+      externalEventId: deterministicId("demo_event", rawBody),
       payment,
       occurredAt: new Date().toISOString(),
-      rawPayload: payload,
+      auditPayload: payload.auditPayload,
     };
   }
 }

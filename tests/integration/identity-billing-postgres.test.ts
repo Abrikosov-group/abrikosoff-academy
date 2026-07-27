@@ -12,6 +12,8 @@ import type {
   CreateProviderCheckoutInput,
   PaymentProvider,
   ProviderPayment,
+  ProviderRefund,
+  ProviderWebhookReference,
   RefundProviderPaymentInput,
   VerifiedProviderWebhook,
 } from "@/modules/billing/domain/payment-provider";
@@ -56,6 +58,7 @@ class PendingPaymentProvider implements PaymentProvider {
   async refund(input: RefundProviderPaymentInput) {
     return {
       externalRefundId: `refund_${input.idempotencyKey}`,
+      externalPaymentId: input.externalPaymentId,
       status: "succeeded" as const,
       money: input.amount,
     };
@@ -69,6 +72,14 @@ class PendingPaymentProvider implements PaymentProvider {
     }
 
     return payment;
+  }
+
+  async getRefund(): Promise<ProviderRefund> {
+    throw new Error("Возврат разбирается отдельно в этом тесте");
+  }
+
+  parseWebhookReference(): ProviderWebhookReference {
+    throw new Error("Webhook разбирается отдельно в этом тесте");
   }
 
   async parseAndVerifyWebhook(): Promise<VerifiedProviderWebhook> {
@@ -143,6 +154,65 @@ describe("Identity и Billing с PostgreSQL", () => {
     ).rejects.toMatchObject({
       code: "LOGIN_EXPIRED",
       httpStatus: 400,
+    });
+  });
+
+  it("атомарно создаёт одну учётную запись при одновременном входе", async () => {
+    const repository = new PostgresIdentityRepository(pool);
+    const identifier = "integration-telegram-race";
+    const results = await Promise.all([
+      repository.upsertIdentity({
+        methodType: "telegram",
+        identifier,
+        displayName: "Первый вход",
+        receiptEmail: "race@example.test",
+        metadata: { attempt: 1 },
+        consent,
+      }),
+      repository.upsertIdentity({
+        methodType: "telegram",
+        identifier,
+        displayName: "Повторный вход",
+        receiptEmail: "race@example.test",
+        metadata: { attempt: 2 },
+        consent,
+      }),
+    ]);
+    const counts = await pool.query<{
+      users: string;
+      methods: string;
+      consents: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(DISTINCT users.id)
+            FROM identity_users users
+            JOIN identity_methods methods ON methods.user_id = users.id
+            WHERE methods.method_type = 'telegram'
+              AND methods.identifier = $1
+          ) AS users,
+          (
+            SELECT count(*)
+            FROM identity_methods
+            WHERE method_type = 'telegram' AND identifier = $1
+          ) AS methods,
+          (
+            SELECT count(*)
+            FROM identity_consents
+            WHERE user_id = $2
+              AND document_type = 'privacy'
+              AND document_version = $3
+          ) AS consents
+      `,
+      [identifier, results[0].id, consent.documentVersion],
+    );
+
+    expect(results[0].id).toBe(results[1].id);
+    expect(counts.rows[0]).toEqual({
+      users: "1",
+      methods: "1",
+      consents: "1",
     });
   });
 
@@ -261,15 +331,33 @@ describe("Identity и Billing с PostgreSQL", () => {
     }>(
       `
         SELECT
-          (SELECT count(*) FROM billing_subscriptions) AS subscriptions,
-          (SELECT count(*) FROM billing_webhook_events) AS webhooks,
-          (SELECT count(*) FROM billing_payment_mandates) AS mandates,
+          (
+            SELECT count(*)
+            FROM billing_subscriptions
+            WHERE customer_id = $1
+          ) AS subscriptions,
+          (
+            SELECT count(*)
+            FROM billing_webhook_events
+            WHERE external_event_id = $2
+          ) AS webhooks,
+          (
+            SELECT count(*)
+            FROM billing_payment_mandates
+            WHERE customer_id = $1
+          ) AS mandates,
           (
             SELECT count(*)
             FROM billing_payments
-            WHERE payment_method_token IS NOT NULL
+            WHERE order_id = $3
+              AND payment_method_token IS NOT NULL
           ) AS saved_payment_methods
       `,
+      [
+        session.user.id,
+        paymentEvent.externalEventId,
+        storedCheckout!.orderId,
+      ],
     );
 
     expect(duplicate.outcome).toBe("duplicate");
@@ -279,6 +367,146 @@ describe("Identity и Billing с PostgreSQL", () => {
       saved_payment_methods: "0",
       subscriptions: "1",
       webhooks: "1",
+    });
+
+    const refundEvent = {
+      provider: "demo" as const,
+      merchantAccountId: "demo-primary",
+      externalEventId: "integration-refund-event-001",
+      eventType: "refund.succeeded",
+      externalPaymentId: storedCheckout!.externalPaymentId,
+      externalRefundId: "integration-refund-001",
+      status: "succeeded" as const,
+      money: storedCheckout!.money,
+      occurredAt: "2026-07-28T08:20:00.000Z",
+      payloadSha256: "b".repeat(64),
+      payload: {
+        event: "refund.succeeded",
+      },
+    };
+    const refundResult =
+      await paymentRepository.applyRefundEvent(refundEvent);
+    const subscriptionAfterRefund = await getSubscriptionSummary(
+      pool,
+      session.user.id,
+    );
+    const refundState = await pool.query<{
+      order_status: string;
+      payment_status: string;
+      refund_status: string;
+    }>(
+      `
+        SELECT
+          orders.status AS order_status,
+          payments.status AS payment_status,
+          refunds.status AS refund_status
+        FROM billing_orders orders
+        JOIN billing_payments payments ON payments.order_id = orders.id
+        JOIN billing_refunds refunds ON refunds.payment_id = payments.id
+        WHERE orders.id = $1 AND refunds.external_refund_id = $2
+      `,
+      [storedCheckout!.orderId, refundEvent.externalRefundId],
+    );
+
+    expect(refundResult).toMatchObject({
+      outcome: "applied",
+      checkout: {
+        status: "refunded",
+      },
+    });
+    expect(subscriptionAfterRefund?.status).toBe("canceled");
+    expect(subscriptionAfterRefund?.currentPeriodEnd).toBe(
+      refundEvent.occurredAt,
+    );
+    expect(refundState.rows[0]).toEqual({
+      order_status: "refunded",
+      payment_status: "refunded",
+      refund_status: "succeeded",
+    });
+  });
+
+  it("повторно применяет webhook, который пришёл раньше платежа", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const identityService = new IdentityService(identityRepository, 30);
+    const session = await identityService.authenticateIdentity({
+      methodType: "telegram",
+      identifier: "integration-telegram-late-webhook",
+      displayName: "Раннее уведомление",
+      receiptEmail: "late-webhook@example.test",
+      metadata: {},
+      consent,
+    });
+    const paymentRepository = new PostgresPaymentRepository(pool);
+    const provider = new PendingPaymentProvider();
+    const service = new PaymentService({
+      repository: paymentRepository,
+      router: new PaymentProviderRouter({
+        providers: [provider],
+        routes: [
+          {
+            provider: "demo",
+            merchantAccountId: "demo-primary",
+            legalEntityId: "ip-fedotova",
+            currency: "RUB",
+            countryCodes: ["RU"],
+            priority: 100,
+          },
+        ],
+      }),
+    });
+    const idempotencyKey = "integration-late-webhook-001";
+    const externalPaymentId = `integration_${idempotencyKey}`;
+    const event = {
+      provider: "demo" as const,
+      merchantAccountId: "demo-primary",
+      externalEventId: "integration-late-event-001",
+      eventType: "payment.succeeded",
+      externalPaymentId,
+      status: "succeeded" as const,
+      occurredAt: "2026-07-28T09:00:00.000Z",
+      payloadSha256: "c".repeat(64),
+      payload: {
+        event: "payment.succeeded",
+      },
+    };
+
+    await expect(
+      paymentRepository.applyPaymentEvent(event),
+    ).resolves.toEqual({
+      outcome: "unmatched",
+      checkout: null,
+    });
+    await service.createCheckout({
+      customerId: session.user.id,
+      planId: "monthly",
+      countryCode: "RU",
+      legalEntityId: "ip-fedotova",
+      receiptContact: {
+        email: "late-webhook@example.test",
+      },
+      offerAcceptance: {
+        acceptedAt: "2026-07-28T08:55:00.000Z",
+        offerVersion: "2026-07-28",
+      },
+      idempotencyKey,
+      publicBaseUrl: "https://academy.example.test",
+    });
+    const retried = await paymentRepository.applyPaymentEvent(event);
+    const subscription = await getSubscriptionSummary(
+      pool,
+      session.user.id,
+    );
+
+    expect(retried).toMatchObject({
+      outcome: "applied",
+      checkout: {
+        status: "succeeded",
+      },
+    });
+    expect(subscription).toMatchObject({
+      status: "active",
+      planId: "monthly",
+      autoRenew: false,
     });
   });
 });

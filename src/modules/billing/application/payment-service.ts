@@ -5,6 +5,7 @@ import type {
   CheckoutCommand,
   CheckoutReservation,
   CheckoutResult,
+  PaymentProviderId,
   StoredCheckout,
 } from "../domain/types";
 import type { PaymentRepository } from "./payment-repository";
@@ -41,6 +42,27 @@ function assertCheckoutMatchesCommand(
       409,
     );
   }
+}
+
+function assertProviderMoneyMatchesCheckout(
+  checkout: CheckoutReservation,
+  amountMinor: number,
+  currency: string,
+) {
+  if (
+    amountMinor !== checkout.money.amountMinor ||
+    currency !== checkout.money.currency
+  ) {
+    throw new BillingError(
+      "PROVIDER_REQUEST_FAILED",
+      "Платёжный провайдер вернул некорректную сумму.",
+      502,
+    );
+  }
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 export class PaymentService {
@@ -115,16 +137,11 @@ export class PaymentService {
       returnUrl: returnUrl.toString(),
     });
 
-    if (
-      providerPayment.money.amountMinor !== reservation.money.amountMinor ||
-      providerPayment.money.currency !== reservation.money.currency
-    ) {
-      throw new BillingError(
-        "PROVIDER_REQUEST_FAILED",
-        "Платёжный провайдер вернул некорректную сумму.",
-        502,
-      );
-    }
+    assertProviderMoneyMatchesCheckout(
+      reservation,
+      providerPayment.money.amountMinor,
+      providerPayment.money.currency,
+    );
 
     const stored = await this.options.repository.saveCheckout({
       ...reservation,
@@ -141,26 +158,165 @@ export class PaymentService {
   }
 
   async handleWebhook(
-    providerId: "demo" | "yookassa",
+    providerId: PaymentProviderId,
     rawBody: string,
     headers: Headers,
   ) {
     const provider = this.options.router.getProvider(providerId);
-    const event = await provider.parseAndVerifyWebhook(rawBody, headers);
-    const payloadSha256 = createHash("sha256")
-      .update(rawBody)
-      .digest("hex");
+    const reference = provider.parseWebhookReference(rawBody, headers);
+    const knownCheckout =
+      await this.options.repository.findCheckoutByExternalPaymentId(
+        providerId,
+        reference.merchantAccountId,
+        reference.externalPaymentId,
+      );
 
-    return this.options.repository.applyPaymentEvent({
+    if (!knownCheckout) {
+      throw new BillingError(
+        "WEBHOOK_NOT_READY",
+        "Платёж пока не найден. Уведомление будет обработано повторно.",
+        503,
+      );
+    }
+
+    const event = await provider.parseAndVerifyWebhook(rawBody, headers);
+    const payloadSha256 = sha256(rawBody);
+
+    if (
+      event.kind !== reference.kind ||
+      event.externalOperationId !== reference.externalOperationId ||
+      event.externalPaymentId !== reference.externalPaymentId ||
+      event.merchantAccountId !== reference.merchantAccountId
+    ) {
+      throw new BillingError(
+        "WEBHOOK_REJECTED",
+        "Платёжное уведомление не прошло проверку.",
+        400,
+      );
+    }
+
+    if (event.kind === "payment") {
+      assertProviderMoneyMatchesCheckout(
+        knownCheckout,
+        event.payment.money.amountMinor,
+        event.payment.money.currency,
+      );
+
+      return this.options.repository.applyPaymentEvent({
+        provider: providerId,
+        merchantAccountId: event.merchantAccountId,
+        externalEventId: event.externalEventId,
+        eventType: event.eventType,
+        externalPaymentId: event.externalPaymentId,
+        status: event.payment.status,
+        occurredAt: event.occurredAt,
+        payloadSha256,
+        payload: event.auditPayload,
+      });
+    }
+
+    if (
+      event.refund.money.currency !== knownCheckout.money.currency ||
+      event.refund.money.amountMinor > knownCheckout.money.amountMinor
+    ) {
+      throw new BillingError(
+        "WEBHOOK_REJECTED",
+        "Возврат содержит некорректную сумму.",
+        400,
+      );
+    }
+
+    return this.options.repository.applyRefundEvent({
       provider: providerId,
       merchantAccountId: event.merchantAccountId,
       externalEventId: event.externalEventId,
       eventType: event.eventType,
       externalPaymentId: event.externalPaymentId,
-      status: event.payment.status,
+      externalRefundId: event.refund.externalRefundId,
+      status: event.refund.status,
+      money: event.refund.money,
       occurredAt: event.occurredAt,
       payloadSha256,
-      payload: event.rawPayload,
+      payload: event.auditPayload,
     });
+  }
+
+  async reconcileCheckout(orderId: string, customerId: string) {
+    const checkout =
+      await this.options.repository.findCheckoutByOrderIdForCustomer(
+        orderId,
+        customerId,
+      );
+
+    if (!checkout) {
+      throw new BillingError(
+        "PAYMENT_NOT_FOUND",
+        "Платёж не найден.",
+        404,
+      );
+    }
+
+    if (
+      checkout.status === "succeeded" ||
+      checkout.status === "canceled" ||
+      checkout.status === "failed" ||
+      checkout.status === "partially_refunded" ||
+      checkout.status === "refunded"
+    ) {
+      return toCheckoutResult(checkout);
+    }
+
+    const provider = this.options.router.getProvider(checkout.provider);
+    const payment = await provider.getPayment(
+      checkout.externalPaymentId,
+      checkout.merchantAccountId,
+    );
+    assertProviderMoneyMatchesCheckout(
+      checkout,
+      payment.money.amountMinor,
+      payment.money.currency,
+    );
+    const occurredAt = payment.paidAt ?? new Date().toISOString();
+    const auditPayload = {
+      source: "return-page-reconciliation",
+      externalPaymentId: checkout.externalPaymentId,
+      status: payment.status,
+    };
+    const serializedPayload = JSON.stringify(auditPayload);
+
+    await this.options.repository.applyPaymentEvent({
+      provider: checkout.provider,
+      merchantAccountId: checkout.merchantAccountId,
+      externalEventId: sha256(
+        [
+          "reconcile",
+          checkout.provider,
+          checkout.externalPaymentId,
+          payment.status,
+        ].join(":"),
+      ),
+      eventType: "payment.reconciled",
+      externalPaymentId: checkout.externalPaymentId,
+      status: payment.status,
+      occurredAt,
+      payloadSha256: sha256(serializedPayload),
+      payload: auditPayload,
+    });
+
+    const reconciled =
+      await this.options.repository.findCheckoutByOrderIdForCustomer(
+        orderId,
+        customerId,
+      );
+
+    if (!reconciled) {
+      throw new BillingError(
+        "PAYMENT_NOT_FOUND",
+        "Платёж не найден.",
+        404,
+      );
+    }
+
+    return toCheckoutResult(reconciled);
   }
 }

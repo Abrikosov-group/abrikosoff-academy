@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Pool } from "pg";
+import { logUnexpectedServerError } from "./safe-server-log";
 
 let databasePool: Pool | null = null;
 
@@ -27,7 +28,7 @@ export function getDatabasePool() {
     connectionTimeoutMillis: 5_000,
   });
   databasePool.on("error", (error) => {
-    console.error("Unexpected PostgreSQL pool error", error);
+    logUnexpectedServerError("database.pool_error", error);
   });
 
   return databasePool;

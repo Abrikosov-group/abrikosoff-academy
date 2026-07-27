@@ -14,6 +14,10 @@ function createUnusedProvider(id: PaymentProviderId): PaymentProvider {
     createCheckout: unused,
     refund: unused,
     getPayment: unused,
+    getRefund: unused,
+    parseWebhookReference() {
+      throw new Error("Метод не должен вызываться в тесте маршрутизации");
+    },
     parseAndVerifyWebhook: unused,
   };
 }

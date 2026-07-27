@@ -9,6 +9,25 @@ const testDatabaseUrl =
 test("вход, оплата и доступ к уроку работают как единый сценарий", async ({
   page,
 }) => {
+  const invalidDemoLogin = await page.request.post("/api/auth/demo", {
+    data: "{",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  const invalidEmailLogin = await page.request.post(
+    "/api/auth/email/request",
+    {
+      data: "{",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    },
+  );
+
+  expect(invalidDemoLogin.status()).toBe(400);
+  expect(invalidEmailLogin.status()).toBe(400);
+
   const unauthorizedCheckout = await page.request.post(
     "/api/payments/checkout",
     {

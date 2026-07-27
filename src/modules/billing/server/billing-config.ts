@@ -49,15 +49,30 @@ function readDefaultProvider(mode: PaymentsMode): PaymentProviderId {
 }
 
 export function getBillingConfig(): BillingConfig {
+  const production = process.env.NODE_ENV === "production";
   const mode = readPaymentsMode();
   const defaultProvider = readDefaultProvider(mode);
   const publicBaseUrl = process.env.APP_BASE_URL?.trim() || undefined;
+  const configuredDemoWebhookSecret =
+    process.env.DEMO_WEBHOOK_SECRET?.trim();
   const demoWebhookSecret =
-    process.env.DEMO_WEBHOOK_SECRET?.trim() || "local-demo-only";
+    configuredDemoWebhookSecret || "local-demo-only";
   const routes: ProviderRoute[] = [];
   let yookassa: BillingConfig["yookassa"];
 
   if (mode === "demo") {
+    if (
+      production &&
+      (!configuredDemoWebhookSecret ||
+        configuredDemoWebhookSecret === "local-demo-only")
+    ) {
+      throw new BillingError(
+        "PROVIDER_NOT_CONFIGURED",
+        "Для production demo-режима задайте отдельный секрет уведомлений.",
+        503,
+      );
+    }
+
     routes.push({
       provider: "demo",
       merchantAccountId: "demo-primary",

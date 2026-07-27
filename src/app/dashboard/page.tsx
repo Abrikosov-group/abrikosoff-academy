@@ -10,7 +10,7 @@ import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
   title: "Личный кабинет",
-  description: "Курсы, прогресс и подписка ученика.",
+  description: "Курсы и оплаченный доступ ученика.",
 };
 
 const coming = [
@@ -114,24 +114,24 @@ export default async function DashboardPage() {
               className="cabinet-continue"
               aria-labelledby="continue-title"
             >
-              <p className="overline">Продолжить</p>
+              <p className="overline">Первый курс</p>
               <h2 id="continue-title">
-                Урок 3. Утренний якорь: с чего начинается система
+                Здоровые привычки: система на каждый день
               </h2>
-              <p>Здоровые привычки · осталось 4 минуты</p>
+              <p>12 коротких текстовых уроков · 6 разделов</p>
               <div className="cabinet-continue-actions">
                 <Link
                   className="button button-secondary"
-                  href="/courses/healthy-habits/lessons/1"
+                  href={
+                    subscriptionActive
+                      ? "/courses/healthy-habits/lessons/1"
+                      : "/pricing"
+                  }
                 >
-                  Продолжить чтение
+                  {subscriptionActive
+                    ? "Открыть первый урок"
+                    : "Оформить доступ"}
                 </Link>
-                <div>
-                  <div className="progress-track">
-                    <span />
-                  </div>
-                  <small>Урок прочитан на 55%</small>
-                </div>
               </div>
             </section>
 
@@ -175,12 +175,9 @@ export default async function DashboardPage() {
               </Link>
               <div className="cabinet-total-progress">
                 <p>
-                  <strong>Общий прогресс</strong>
-                  <span>3 из 12 уроков</span>
+                  <strong>Продление</strong>
+                  <span>Только вручную</span>
                 </p>
-                <div className="progress-track">
-                  <span />
-                </div>
               </div>
             </section>
           </div>
@@ -206,12 +203,9 @@ export default async function DashboardPage() {
                 <section>
                   <h3>Здоровые привычки</h3>
                   <p>
-                    <span>Урок 3 из 12</span>
-                    <span>25%</span>
+                    <span>12 уроков</span>
+                    <span>6 разделов</span>
                   </p>
-                  <div className="progress-track">
-                    <span />
-                  </div>
                 </section>
               </Link>
               {coming.map(([title, date]) => (

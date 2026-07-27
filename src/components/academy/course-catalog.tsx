@@ -64,13 +64,9 @@ export function CourseCatalog() {
               <p>
                 Система на каждый день: сон, питание, движение и внимание.
               </p>
-              <div className="catalog-progress-copy">
-                <span>Продолжайте: урок 3</span>
-                <span>25%</span>
-              </div>
-              <div className="catalog-progress" aria-hidden="true">
-                <span />
-              </div>
+              <span className="catalog-coming-note">
+                12 уроков · 6 разделов
+              </span>
             </div>
           </Link>
         ) : null}

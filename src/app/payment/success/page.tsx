@@ -5,7 +5,9 @@ import {
   ArrowRightIcon,
   CheckIcon,
   SpinnerGapIcon,
+  XIcon,
 } from "@phosphor-icons/react/dist/ssr";
+import { PaymentStatusPoller } from "@/components/academy/payment-status-poller";
 import { getDatabasePool } from "@/lib/database";
 import { getCustomerOrderSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { getCurrentUser } from "@/modules/identity/server/session";
@@ -39,24 +41,45 @@ export default async function PaymentSuccessPage({
       : null;
   const annual = order?.planId !== "monthly";
   const paymentConfirmed = order?.status === "paid";
+  const paymentPending = order?.status === "pending";
+  const paymentRefunded =
+    order?.status === "partially_refunded" ||
+    order?.status === "refunded";
+  const title = paymentConfirmed
+    ? "Подписка активна"
+    : paymentPending
+      ? "Проверяем оплату"
+      : paymentRefunded
+        ? "Возврат оформлен"
+        : order
+          ? "Оплата не завершена"
+          : "Платёж не найден";
 
   return (
     <main className="success-page">
       <section className="success-card" aria-labelledby="success-title">
-        <div className="success-icon">
-          {paymentConfirmed ? (
+        <div
+          className={`success-icon ${
+            paymentConfirmed || paymentRefunded
+              ? "is-success"
+              : paymentPending
+                ? "is-pending"
+                : "is-error"
+          }`}
+        >
+          {paymentConfirmed || paymentRefunded ? (
             <CheckIcon aria-hidden="true" size={34} weight="bold" />
-          ) : (
+          ) : paymentPending ? (
             <SpinnerGapIcon
               aria-hidden="true"
               className="spinner"
               size={34}
             />
+          ) : (
+            <XIcon aria-hidden="true" size={34} weight="bold" />
           )}
         </div>
-        <h1 id="success-title">
-          {paymentConfirmed ? "Подписка активна" : "Проверяем оплату"}
-        </h1>
+        <h1 id="success-title">{title}</h1>
         {paymentConfirmed ? (
           <p>
             {annual
@@ -65,10 +88,25 @@ export default async function PaymentSuccessPage({
             <br />
             Доступ к материалам Академии уже открыт.
           </p>
-        ) : (
+        ) : paymentPending ? (
           <p>
             Банк вернул вас в Академию. Подтверждаем результат платежа —
             обычно это занимает несколько секунд.
+          </p>
+        ) : paymentRefunded ? (
+          <p>
+            Возврат зарегистрирован. Доступ по этому платежу закрыт; детали
+            зачисления можно уточнить в поддержке.
+          </p>
+        ) : order ? (
+          <p>
+            Платёж не был подтверждён. Деньги не списаны, новый платёж можно
+            оформить на странице тарифов.
+          </p>
+        ) : (
+          <p>
+            Мы не нашли этот заказ в вашем аккаунте. Откройте личный кабинет
+            или обратитесь в поддержку.
           </p>
         )}
 
@@ -91,16 +129,36 @@ export default async function PaymentSuccessPage({
               Начать первый урок
             </Link>
           </>
+        ) : paymentPending ? (
+          <>
+            <PaymentStatusPoller orderId={order.id} />
+            <Link className="button button-primary" href="/dashboard">
+              Проверить в личном кабинете
+            </Link>
+          </>
+        ) : paymentRefunded ? (
+          <a
+            className="button button-primary"
+            href="https://t.me/AbrikosoffBot"
+            rel="noreferrer"
+            target="_blank"
+          >
+            Написать в поддержку
+          </a>
         ) : (
-          <Link className="button button-primary" href="/dashboard">
-            Проверить в личном кабинете
+          <Link className="button button-primary" href="/pricing">
+            Вернуться к тарифам
           </Link>
         )}
         <Link
           className="text-link centered-link"
-          href={paymentConfirmed ? "/dashboard" : "/pricing"}
+          href={
+            paymentConfirmed || paymentPending ? "/dashboard" : "/pricing"
+          }
         >
-          {paymentConfirmed ? "В личный кабинет" : "Вернуться к тарифам"}
+          {paymentConfirmed || paymentPending
+            ? "В личный кабинет"
+            : "К тарифам"}
         </Link>
       </section>
     </main>

@@ -2,6 +2,7 @@ import {
   getDatabasePool,
   hasDatabaseConfiguration,
 } from "@/lib/database";
+import { logUnexpectedServerError } from "@/lib/safe-server-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +30,7 @@ export async function GET() {
       },
     );
   } catch (error) {
-    console.error("Healthcheck database error", error);
+    logUnexpectedServerError("health.database_unavailable", error);
 
     return Response.json(
       {

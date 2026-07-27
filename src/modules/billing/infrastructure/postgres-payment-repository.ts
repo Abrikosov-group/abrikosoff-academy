@@ -5,6 +5,8 @@ import type { Pool, PoolClient } from "pg";
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRefundEventInput,
+  ApplyRefundEventResult,
   PaymentRepository,
   ReserveCheckoutInput,
   SaveCheckoutInput,
@@ -228,6 +230,117 @@ async function findByExternalPaymentId(
   );
 
   return result.rows[0] ? mapCheckoutRow(result.rows[0]) : null;
+}
+
+async function lockPaymentByExternalId(
+  client: PoolClient,
+  provider: PaymentProviderId,
+  merchantAccountId: string,
+  externalPaymentId: string,
+) {
+  await client.query(
+    `
+      SELECT id
+      FROM billing_payments
+      WHERE provider = $1
+        AND merchant_account_id = $2
+        AND external_payment_id = $3
+      FOR UPDATE
+    `,
+    [provider, merchantAccountId, externalPaymentId],
+  );
+}
+
+async function findByOrderIdForCustomer(
+  client: Pool | PoolClient,
+  orderId: string,
+  customerId: string,
+) {
+  const result = await client.query<CheckoutRow>(
+    `
+      ${checkoutSelect}
+      WHERE orders.id = $1
+        AND orders.customer_id = $2
+      LIMIT 1
+    `,
+    [orderId, customerId],
+  );
+
+  return result.rows[0] ? mapCheckoutRow(result.rows[0]) : null;
+}
+
+type WebhookEventRecord = {
+  provider: PaymentProviderId;
+  merchantAccountId: string;
+  externalEventId: string;
+  eventType: string;
+  externalPaymentId: string;
+  payloadSha256: string;
+  payload: unknown;
+};
+
+async function acquireWebhookEvent(
+  client: PoolClient,
+  input: WebhookEventRecord,
+) {
+  const result = await client.query<{ id: string }>(
+    `
+      INSERT INTO billing_webhook_events (
+        id,
+        provider,
+        merchant_account_id,
+        external_event_id,
+        event_type,
+        external_payment_id,
+        payload_sha256,
+        payload,
+        processing_status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'verified')
+      ON CONFLICT (
+        provider,
+        merchant_account_id,
+        external_event_id
+      )
+      DO UPDATE SET
+        event_type = EXCLUDED.event_type,
+        external_payment_id = EXCLUDED.external_payment_id,
+        payload_sha256 = EXCLUDED.payload_sha256,
+        payload = EXCLUDED.payload,
+        processing_status = 'verified',
+        error_code = NULL,
+        processed_at = NULL
+      WHERE billing_webhook_events.processing_status IN ('ignored', 'failed')
+      RETURNING id
+    `,
+    [
+      randomUUID(),
+      input.provider,
+      input.merchantAccountId,
+      input.externalEventId,
+      input.eventType,
+      input.externalPaymentId,
+      input.payloadSha256,
+      JSON.stringify(input.payload),
+    ],
+  );
+
+  return result.rows[0]?.id ?? null;
+}
+
+async function markWebhookEvent(
+  client: PoolClient,
+  webhookId: string,
+  processingStatus: "applied" | "ignored",
+) {
+  await client.query(
+    `
+      UPDATE billing_webhook_events
+      SET processing_status = $2, processed_at = now()
+      WHERE id = $1
+    `,
+    [webhookId, processingStatus],
+  );
 }
 
 async function activateSubscription(
@@ -507,20 +620,22 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
   async findCheckoutByExternalPaymentId(
     provider: PaymentProviderId,
+    merchantAccountId: string,
     externalPaymentId: string,
   ) {
-    const result = await this.pool.query<CheckoutRow>(
-      `
-        ${checkoutSelect}
-        WHERE payments.provider = $1
-          AND payments.external_payment_id = $2
-        ORDER BY payments.created_at DESC
-        LIMIT 1
-      `,
-      [provider, externalPaymentId],
+    return findByExternalPaymentId(
+      this.pool,
+      provider,
+      merchantAccountId,
+      externalPaymentId,
     );
+  }
 
-    return result.rows[0] ? mapCheckoutRow(result.rows[0]) : null;
+  async findCheckoutByOrderIdForCustomer(
+    orderId: string,
+    customerId: string,
+  ) {
+    return findByOrderIdForCustomer(this.pool, orderId, customerId);
   }
 
   async applyPaymentEvent(
@@ -530,38 +645,12 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
     try {
       await client.query("BEGIN");
-      const webhookId = randomUUID();
-      const insertedWebhook = await client.query(
-        `
-          INSERT INTO billing_webhook_events (
-            id,
-            provider,
-            merchant_account_id,
-            external_event_id,
-            event_type,
-            external_payment_id,
-            payload_sha256,
-            payload,
-            processing_status
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'verified')
-          ON CONFLICT (
-            provider,
-            merchant_account_id,
-            external_event_id
-          )
-          DO NOTHING
-        `,
-        [
-          webhookId,
-          input.provider,
-          input.merchantAccountId,
-          input.externalEventId,
-          input.eventType,
-          input.externalPaymentId,
-          input.payloadSha256,
-          JSON.stringify(input.payload),
-        ],
+      const webhookId = await acquireWebhookEvent(client, input);
+      await lockPaymentByExternalId(
+        client,
+        input.provider,
+        input.merchantAccountId,
+        input.externalPaymentId,
       );
       const checkout = await findByExternalPaymentId(
         client,
@@ -570,28 +659,26 @@ export class PostgresPaymentRepository implements PaymentRepository {
         input.externalPaymentId,
       );
 
-      if (!insertedWebhook.rowCount) {
+      if (!webhookId) {
         await client.query("COMMIT");
         return { outcome: "duplicate", checkout };
       }
 
       if (!checkout) {
-        await client.query(
-          `
-            UPDATE billing_webhook_events
-            SET processing_status = 'ignored', processed_at = now()
-            WHERE id = $1
-          `,
-          [webhookId],
-        );
+        await markWebhookEvent(client, webhookId, "ignored");
         await client.query("COMMIT");
         return { outcome: "unmatched", checkout: null };
       }
 
       const previousStatus = checkout.status;
+      const nextStatus =
+        previousStatus === "partially_refunded" ||
+        previousStatus === "refunded"
+          ? previousStatus
+          : input.status;
       const updatedCheckout: StoredCheckout = {
         ...checkout,
-        status: input.status,
+        status: nextStatus,
         updatedAt: new Date().toISOString(),
       };
 
@@ -609,7 +696,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         `,
         [
           checkout.paymentId,
-          input.status,
+          nextStatus,
           input.occurredAt,
         ],
       );
@@ -621,7 +708,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         `,
         [
           checkout.orderId,
-          orderStatusForPayment(input.status),
+          orderStatusForPayment(nextStatus),
         ],
       );
       await client.query(
@@ -644,13 +731,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
           webhookId,
           input.eventType,
           previousStatus,
-          input.status,
+          nextStatus,
           input.occurredAt,
         ],
       );
 
       if (
-        input.status === "succeeded" &&
+        nextStatus === "succeeded" &&
         previousStatus !== "succeeded"
       ) {
         await activateSubscription(
@@ -660,17 +747,193 @@ export class PostgresPaymentRepository implements PaymentRepository {
         );
       }
 
-      await client.query(
-        `
-          UPDATE billing_webhook_events
-          SET processing_status = 'applied', processed_at = now()
-          WHERE id = $1
-        `,
-        [webhookId],
-      );
+      await markWebhookEvent(client, webhookId, "applied");
       await client.query("COMMIT");
 
       return { outcome: "applied", checkout: updatedCheckout };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async applyRefundEvent(
+    input: ApplyRefundEventInput,
+  ): Promise<ApplyRefundEventResult> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const webhookId = await acquireWebhookEvent(client, input);
+      await lockPaymentByExternalId(
+        client,
+        input.provider,
+        input.merchantAccountId,
+        input.externalPaymentId,
+      );
+      const checkout = await findByExternalPaymentId(
+        client,
+        input.provider,
+        input.merchantAccountId,
+        input.externalPaymentId,
+      );
+
+      if (!webhookId) {
+        await client.query("COMMIT");
+        return { outcome: "duplicate", checkout };
+      }
+
+      if (!checkout) {
+        await markWebhookEvent(client, webhookId, "ignored");
+        await client.query("COMMIT");
+        return { outcome: "unmatched", checkout: null };
+      }
+
+      await client.query(
+        `
+          INSERT INTO billing_refunds (
+            id,
+            payment_id,
+            provider,
+            merchant_account_id,
+            external_refund_id,
+            provider_operation_key,
+            status,
+            amount_minor,
+            currency,
+            reason,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $10
+          )
+          ON CONFLICT (
+            provider,
+            merchant_account_id,
+            external_refund_id
+          )
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            amount_minor = EXCLUDED.amount_minor,
+            currency = EXCLUDED.currency,
+            updated_at = now()
+        `,
+        [
+          randomUUID(),
+          checkout.paymentId,
+          input.provider,
+          input.merchantAccountId,
+          input.externalRefundId,
+          `webhook:${input.externalRefundId}`,
+          input.status,
+          input.money.amountMinor,
+          input.money.currency,
+          input.occurredAt,
+        ],
+      );
+
+      const previousStatus = checkout.status;
+      let nextStatus = previousStatus;
+
+      if (input.status === "succeeded") {
+        const refunded = await client.query<{ amount_minor: string }>(
+          `
+            SELECT COALESCE(sum(amount_minor), 0)::text AS amount_minor
+            FROM billing_refunds
+            WHERE payment_id = $1
+              AND status = 'succeeded'
+          `,
+          [checkout.paymentId],
+        );
+        const refundedAmountMinor = Number(
+          refunded.rows[0]?.amount_minor ?? "0",
+        );
+        nextStatus =
+          refundedAmountMinor >= checkout.money.amountMinor
+            ? "refunded"
+            : "partially_refunded";
+
+        await client.query(
+          `
+            UPDATE billing_payments
+            SET status = $2, updated_at = now()
+            WHERE id = $1
+          `,
+          [checkout.paymentId, nextStatus],
+        );
+        await client.query(
+          `
+            UPDATE billing_orders
+            SET status = $2, updated_at = now()
+            WHERE id = $1
+          `,
+          [checkout.orderId, orderStatusForPayment(nextStatus)],
+        );
+        await client.query(
+          `
+            UPDATE billing_subscriptions
+            SET
+              status = 'canceled',
+              current_period_end = LEAST(
+                COALESCE(current_period_end, $3::timestamptz),
+                $3::timestamptz
+              ),
+              auto_renew = false,
+              cancel_at_period_end = false,
+              canceled_at = COALESCE(canceled_at, $3::timestamptz),
+              updated_at = now()
+            WHERE customer_id = $1
+              AND activated_by_order_id = $2
+              AND status IN ('pending', 'active', 'past_due', 'grace_period')
+          `,
+          [checkout.customerId, checkout.orderId, input.occurredAt],
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO billing_payment_events (
+            id,
+            payment_id,
+            webhook_event_id,
+            event_type,
+            from_status,
+            to_status,
+            details,
+            occurred_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+        `,
+        [
+          randomUUID(),
+          checkout.paymentId,
+          webhookId,
+          input.eventType,
+          previousStatus,
+          nextStatus,
+          JSON.stringify({
+            externalRefundId: input.externalRefundId,
+            refundStatus: input.status,
+            amountMinor: input.money.amountMinor,
+            currency: input.money.currency,
+          }),
+          input.occurredAt,
+        ],
+      );
+      await markWebhookEvent(client, webhookId, "applied");
+      await client.query("COMMIT");
+
+      return {
+        outcome: "applied",
+        checkout: {
+          ...checkout,
+          status: nextStatus,
+          updatedAt: new Date().toISOString(),
+        },
+      };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

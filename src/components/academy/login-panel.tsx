@@ -208,39 +208,42 @@ export function LoginPanel({
         </button>
       )}
 
-      <div className="auth-divider">
-        <span>или по почте</span>
-      </div>
+      {emailAuthEnabled ? (
+        <>
+          <div className="auth-divider">
+            <span>или по почте</span>
+          </div>
 
-      <form className="email-form" onSubmit={submitEmail} noValidate>
-        <label htmlFor="email">Электронная почта</label>
-        <div className="input-with-icon">
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            placeholder="name@example.ru"
-            value={email}
-            aria-invalid={Boolean(error)}
-            aria-describedby={error ? "email-error" : undefined}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </div>
-        <button
-          className="button button-secondary"
-          type="submit"
-          disabled={!privacyAccepted || processing || !emailAuthEnabled}
-        >
-          {processing ? "Отправляем…" : "Получить ссылку для входа"}
-        </button>
-      </form>
-
-      {!emailAuthEnabled ? (
+          <form className="email-form" onSubmit={submitEmail} noValidate>
+            <label htmlFor="email">Электронная почта</label>
+            <div className="input-with-icon">
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                placeholder="name@example.ru"
+                value={email}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? "email-error" : undefined}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </div>
+            <button
+              className="button button-secondary"
+              type="submit"
+              disabled={!privacyAccepted || processing}
+            >
+              {processing ? "Отправляем…" : "Получить ссылку для входа"}
+            </button>
+          </form>
+        </>
+      ) : (
         <p className="auth-method-note">
-          Вход по почте будет доступен после подключения отправки писем.
+          На запуске доступен вход через Telegram. Вход по почте подключим
+          после выбора сервиса отправки писем.
         </p>
-      ) : null}
+      )}
 
       {error ? (
         <p className="field-error auth-consent-error" id="email-error">

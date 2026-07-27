@@ -7,7 +7,7 @@ import { getIdentityConfig } from "@/modules/identity/server/identity-config";
 
 export const metadata: Metadata = {
   title: "Вход",
-  description: "Вход в Академию через Telegram или электронную почту.",
+  description: "Безопасный вход в Академию Абрикософф.",
 };
 
 type LoginPageProps = {

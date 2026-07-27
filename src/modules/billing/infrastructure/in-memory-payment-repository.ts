@@ -1,6 +1,8 @@
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRefundEventInput,
+  ApplyRefundEventResult,
   PaymentRepository,
   ReserveCheckoutInput,
   SaveCheckoutInput,
@@ -17,6 +19,7 @@ type RepositoryState = {
   checkoutsByIdempotencyKey: Map<string, StoredCheckout>;
   checkoutKeyByExternalPayment: Map<string, string>;
   processedEvents: Set<string>;
+  successfulRefundMinorByPayment: Map<string, number>;
   orderStatuses: Map<string, OrderStatus>;
 };
 
@@ -107,8 +110,10 @@ export class InMemoryPaymentRepository implements PaymentRepository {
 
   async findCheckoutByExternalPaymentId(
     provider: StoredCheckout["provider"],
+    _merchantAccountId: string,
     externalPaymentId: string,
   ): Promise<StoredCheckout | null> {
+    void _merchantAccountId;
     const checkoutKey = this.state.checkoutKeyByExternalPayment.get(
       externalPaymentKey(provider, externalPaymentId),
     );
@@ -120,6 +125,22 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     return this.findCheckoutByIdempotencyKey(checkoutKey);
   }
 
+  async findCheckoutByOrderIdForCustomer(
+    orderId: string,
+    customerId: string,
+  ): Promise<StoredCheckout | null> {
+    for (const checkout of this.state.checkoutsByIdempotencyKey.values()) {
+      if (
+        checkout.orderId === orderId &&
+        checkout.customerId === customerId
+      ) {
+        return checkout;
+      }
+    }
+
+    return null;
+  }
+
   async applyPaymentEvent(
     input: ApplyPaymentEventInput,
   ): Promise<ApplyPaymentEventResult> {
@@ -129,6 +150,7 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     );
     const checkout = await this.findCheckoutByExternalPaymentId(
       input.provider,
+      input.merchantAccountId,
       input.externalPaymentId,
     );
 
@@ -136,15 +158,19 @@ export class InMemoryPaymentRepository implements PaymentRepository {
       return { outcome: "duplicate", checkout };
     }
 
-    this.state.processedEvents.add(processedEventKey);
-
     if (!checkout) {
       return { outcome: "unmatched", checkout: null };
     }
 
+    this.state.processedEvents.add(processedEventKey);
+    const nextStatus =
+      checkout.status === "partially_refunded" ||
+      checkout.status === "refunded"
+        ? checkout.status
+        : input.status;
     const updated: StoredCheckout = {
       ...checkout,
-      status: input.status,
+      status: nextStatus,
       updatedAt: new Date().toISOString(),
     };
 
@@ -154,7 +180,64 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     );
     this.state.orderStatuses.set(
       checkout.orderId,
-      orderStatusForPayment(input.status),
+      orderStatusForPayment(nextStatus),
+    );
+
+    return { outcome: "applied", checkout: updated };
+  }
+
+  async applyRefundEvent(
+    input: ApplyRefundEventInput,
+  ): Promise<ApplyRefundEventResult> {
+    const processedEventKey = eventKey(
+      input.provider,
+      input.externalEventId,
+    );
+    const checkout = await this.findCheckoutByExternalPaymentId(
+      input.provider,
+      input.merchantAccountId,
+      input.externalPaymentId,
+    );
+
+    if (this.state.processedEvents.has(processedEventKey)) {
+      return { outcome: "duplicate", checkout };
+    }
+
+    if (!checkout) {
+      return { outcome: "unmatched", checkout: null };
+    }
+
+    this.state.processedEvents.add(processedEventKey);
+    let nextStatus = checkout.status;
+
+    if (input.status === "succeeded") {
+      const refundedAmountMinor =
+        (this.state.successfulRefundMinorByPayment.get(
+          checkout.paymentId,
+        ) ?? 0) + input.money.amountMinor;
+      this.state.successfulRefundMinorByPayment.set(
+        checkout.paymentId,
+        refundedAmountMinor,
+      );
+      nextStatus =
+        refundedAmountMinor >= checkout.money.amountMinor
+          ? "refunded"
+          : "partially_refunded";
+    }
+
+    const updated: StoredCheckout = {
+      ...checkout,
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.state.checkoutsByIdempotencyKey.set(
+      checkout.idempotencyKey,
+      updated,
+    );
+    this.state.orderStatuses.set(
+      checkout.orderId,
+      orderStatusForPayment(nextStatus),
     );
 
     return { outcome: "applied", checkout: updated };
@@ -173,9 +256,12 @@ export function getInMemoryPaymentRepository() {
     checkoutsByIdempotencyKey: new Map(),
     checkoutKeyByExternalPayment: new Map(),
     processedEvents: new Set(),
+    successfulRefundMinorByPayment: new Map(),
     orderStatuses: new Map(),
   };
   globalScope.__academyBillingRepositoryState.reservationsByIdempotencyKey ??=
+    new Map();
+  globalScope.__academyBillingRepositoryState.successfulRefundMinorByPayment ??=
     new Map();
 
   return new InMemoryPaymentRepository(

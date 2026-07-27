@@ -38,11 +38,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as {
+    let body: {
       email?: unknown;
       plan?: unknown;
       privacyAccepted?: unknown;
     };
+
+    try {
+      body = (await request.json()) as typeof body;
+    } catch (error) {
+      throw new IdentityError(
+        "INVALID_REQUEST",
+        "Некорректные данные запроса.",
+        400,
+        { cause: error },
+      );
+    }
 
     if (
       !isSubscriptionPlanId(body.plan) ||

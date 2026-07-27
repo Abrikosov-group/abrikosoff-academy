@@ -8,6 +8,7 @@ export type BillingErrorCode =
   | "PROVIDER_REQUEST_FAILED"
   | "PAYMENT_NOT_FOUND"
   | "UNSUPPORTED_PROVIDER"
+  | "WEBHOOK_NOT_READY"
   | "WEBHOOK_REJECTED";
 
 export class BillingError extends Error {

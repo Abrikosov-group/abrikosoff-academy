@@ -3677,6 +3677,16 @@ h3 {
   color: var(--status-success);
 }
 
+.success-icon.is-pending {
+  background: var(--status-warning-tint);
+  color: var(--status-warning);
+}
+
+.success-icon.is-error {
+  background: var(--status-error-tint);
+  color: var(--status-error);
+}
+
 .success-card h1 {
   margin: 18px 0 10px;
   font-size: 26px;

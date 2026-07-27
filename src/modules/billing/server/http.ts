@@ -1,4 +1,5 @@
 import { BillingError } from "../domain/errors";
+import { logUnexpectedServerError } from "@/lib/safe-server-log";
 
 export function billingErrorResponse(error: unknown) {
   if (error instanceof BillingError) {
@@ -18,7 +19,7 @@ export function billingErrorResponse(error: unknown) {
     );
   }
 
-  console.error("Unexpected billing error", error);
+  logUnexpectedServerError("billing.request_failed", error);
 
   return Response.json(
     {
