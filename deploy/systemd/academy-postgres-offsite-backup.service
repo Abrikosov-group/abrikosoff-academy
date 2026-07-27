@@ -3,6 +3,7 @@ Description=Зашифрованная внешняя копия PostgreSQL Ак
 Documentation=https://github.com/Abrikosov-group/abrikosoff-academy
 Wants=network-online.target
 After=network-online.target
+OnSuccess=academy-backup-monitor.service
 ConditionPathExists=/opt/academy/backups/postgres/last-success
 ConditionPathExists=/etc/academy-backup/age-recipient
 ConditionPathExists=/etc/academy-backup/aws-access-key-id

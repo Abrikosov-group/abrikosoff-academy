@@ -54,14 +54,47 @@
 
 Таймер работает независимо от GitHub Actions.
 
+## Мониторинг
+
+Локальный `academy-backup-monitor.timer` запускает проверку каждые 15 минут с
+небольшой случайной задержкой и через пять минут после загрузки сервера. После
+каждой успешной внешней выгрузки проверка также выполняется немедленно.
+
+Монитор проверяет:
+
+1. возраст локальной и внешней копий — не более 30 часов;
+2. совпадение локального архива, размера, SHA-256 и ссылок `latest.dump`;
+3. равенство числа объектов до и после тестового восстановления;
+4. совпадение локального архива и исходника внешней версии;
+5. SHA-256 и размер зашифрованного объекта;
+6. `download_verified=true`, режим `COMPLIANCE` и действующий срок Object Lock.
+
+Монитор не использует сеть и не получает реквизиты Object Storage. Во время
+создания или загрузки очередной копии проверка корректно откладывается, чтобы
+не читать промежуточное состояние.
+
+В проекте `abrikosoff-academy-prod` сервиса Yandex Monium настроены:
+
+- почтовый канал `Академия — резервные копии`;
+- алерт `Академия: нет свежей внешней резервной копии`: окно 30 часов,
+  `Alarm` при отсутствии загрузки `PutRequests` или самой метрики;
+- алерт `Академия: заполнение бакета резервных копий`: `Warning` при 30 ГиБ
+  (60% лимита), `Alarm` при 40 ГиБ (80% лимита).
+
+Оба облачных алерта используют нативные метрики Yandex Object Storage и сейчас
+не требуют передачи дополнительных ключей с production-сервера.
+
 ## Проверка состояния
 
 ```bash
 sudo systemctl status academy-postgres-backup.timer
 sudo systemctl status academy-postgres-backup.service
 sudo systemctl status academy-postgres-offsite-backup.service
+sudo systemctl status academy-backup-monitor.timer
+sudo systemctl status academy-backup-monitor.service
 sudo journalctl -u academy-postgres-backup.service --since today
 sudo journalctl -u academy-postgres-offsite-backup.service --since today
+sudo journalctl -u academy-backup-monitor.service --since today
 sudo cat /opt/academy/backups/postgres/last-success
 sudo cat /opt/academy/backups/postgres/last-offsite-success
 ```
@@ -76,6 +109,13 @@ sha256sum --check latest.dump.sha256
 `last-success` должен содержать `restore_verified=true`.
 `last-offsite-success` должен содержать `download_verified=true` и
 `object_lock_mode=COMPLIANCE`.
+
+Ручная проверка без изменения данных:
+
+```bash
+sudo systemctl start academy-backup-monitor.service
+sudo systemctl status academy-backup-monitor.service
+```
 
 ## Ручной запуск
 
@@ -95,18 +135,24 @@ sudo systemctl status academy-postgres-offsite-backup.service
 
 - `deploy/server/academy-postgres-backup`;
 - `deploy/server/academy-postgres-offsite-backup`;
+- `deploy/server/academy-backup-monitor`;
 - `deploy/systemd/academy-postgres-backup.service`;
 - `deploy/systemd/academy-postgres-offsite-backup.service`;
-- `deploy/systemd/academy-postgres-backup.timer`.
+- `deploy/systemd/academy-postgres-backup.timer`;
+- `deploy/systemd/academy-backup-monitor.service`;
+- `deploy/systemd/academy-backup-monitor.timer`.
 
 На сервере они устанавливаются как root-owned файлы:
 
 ```text
 /usr/local/sbin/academy-postgres-backup
 /usr/local/sbin/academy-postgres-offsite-backup
+/usr/local/sbin/academy-backup-monitor
 /etc/systemd/system/academy-postgres-backup.service
 /etc/systemd/system/academy-postgres-offsite-backup.service
 /etc/systemd/system/academy-postgres-backup.timer
+/etc/systemd/system/academy-backup-monitor.service
+/etc/systemd/system/academy-backup-monitor.timer
 ```
 
 После изменения unit-файлов необходимо выполнить `systemctl daemon-reload`.
