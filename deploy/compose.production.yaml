@@ -1,12 +1,13 @@
-name: abrikosoff-academy
+name: academy-abrikosoff
 
 services:
   app:
-    image: ${ACADEMY_IMAGE:-ghcr.io/abrikosov-group/abrikosoff-academy:latest}
+    image: ${ACADEMY_IMAGE:?ACADEMY_IMAGE must be set}
     restart: unless-stopped
     env_file:
       - ${ACADEMY_ENV_FILE:-.env}
     environment:
+      APP_VERSION: ${APP_VERSION:-development}
       HOSTNAME: 0.0.0.0
       NODE_ENV: production
       PORT: 3000
@@ -34,7 +35,7 @@ services:
         max-file: "3"
 
   database:
-    image: postgres:18.1-alpine3.23
+    image: postgres:18.1-alpine3.23@sha256:aa6eb304ddb6dd26df23d05db4e5cb05af8951cda3e0dc57731b771e0ef4ab29
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-academy}
@@ -66,7 +67,7 @@ services:
         max-file: "3"
 
   caddy:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     restart: unless-stopped
     depends_on:
       app:
@@ -77,8 +78,8 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - academy_caddy_data:/data
-      - academy_caddy_config:/config
+      - caddy_data:/data
+      - caddy_config:/config
     networks:
       - edge
     read_only: true
@@ -87,6 +88,12 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 100
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     logging:
       driver: local
       options:
@@ -99,7 +106,7 @@ networks:
     internal: true
 
 volumes:
-  academy_caddy_config:
-  academy_caddy_data:
+  caddy_config:
+  caddy_data:
   academy_database:
   academy_next_cache:

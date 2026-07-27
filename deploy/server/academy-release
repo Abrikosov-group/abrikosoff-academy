@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly academy_root="/opt/academy"
+readonly releases_root="${academy_root}/releases"
+readonly shared_root="${academy_root}/shared"
+readonly environment_file="${shared_root}/.env"
+readonly current_link="${academy_root}/current"
+readonly current_image_file="${shared_root}/current-image"
+readonly legacy_compose_file="${academy_root}/compose.yaml"
+readonly project_name="academy-abrikosoff"
+readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+readonly health_url="https://academy.abrikosoff.com/api/health"
+
+archive_path=""
+incoming_directory=""
+docker_config=""
+
+cleanup() {
+  if [[ -n "${archive_path}" && -f "${archive_path}" ]]; then
+    rm -f -- "${archive_path}"
+  fi
+
+  if [[ -n "${incoming_directory}" && -d "${incoming_directory}" ]]; then
+    rm -f -- \
+      "${incoming_directory}/Caddyfile" \
+      "${incoming_directory}/compose.production.yaml"
+    rmdir -- "${incoming_directory}" 2>/dev/null || true
+  fi
+
+  if [[ -n "${docker_config}" && -d "${docker_config}" ]]; then
+    DOCKER_CONFIG="${docker_config}" docker logout ghcr.io >/dev/null 2>&1 || true
+    rm -f -- "${docker_config}/config.json"
+    rmdir -- "${docker_config}" 2>/dev/null || true
+  fi
+}
+
+trap cleanup EXIT
+
+fail() {
+  printf 'Ошибка релиза: %s\n' "$*" >&2
+  exit 1
+}
+
+validate_sha() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "некорректный SHA коммита"
+}
+
+upload_release() {
+  local release_sha="$1"
+  local release_directory
+  local entry
+  local -A seen_entries=()
+
+  validate_sha "${release_sha}"
+  install -d -m 750 "${releases_root}"
+
+  archive_path="$(
+    mktemp "${academy_root}/.release-${release_sha}.XXXXXX.tar.gz"
+  )"
+  cat > "${archive_path}"
+
+  while IFS= read -r entry; do
+    case "${entry}" in
+      Caddyfile | compose.production.yaml)
+        ;;
+      *)
+        fail "архив содержит недопустимый путь: ${entry}"
+        ;;
+    esac
+
+    [[ -z "${seen_entries[${entry}]+present}" ]] || \
+      fail "архив содержит повторяющийся путь: ${entry}"
+    seen_entries["${entry}"]=1
+  done < <(tar -tzf "${archive_path}")
+
+  [[ "${#seen_entries[@]}" -eq 2 ]] || \
+    fail "архив должен содержать ровно два файла"
+  [[ -n "${seen_entries[Caddyfile]+present}" ]] || \
+    fail "в архиве нет Caddyfile"
+  [[ -n "${seen_entries[compose.production.yaml]+present}" ]] || \
+    fail "в архиве нет compose.production.yaml"
+
+  incoming_directory="$(
+    mktemp -d "${releases_root}/.incoming-${release_sha}.XXXXXX"
+  )"
+  tar \
+    -xzf "${archive_path}" \
+    -C "${incoming_directory}" \
+    --no-same-owner \
+    --no-same-permissions
+
+  release_directory="${releases_root}/${release_sha}"
+  install -d -m 750 "${release_directory}"
+  install -m 640 \
+    "${incoming_directory}/Caddyfile" \
+    "${release_directory}/Caddyfile"
+  install -m 640 \
+    "${incoming_directory}/compose.production.yaml" \
+    "${release_directory}/compose.production.yaml"
+
+  printf 'Конфигурация релиза %s принята.\n' "${release_sha}"
+}
+
+run_compose() {
+  local release_directory="$1"
+  local image_reference="$2"
+  local app_version="${image_reference##*:}"
+  shift 2
+
+  DOCKER_CONFIG="${docker_config}" \
+  ACADEMY_IMAGE="${image_reference}" \
+  ACADEMY_ENV_FILE="${environment_file}" \
+  APP_VERSION="${app_version}" \
+    docker compose \
+      --project-name "${project_name}" \
+      --env-file "${environment_file}" \
+      --file "${release_directory}/compose.production.yaml" \
+      "$@"
+}
+
+restore_previous_release() {
+  local previous_release="$1"
+  local previous_image="$2"
+
+  if [[ \
+    -n "${previous_release}" \
+    && -n "${previous_image}" \
+    && -f "${previous_release}/compose.production.yaml" \
+  ]]; then
+    printf 'Возвращаю предыдущий образ %s.\n' "${previous_image}" >&2
+    run_compose \
+      "${previous_release}" \
+      "${previous_image}" \
+      up -d --remove-orphans --wait --wait-timeout 180 || true
+    return
+  fi
+
+  if [[ -f "${legacy_compose_file}" ]]; then
+    printf 'Возвращаю исходную статическую страницу.\n' >&2
+    docker compose \
+      --project-name "${project_name}" \
+      --file "${legacy_compose_file}" \
+      up -d --remove-orphans --wait --wait-timeout 120 || true
+  fi
+}
+
+deploy_release() {
+  local release_sha="$1"
+  local image_reference="$2"
+  local registry_actor="$3"
+  local release_directory="${releases_root}/${release_sha}"
+  local previous_release=""
+  local previous_image=""
+  local registry_token=""
+  local response=""
+
+  validate_sha "${release_sha}"
+  [[ "${image_reference}" == "${image_prefix}${release_sha}" ]] || \
+    fail "образ не соответствует SHA релиза"
+  [[ "${registry_actor}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || \
+    fail "некорректное имя пользователя реестра"
+  [[ -f "${release_directory}/Caddyfile" ]] || \
+    fail "Caddyfile релиза не загружен"
+  [[ -f "${release_directory}/compose.production.yaml" ]] || \
+    fail "Compose-конфигурация релиза не загружена"
+  [[ -f "${environment_file}" ]] || \
+    fail "серверный файл окружения не найден"
+
+  IFS= read -r registry_token || true
+  [[ "${#registry_token}" -ge 20 ]] || fail "токен реестра не передан"
+
+  docker_config="$(mktemp -d /tmp/academy-docker-config.XXXXXX)"
+  printf '%s' "${registry_token}" | \
+    DOCKER_CONFIG="${docker_config}" \
+      docker login \
+        ghcr.io \
+        --username "${registry_actor}" \
+        --password-stdin \
+        >/dev/null
+  unset registry_token
+
+  if [[ -L "${current_link}" ]]; then
+    previous_release="$(readlink -f "${current_link}")"
+  fi
+  if [[ -f "${current_image_file}" ]]; then
+    previous_image="$(<"${current_image_file}")"
+  fi
+
+  run_compose "${release_directory}" "${image_reference}" config --quiet
+  run_compose "${release_directory}" "${image_reference}" pull
+
+  if ! run_compose \
+    "${release_directory}" \
+    "${image_reference}" \
+    up -d --remove-orphans --wait --wait-timeout 180; then
+    restore_previous_release "${previous_release}" "${previous_image}"
+    fail "контейнеры новой версии не прошли проверку готовности"
+  fi
+
+  if ! response="$(
+    curl \
+      --fail \
+      --silent \
+      --show-error \
+      --proto '=https' \
+      --tlsv1.2 \
+      --retry 12 \
+      --retry-all-errors \
+      --retry-delay 5 \
+      --max-time 10 \
+      "${health_url}"
+  )"; then
+    restore_previous_release "${previous_release}" "${previous_image}"
+    fail "публичная проверка состояния завершилась ошибкой"
+  fi
+
+  if ! grep -Fq '"status":"ok"' <<< "${response}" \
+    || ! grep -Fq "\"version\":\"${release_sha}\"" <<< "${response}"; then
+    restore_previous_release "${previous_release}" "${previous_image}"
+    fail "публичная версия не совпала с выпускаемым коммитом"
+  fi
+
+  ln -sfn "${release_directory}" "${current_link}"
+  printf '%s\n' "${image_reference}" > "${current_image_file}"
+  printf 'Релиз %s успешно развёрнут.\n' "${release_sha}"
+}
+
+read -r action argument_one argument_two argument_three extra_argument \
+  <<< "${SSH_ORIGINAL_COMMAND:-}"
+[[ -z "${extra_argument:-}" ]] || fail "передано слишком много аргументов"
+
+case "${action:-}" in
+  upload)
+    [[ -n "${argument_one:-}" ]] || fail "не передан SHA релиза"
+    [[ -z "${argument_two:-}" && -z "${argument_three:-}" ]] || \
+      fail "команда upload принимает только SHA"
+    upload_release "${argument_one}"
+    ;;
+  deploy)
+    [[ \
+      -n "${argument_one:-}" \
+      && -n "${argument_two:-}" \
+      && -n "${argument_three:-}" \
+    ]] || fail "команда deploy требует SHA, образ и пользователя реестра"
+    deploy_release "${argument_one}" "${argument_two}" "${argument_three}"
+    ;;
+  *)
+    fail "команда не разрешена"
+    ;;
+esac
