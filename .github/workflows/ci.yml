@@ -27,9 +27,11 @@ jobs:
         run: |
           bash -n deploy/server/academy-postgres-backup
           bash -n deploy/server/academy-postgres-offsite-backup
+          bash -n deploy/server/academy-backup-monitor
           shellcheck \
             deploy/server/academy-postgres-backup \
-            deploy/server/academy-postgres-offsite-backup
+            deploy/server/academy-postgres-offsite-backup \
+            deploy/server/academy-backup-monitor
 
           set +e
           smoke_output="$(
@@ -41,6 +43,67 @@ jobs:
 
           test "$smoke_exit" -eq 1
           grep -Fq 'last-success не найден' <<< "$smoke_output"
+
+          monitor_root="$RUNNER_TEMP/monitor-backups"
+          mkdir -p "$monitor_root"
+          monitor_now=1785153600
+          monitor_archive=academy-20260727T140000Z.dump
+          printf 'test backup\n' > "$monitor_root/$monitor_archive"
+          monitor_sha="$(
+            sha256sum "$monitor_root/$monitor_archive" | awk '{print $1}'
+          )"
+          monitor_size="$(stat -c '%s' "$monitor_root/$monitor_archive")"
+          printf '%s  %s\n' \
+            "$monitor_sha" \
+            "$monitor_archive" \
+            > "$monitor_root/$monitor_archive.sha256"
+          ln -s "$monitor_archive" "$monitor_root/latest.dump"
+          ln -s "$monitor_archive.sha256" "$monitor_root/latest.dump.sha256"
+
+          {
+            printf 'completed_at=%s\n' \
+              "$(date -u -d "@$((monitor_now - 3600))" --iso-8601=seconds)"
+            printf 'archive=%s\n' "$monitor_archive"
+            printf 'sha256=%s\n' "$monitor_sha"
+            printf 'size_bytes=%s\n' "$monitor_size"
+            printf 'source_objects=5\n'
+            printf 'restored_objects=5\n'
+            printf 'restore_verified=true\n'
+            printf 'postgres_version=pg_dump (PostgreSQL) 17\n'
+          } > "$monitor_root/last-success"
+
+          {
+            printf 'uploaded_at=%s\n' \
+              "$(date -u -d "@$((monitor_now - 3500))" --iso-8601=seconds)"
+            printf 'bucket=abrikosoff-academy-backups-prod-2026\n'
+            printf 'object_key=postgres/2026/07/%s.age\n' "$monitor_archive"
+            printf 'version_id=test-version\n'
+            printf 'source_archive=%s\n' "$monitor_archive"
+            printf 'source_sha256=%s\n' "$monitor_sha"
+            printf 'encrypted_sha256=%064d\n' 0
+            printf 'encrypted_size_bytes=%s\n' "$((monitor_size + 128))"
+            printf 'object_lock_mode=COMPLIANCE\n'
+            printf 'retain_until=%s\n' \
+              "$(date -u -d "@$((monitor_now + 35 * 86400))" --iso-8601=seconds)"
+            printf 'download_verified=true\n'
+          } > "$monitor_root/last-offsite-success"
+
+          ACADEMY_BACKUP_ROOT="$monitor_root" \
+            ACADEMY_MONITOR_NOW_EPOCH="$monitor_now" \
+            deploy/server/academy-backup-monitor
+
+          set +e
+          stale_output="$(
+            ACADEMY_BACKUP_ROOT="$monitor_root" \
+              ACADEMY_MONITOR_NOW_EPOCH="$((monitor_now + 31 * 3600))" \
+              deploy/server/academy-backup-monitor 2>&1
+          )"
+          stale_exit=$?
+          set -e
+
+          test "$stale_exit" -eq 1
+          grep -Fq 'локальная резервная копия старше допустимых' \
+            <<< "$stale_output"
 
       - name: Подготовить Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

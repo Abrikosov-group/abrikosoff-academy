@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly backup_root="${ACADEMY_BACKUP_ROOT:-/opt/academy/backups/postgres}"
+readonly marker_path="${backup_root}/last-success"
+readonly offsite_marker_path="${backup_root}/last-offsite-success"
+readonly maximum_age_seconds="${ACADEMY_BACKUP_MAX_AGE_SECONDS:-108000}"
+readonly expected_bucket="${ACADEMY_OFFSITE_BUCKET:-abrikosoff-academy-backups-prod-2026}"
+readonly expected_prefix="${ACADEMY_OFFSITE_PREFIX:-postgres}"
+readonly configured_now_epoch="${ACADEMY_MONITOR_NOW_EPOCH:-}"
+
+fail() {
+  printf 'Ошибка мониторинга резервных копий: %s\n' "$*" >&2
+  exit 1
+}
+
+read_marker_value() {
+  local path="$1"
+  local key="$2"
+  local value
+
+  value="$(
+    awk -v key="${key}" '
+      index($0, key "=") == 1 {
+        value = substr($0, length(key) + 2)
+        count += 1
+      }
+      END {
+        if (count != 1) {
+          exit 1
+        }
+        print value
+      }
+    ' "${path}"
+  )" || fail "поле ${key} должно встречаться в ${path} ровно один раз"
+
+  printf '%s' "${value}"
+}
+
+timestamp_to_epoch() {
+  local label="$1"
+  local value="$2"
+  local epoch
+
+  epoch="$(date -u -d "${value}" +%s 2>/dev/null)" || \
+    fail "${label} содержит неподдерживаемую дату"
+  [[ "${epoch}" =~ ^[0-9]+$ ]] || \
+    fail "${label} не удалось преобразовать во время UTC"
+
+  printf '%s' "${epoch}"
+}
+
+calculate_age() {
+  local label="$1"
+  local epoch="$2"
+  local age
+
+  (( epoch <= now_epoch )) || fail "${label} находится в будущем"
+  age=$((now_epoch - epoch))
+  (( age <= maximum_age_seconds )) || \
+    fail "${label} старше допустимых ${maximum_age_seconds} секунд: ${age}"
+
+  printf '%s' "${age}"
+}
+
+[[ "${maximum_age_seconds}" =~ ^[0-9]+$ ]] || \
+  fail "максимальный возраст должен быть целым числом секунд"
+(( maximum_age_seconds >= 3600 && maximum_age_seconds <= 604800 )) || \
+  fail "максимальный возраст должен быть от 3600 до 604800 секунд"
+[[ -n "${expected_bucket}" && "${expected_bucket}" != */* ]] || \
+  fail "ожидаемое имя бакета имеет неподдерживаемый формат"
+[[ "${expected_prefix}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || \
+  fail "ожидаемый префикс объекта имеет неподдерживаемый формат"
+[[ "${expected_prefix}" != */ ]] || \
+  fail "ожидаемый префикс объекта не должен заканчиваться косой чертой"
+
+if [[ -n "${configured_now_epoch}" ]]; then
+  now_epoch="${configured_now_epoch}"
+else
+  now_epoch="$(date -u +%s)"
+fi
+readonly now_epoch
+[[ "${now_epoch}" =~ ^[0-9]+$ ]] || \
+  fail "текущее время должно быть целым числом секунд Unix"
+
+[[ -d "${backup_root}" ]] || fail "каталог резервных копий не найден"
+
+if [[ -e "${backup_root}/.backup.lock" ]]; then
+  exec 8< "${backup_root}/.backup.lock"
+  if ! flock --shared --nonblock 8; then
+    printf 'Проверка резервных копий отложена: локальная копия создаётся.\n'
+    exit 0
+  fi
+fi
+
+if [[ -e "${backup_root}/.offsite-backup.lock" ]]; then
+  exec 9< "${backup_root}/.offsite-backup.lock"
+  if ! flock --shared --nonblock 9; then
+    printf 'Проверка резервных копий отложена: внешняя копия загружается.\n'
+    exit 0
+  fi
+fi
+
+[[ -f "${marker_path}" ]] || fail "last-success не найден"
+[[ -f "${offsite_marker_path}" ]] || fail "last-offsite-success не найден"
+
+completed_at="$(read_marker_value "${marker_path}" completed_at)"
+archive="$(read_marker_value "${marker_path}" archive)"
+archive_sha256="$(read_marker_value "${marker_path}" sha256)"
+archive_size_bytes="$(read_marker_value "${marker_path}" size_bytes)"
+source_objects="$(read_marker_value "${marker_path}" source_objects)"
+restored_objects="$(read_marker_value "${marker_path}" restored_objects)"
+restore_verified="$(read_marker_value "${marker_path}" restore_verified)"
+readonly \
+  completed_at \
+  archive \
+  archive_sha256 \
+  archive_size_bytes \
+  source_objects \
+  restored_objects \
+  restore_verified
+
+[[ "${archive}" =~ ^academy-([0-9]{4})([0-9]{2})([0-9]{2})T[0-9]{6}Z\.dump$ ]] || \
+  fail "имя локального архива имеет неподдерживаемый формат"
+readonly archive_year="${BASH_REMATCH[1]}"
+readonly archive_month="${BASH_REMATCH[2]}"
+[[ "${archive_sha256}" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "SHA-256 локального архива имеет неподдерживаемый формат"
+[[ "${archive_size_bytes}" =~ ^[0-9]+$ ]] || \
+  fail "размер локального архива имеет неподдерживаемый формат"
+(( archive_size_bytes > 0 )) || fail "локальный архив пуст"
+[[ "${source_objects}" =~ ^[0-9]+$ ]] || \
+  fail "число объектов исходной базы имеет неподдерживаемый формат"
+[[ "${restored_objects}" =~ ^[0-9]+$ ]] || \
+  fail "число восстановленных объектов имеет неподдерживаемый формат"
+[[ "${source_objects}" == "${restored_objects}" ]] || \
+  fail "число восстановленных объектов не совпадает с исходной базой"
+[[ "${restore_verified}" == "true" ]] || \
+  fail "локальная копия не подтверждена восстановлением"
+
+readonly archive_path="${backup_root}/${archive}"
+readonly checksum_path="${archive_path}.sha256"
+[[ -f "${archive_path}" ]] || fail "локальный архив не найден"
+[[ -f "${checksum_path}" ]] || fail "контрольная сумма локального архива не найдена"
+[[ "$(stat -c '%s' "${archive_path}")" == "${archive_size_bytes}" ]] || \
+  fail "фактический размер локального архива не совпадает с last-success"
+[[ "$(< "${checksum_path}")" == "${archive_sha256}  ${archive}" ]] || \
+  fail "файл контрольной суммы не совпадает с last-success"
+[[ -L "${backup_root}/latest.dump" ]] || fail "ссылка latest.dump не найдена"
+[[ "$(readlink "${backup_root}/latest.dump")" == "${archive}" ]] || \
+  fail "latest.dump указывает не на последний успешный архив"
+[[ -L "${backup_root}/latest.dump.sha256" ]] || \
+  fail "ссылка latest.dump.sha256 не найдена"
+[[ "$(readlink "${backup_root}/latest.dump.sha256")" == "${archive}.sha256" ]] || \
+  fail "latest.dump.sha256 указывает не на последнюю контрольную сумму"
+
+completed_epoch="$(timestamp_to_epoch completed_at "${completed_at}")"
+readonly completed_epoch
+local_age_seconds="$(calculate_age "локальная резервная копия" "${completed_epoch}")"
+readonly local_age_seconds
+
+uploaded_at="$(read_marker_value "${offsite_marker_path}" uploaded_at)"
+bucket="$(read_marker_value "${offsite_marker_path}" bucket)"
+object_key="$(read_marker_value "${offsite_marker_path}" object_key)"
+version_id="$(read_marker_value "${offsite_marker_path}" version_id)"
+source_archive="$(read_marker_value "${offsite_marker_path}" source_archive)"
+source_sha256="$(read_marker_value "${offsite_marker_path}" source_sha256)"
+encrypted_sha256="$(read_marker_value "${offsite_marker_path}" encrypted_sha256)"
+encrypted_size_bytes="$(
+  read_marker_value "${offsite_marker_path}" encrypted_size_bytes
+)"
+object_lock_mode="$(read_marker_value "${offsite_marker_path}" object_lock_mode)"
+retain_until="$(read_marker_value "${offsite_marker_path}" retain_until)"
+download_verified="$(read_marker_value "${offsite_marker_path}" download_verified)"
+readonly \
+  uploaded_at \
+  bucket \
+  object_key \
+  version_id \
+  source_archive \
+  source_sha256 \
+  encrypted_sha256 \
+  encrypted_size_bytes \
+  object_lock_mode \
+  retain_until \
+  download_verified
+
+expected_object_key="$(
+  printf '%s/%s/%s/%s.age' \
+    "${expected_prefix}" \
+    "${archive_year}" \
+    "${archive_month}" \
+    "${archive}"
+)"
+readonly expected_object_key
+[[ "${bucket}" == "${expected_bucket}" ]] || \
+  fail "внешняя копия записана не в ожидаемый бакет"
+[[ "${object_key}" == "${expected_object_key}" ]] || \
+  fail "ключ внешнего объекта не соответствует локальному архиву"
+[[ -n "${version_id}" && ! "${version_id}" =~ [[:space:]] ]] || \
+  fail "идентификатор версии внешнего объекта имеет неподдерживаемый формат"
+[[ "${source_archive}" == "${archive}" ]] || \
+  fail "внешняя копия создана не из последнего локального архива"
+[[ "${source_sha256}" == "${archive_sha256}" ]] || \
+  fail "SHA-256 исходного архива во внешнем маркере не совпадает"
+[[ "${encrypted_sha256}" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "SHA-256 зашифрованного объекта имеет неподдерживаемый формат"
+[[ "${encrypted_size_bytes}" =~ ^[0-9]+$ ]] || \
+  fail "размер зашифрованного объекта имеет неподдерживаемый формат"
+(( encrypted_size_bytes > 0 )) || fail "зашифрованный объект пуст"
+[[ "${object_lock_mode}" == "COMPLIANCE" ]] || \
+  fail "внешний объект не защищён блокировкой COMPLIANCE"
+[[ "${download_verified}" == "true" ]] || \
+  fail "внешняя копия не подтверждена контрольным скачиванием"
+
+uploaded_epoch="$(timestamp_to_epoch uploaded_at "${uploaded_at}")"
+retain_until_epoch="$(timestamp_to_epoch retain_until "${retain_until}")"
+readonly uploaded_epoch retain_until_epoch
+(( uploaded_epoch >= completed_epoch )) || \
+  fail "внешняя копия отмечена раньше завершения локальной"
+(( retain_until_epoch > now_epoch )) || \
+  fail "срок обязательного хранения последней внешней копии истёк"
+offsite_age_seconds="$(
+  calculate_age "внешняя резервная копия" "${uploaded_epoch}"
+)"
+readonly offsite_age_seconds
+
+printf \
+  'Резервные копии в норме: %s, локальная — %s секунд назад, внешняя — %s секунд назад, s3://%s/%s.\n' \
+  "${archive}" \
+  "${local_age_seconds}" \
+  "${offsite_age_seconds}" \
+  "${bucket}" \
+  "${object_key}"
