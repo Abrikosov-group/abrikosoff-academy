@@ -1,0 +1,27 @@
+name: abrikosoff-academy-local
+
+services:
+  database:
+    image: postgres:18.1-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: academy
+      POSTGRES_USER: academy
+      POSTGRES_PASSWORD: academy-local-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - academy_local_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U academy -d academy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  academy_local_database:

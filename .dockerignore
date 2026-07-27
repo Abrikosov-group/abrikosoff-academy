@@ -1,0 +1,11 @@
+.git
+.github
+.next
+.data
+coverage
+deploy
+docs
+node_modules
+npm-debug.log*
+.env*
+README.md

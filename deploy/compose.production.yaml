@@ -1,0 +1,105 @@
+name: abrikosoff-academy
+
+services:
+  app:
+    image: ${ACADEMY_IMAGE:-ghcr.io/abrikosov-group/abrikosoff-academy:latest}
+    restart: unless-stopped
+    env_file:
+      - ${ACADEMY_ENV_FILE:-.env}
+    environment:
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      PORT: 3000
+    depends_on:
+      database:
+        condition: service_healthy
+    expose:
+      - "3000"
+    networks:
+      - edge
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - academy_next_cache:/app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  database:
+    image: postgres:18.1-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-academy}
+      POSTGRES_USER: ${POSTGRES_USER:-academy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - academy_database:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    shm_size: 128mb
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 150
+    stop_grace_period: 60s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - academy_caddy_data:/data
+      - academy_caddy_config:/config
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  academy_caddy_config:
+  academy_caddy_data:
+  academy_database:
+  academy_next_cache:

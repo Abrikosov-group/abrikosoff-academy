@@ -1,0 +1,19 @@
+academy.abrikosoff.com {
+	encode zstd gzip
+	reverse_proxy app:3000
+
+	header {
+		-Server
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
