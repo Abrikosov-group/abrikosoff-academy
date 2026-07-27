@@ -6,30 +6,59 @@
 - `app` — приложение на внутреннем порту 3000;
 - `database` — PostgreSQL только во внутренней сети Docker.
 
-## Подготовка
+## Автоматический релиз
 
-```bash
-cp .env.example .env
+Workflow `.github/workflows/release.yml` после изменения `main`:
+
+1. собирает Linux/AMD64-образ с SBOM и provenance;
+2. публикует неизменяемый тег с полным SHA коммита в приватный GHCR;
+3. передаёт серверу только `Caddyfile` и Compose-конфигурацию;
+4. запускает релиз ограниченным SSH-ключом;
+5. проверяет `/api/health` и совпадение опубликованной версии;
+6. при ошибке возвращает предыдущий релиз, а при первой выкладке — исходную
+   статическую страницу.
+
+Production-окружение GitHub содержит:
+
+- переменные `PRODUCTION_HOST`, `PRODUCTION_PORT`, `PRODUCTION_USER`;
+- секреты `PRODUCTION_SSH_PRIVATE_KEY`, `PRODUCTION_SSH_KNOWN_HOSTS`.
+
+Токен GHCR не хранится отдельным секретом: workflow использует краткоживущий
+`GITHUB_TOKEN` с минимальными правами.
+
+## Сервер
+
+Постоянные данные находятся вне каталога релиза:
+
+```text
+/opt/academy/shared/.env       секреты приложения и PostgreSQL
+/opt/academy/releases/<sha>/   конфигурации отдельных релизов
+/opt/academy/current           ссылка на активный релиз
 ```
 
-В `.env` необходимо установить уникальный пароль PostgreSQL, корректный
-`DATABASE_URL`, версию образа и ключи интеграций. Файл `.env` не передаётся в
-GitHub.
+Серверный шлюз `server/academy-release` устанавливается как
+`/usr/local/sbin/academy-release`. Ключ GitHub Actions в `authorized_keys`
+запускает только этот шлюз и не даёт интерактивной оболочки, PTY, туннелей или
+перенаправления агента.
 
-## Проверка конфигурации
+Файл `/opt/academy/shared/.env` не передаётся в GitHub. В нём устанавливаются
+уникальный пароль PostgreSQL, `DATABASE_URL` и будущие ключи интеграций.
+
+## Локальная проверка конфигурации
 
 ```bash
 ACADEMY_ENV_FILE=.env.example \
   docker compose --env-file .env.example -f compose.production.yaml config --quiet
 ```
 
-## Запуск
+## Ручная аварийная проверка
 
 ```bash
-docker compose --env-file .env -f compose.production.yaml pull
-docker compose --env-file .env -f compose.production.yaml up -d
-docker compose --env-file .env -f compose.production.yaml ps
+docker compose \
+  --project-name academy-abrikosoff \
+  --env-file /opt/academy/shared/.env \
+  -f /opt/academy/current/compose.production.yaml \
+  ps
 ```
 
-Фактическая выкладка будет выполняться автоматизированным процессом с проверкой
-health-check и возможностью возврата к предыдущему образу.
+Обновлять production вручную следует только при восстановлении после аварии.

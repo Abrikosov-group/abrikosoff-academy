@@ -1,0 +1,166 @@
+name: Выпуск production-версии
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/abrikosov-group/abrikosoff-academy
+
+jobs:
+  build:
+    name: Собрать и опубликовать образ
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Подготовить Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Войти в GitHub Container Registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Собрать и опубликовать образ
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          pull: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:main
+          labels: |
+            org.opencontainers.image.title=Академия Абрикософф
+            org.opencontainers.image.description=Production-образ веб-платформы Академии Абрикософф
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Записать опубликованный образ
+        run: |
+          printf '### Опубликованный образ\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- `%s@%s`\n' \
+            "${IMAGE_NAME}:${GITHUB_SHA}" \
+            "${{ steps.build.outputs.digest }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Развернуть на московском сервере
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://academy.abrikosoff.com
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Подготовить защищённое SSH-подключение
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/academy-production"
+          chmod 600 "$HOME/.ssh/academy-production"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Передать конфигурацию релиза
+        env:
+          PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+          PRODUCTION_PORT: ${{ vars.PRODUCTION_PORT }}
+          PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
+        run: |
+          ssh_options=(
+            -i "$HOME/.ssh/academy-production"
+            -p "$PRODUCTION_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+
+          tar \
+            -C deploy \
+            -czf "$RUNNER_TEMP/academy-release.tar.gz" \
+            Caddyfile \
+            compose.production.yaml
+
+          ssh "${ssh_options[@]}" \
+            "${PRODUCTION_USER}@${PRODUCTION_HOST}" \
+            "upload ${GITHUB_SHA}" \
+            < "$RUNNER_TEMP/academy-release.tar.gz"
+
+      - name: Выполнить релиз и проверить сайт
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+          PRODUCTION_PORT: ${{ vars.PRODUCTION_PORT }}
+          PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
+        run: |
+          ssh_options=(
+            -i "$HOME/.ssh/academy-production"
+            -p "$PRODUCTION_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+
+          printf '%s' "$GHCR_TOKEN" | \
+            ssh "${ssh_options[@]}" \
+              "${PRODUCTION_USER}@${PRODUCTION_HOST}" \
+              "deploy ${GITHUB_SHA} ${IMAGE_NAME}:${GITHUB_SHA} ${GITHUB_ACTOR}"
+
+          response="$(
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --proto '=https' \
+              --tlsv1.2 \
+              --retry 6 \
+              --retry-all-errors \
+              --retry-delay 5 \
+              --max-time 10 \
+              "https://academy.abrikosoff.com/api/health"
+          )"
+
+          grep -Fq '"status":"ok"' <<< "$response"
+          grep -Fq "\"version\":\"${GITHUB_SHA}\"" <<< "$response"
+
+          printf '### Production\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Версия: `%s`\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Адрес: https://academy.abrikosoff.com\n' \
+            >> "$GITHUB_STEP_SUMMARY"
