@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowLeftIcon,
-  CheckCircleIcon,
-  LockKeyIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { redirect } from "next/navigation";
+import { ArrowLeftIcon, LockKeyIcon } from "@phosphor-icons/react/dist/ssr";
 import { CheckoutButton } from "@/components/academy/checkout-button";
+import { addSubscriptionPeriod } from "@/modules/billing/domain/subscription-period";
+import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
   title: "Оформление подписки",
@@ -23,64 +21,86 @@ export default async function CheckoutPage({
   const { plan } = await searchParams;
   const selectedPlan = plan === "monthly" ? "monthly" : "annual";
   const annual = selectedPlan === "annual";
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect(`/login?plan=${selectedPlan}`);
+  }
+
+  const telegramUsername =
+    user.primaryMethod.type === "telegram" &&
+    typeof user.primaryMethod.metadata.username === "string"
+      ? `@${user.primaryMethod.metadata.username}`
+      : null;
+  const accountLabel =
+    telegramUsername ||
+    user.receiptEmail ||
+    user.displayName;
+  const methodLabel =
+    user.primaryMethod.type === "telegram"
+      ? "Telegram"
+      : user.primaryMethod.type === "email"
+        ? "электронная почта"
+        : "телефон";
+  const renewalDate = addSubscriptionPeriod(
+    new Date(),
+    selectedPlan,
+  );
+  const renewalDateLabel = new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Europe/Moscow",
+  }).format(renewalDate);
 
   return (
     <main className="checkout-page">
-      <Link className="back-link" href={`/login?plan=${selectedPlan}`}>
-        <ArrowLeftIcon aria-hidden="true" size={18} />
-        Назад
-      </Link>
-
-      <section className="checkout-card" aria-labelledby="checkout-title">
-        <div className="checkout-brand">
-          <Image
-            src="/brand/logo-horizontal.svg"
-            alt="Академия Абрикософф"
-            width={384}
-            height={100}
-            priority
-          />
-        </div>
-        <header>
-          <p className="overline">Последний шаг</p>
-          <h1 id="checkout-title">Проверьте подписку</h1>
-          <p>После оплаты откроются все курсы и личный кабинет.</p>
+      <section className="checkout-frame" aria-labelledby="checkout-title">
+        <header className="flow-header">
+          <Link href={`/login?plan=${selectedPlan}`} aria-label="Назад">
+            <ArrowLeftIcon aria-hidden="true" size={20} />
+          </Link>
+          <h1 id="checkout-title">Оформление подписки</h1>
         </header>
 
-        <div className="order-summary">
-          <div>
-            <span>Тариф</span>
-            <strong>{annual ? "Годовой" : "Месячный"}</strong>
+        <div className="checkout-content">
+          <div className="order-summary">
+            <div className="order-heading">
+              <strong>{annual ? "Годовой тариф" : "Месячный тариф"}</strong>
+              {annual ? <span className="badge badge-success">−22%</span> : null}
+            </div>
+            <div>
+              <span>
+                Подписка на {annual ? "12 месяцев" : "1 месяц"}
+              </span>
+              <strong>{annual ? "14 000 ₽" : "1 500 ₽"}</strong>
+            </div>
+            {annual ? (
+              <div className="order-old-price">
+                <span>Вместо 12 × 1 500 ₽</span>
+                <span>18 000 ₽</span>
+              </div>
+            ) : null}
+            <div className="order-total">
+              <strong>Итого</strong>
+              <strong>{annual ? "14 000 ₽" : "1 500 ₽"}</strong>
+            </div>
           </div>
-          <div>
-            <span>Период</span>
-            <strong>{annual ? "12 месяцев" : "1 месяц"}</strong>
-          </div>
-          <div className="order-total">
-            <span>К оплате</span>
-            <strong>{annual ? "14 000 ₽" : "1 500 ₽"}</strong>
-          </div>
+
+          <p className="checkout-account">
+            Аккаунт: <strong>{accountLabel}</strong> ({methodLabel}). Продлится
+            автоматически {renewalDateLabel} — напомним за 3 дня.
+          </p>
+
+          <CheckoutButton
+            plan={selectedPlan}
+            initialReceiptEmail={user.receiptEmail}
+          />
+          <p className="secure-note">
+            <LockKeyIcon aria-hidden="true" size={15} />
+            Защищённая страница ЮKassa · демо пропускает этот шаг
+          </p>
         </div>
-
-        <ul className="checkout-features">
-          <li>
-            <CheckCircleIcon aria-hidden="true" size={20} weight="fill" />
-            Доступ ко всем курсам сразу после оплаты
-          </li>
-          <li>
-            <CheckCircleIcon aria-hidden="true" size={20} weight="fill" />
-            История платежей и управление продлением в кабинете
-          </li>
-        </ul>
-
-        <CheckoutButton plan={selectedPlan} />
-        <p className="secure-note">
-          <LockKeyIcon aria-hidden="true" size={17} />
-          Оплата откроется на защищённой странице ЮKassa
-        </p>
-        <p className="prototype-note">
-          Это интерактивный прототип: реальное списание не выполняется.
-        </p>
       </section>
     </main>
   );

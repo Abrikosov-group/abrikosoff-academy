@@ -1,140 +1,215 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRightIcon,
-  BookOpenTextIcon,
-  CheckCircleIcon,
-  CreditCardIcon,
-  GearSixIcon,
-  HouseIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { redirect } from "next/navigation";
+import { TelegramLogoIcon } from "@phosphor-icons/react/dist/ssr";
+import { getDatabasePool } from "@/lib/database";
+import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
+import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
   title: "Личный кабинет",
   description: "Курсы, прогресс и подписка ученика.",
 };
 
-export default function DashboardPage() {
+const coming = [
+  ["Сон: восстановление как навык", "август"],
+  ["Питание без крайностей", "осень"],
+];
+
+function getInitials(displayName: string) {
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+
+  return initials || "А";
+}
+
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  const subscription = await getSubscriptionSummary(
+    getDatabasePool(),
+    user.id,
+  );
+  const subscriptionActive = subscription?.status === "active";
+  const periodEnd = subscription?.currentPeriodEnd
+    ? new Intl.DateTimeFormat("ru-RU", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Europe/Moscow",
+      }).format(new Date(subscription.currentPeriodEnd))
+    : null;
+  const firstName = user.displayName.split(/\s+/)[0] || "ученик";
+  const initials = getInitials(user.displayName);
+
   return (
-    <main className="dashboard-shell">
-      <aside className="dashboard-sidebar">
+    <main className="cabinet-page">
+      <header className="cabinet-header">
         <Link href="/" aria-label="На главную">
           <Image
-            src="/brand/logo-horizontal-dark.svg"
+            src="/brand/logo-horizontal.svg"
             alt="Академия Абрикософф"
             width={384}
             height={100}
             priority
           />
         </Link>
-        <nav aria-label="Личный кабинет">
-          <Link className="active" href="/dashboard">
-            <HouseIcon aria-hidden="true" size={20} weight="fill" />
-            Главная
-          </Link>
-          <Link href="/courses">
-            <BookOpenTextIcon aria-hidden="true" size={20} />
-            Мои курсы
-          </Link>
-          <Link href="/pricing">
-            <CreditCardIcon aria-hidden="true" size={20} />
-            Подписка
-          </Link>
-          <Link href="/dashboard">
-            <GearSixIcon aria-hidden="true" size={20} />
-            Настройки
-          </Link>
-        </nav>
-        <div className="dashboard-user">
-          <span>ГА</span>
-          <div>
-            <strong>Герман</strong>
-            <small>Ученик Академии</small>
-          </div>
+        <div>
+          <span
+            className={`badge ${
+              subscriptionActive ? "badge-success" : "badge-neutral"
+            }`}
+          >
+            {subscriptionActive ? "Подписка активна" : "Нет подписки"}
+          </span>
+          <span className="header-avatar">{initials}</span>
         </div>
-      </aside>
+      </header>
 
-      <div className="dashboard-main">
-        <header className="dashboard-topbar">
-          <div>
-            <p className="overline">Личный кабинет</p>
-            <h1>Добрый день, Герман</h1>
-          </div>
-          <div className="subscription-status">
-            <CheckCircleIcon aria-hidden="true" size={20} weight="fill" />
-            Подписка активна
-          </div>
-        </header>
-
-        <section className="dashboard-continue" aria-labelledby="continue-title">
-          <div className="dashboard-course-cover">
-            <Image
-              src="/images/academy-morning-routine.png"
-              alt=""
-              fill
-              priority
-              loading="eager"
-              sizes="(max-width: 767px) 100vw, 38vw"
-            />
-          </div>
-          <div>
-            <p className="overline">Продолжить обучение</p>
-            <h2 id="continue-title">Здоровые привычки</h2>
-            <p>Модуль 1 · Урок 1: Маленький шаг, который останется</p>
-            <div
-              className="progress-track"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={8}
-              aria-label="Прогресс курса"
-            >
-              <span />
-            </div>
-            <small>Пройдено 8%</small>
-            <Link
-              className="button button-primary"
-              href="/courses/healthy-habits/lessons/1"
-            >
-              Продолжить
-              <ArrowRightIcon aria-hidden="true" size={19} />
+      <div className="cabinet-layout">
+        <aside className="cabinet-sidebar">
+          <nav aria-label="Личный кабинет">
+            <Link className="active" href="/dashboard">
+              Обзор
             </Link>
-          </div>
-        </section>
+            <Link href="/courses">Мои курсы</Link>
+            <Link href="/pricing">Подписка</Link>
+            <Link href="/dashboard">История платежей</Link>
+            <Link href="/dashboard">Профиль и вход</Link>
+          </nav>
+          <a
+            className="cabinet-support"
+            href="https://t.me/AbrikosoffBot"
+            rel="noreferrer"
+            target="_blank"
+          >
+            <TelegramLogoIcon aria-hidden="true" size={15} weight="fill" />
+            Поддержка
+          </a>
+        </aside>
 
-        <section className="dashboard-section" aria-labelledby="my-courses">
-          <div className="section-heading">
-            <div>
-              <p className="overline">Библиотека</p>
+        <div className="cabinet-main">
+          <h1>Добрый день, {firstName}</h1>
+
+          <div className="cabinet-overview-grid">
+            <section
+              className="cabinet-continue"
+              aria-labelledby="continue-title"
+            >
+              <p className="overline">Продолжить</p>
+              <h2 id="continue-title">
+                Урок 3. Утренний якорь: с чего начинается система
+              </h2>
+              <p>Здоровые привычки · осталось 4 минуты</p>
+              <div className="cabinet-continue-actions">
+                <Link
+                  className="button button-secondary"
+                  href="/courses/healthy-habits/lessons/1"
+                >
+                  Продолжить чтение
+                </Link>
+                <div>
+                  <div className="progress-track">
+                    <span />
+                  </div>
+                  <small>Урок прочитан на 55%</small>
+                </div>
+              </div>
+            </section>
+
+            <section className="cabinet-subscription">
+              <header>
+                <h2>Подписка</h2>
+                <span
+                  className={`badge ${
+                    subscriptionActive ? "badge-success" : "badge-neutral"
+                  }`}
+                >
+                  {subscriptionActive ? "Активна" : "Не оформлена"}
+                </span>
+              </header>
+              {subscriptionActive ? (
+                <p>
+                  {subscription?.planId === "annual"
+                    ? "Годовой тариф"
+                    : "Месячный тариф"}{" "}
+                  · следующее списание
+                  <br />
+                  <strong>
+                    {periodEnd} ·{" "}
+                    {subscription?.planId === "annual"
+                      ? "14 000 ₽"
+                      : "1 500 ₽"}
+                  </strong>
+                </p>
+              ) : (
+                <p>Выберите тариф, чтобы открыть все курсы Академии.</p>
+              )}
+              <Link href="/pricing">
+                {subscriptionActive
+                  ? "Управлять подпиской"
+                  : "Выбрать тариф"}
+              </Link>
+              <div className="cabinet-total-progress">
+                <p>
+                  <strong>Общий прогресс</strong>
+                  <span>3 из 12 уроков</span>
+                </p>
+                <div className="progress-track">
+                  <span />
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section className="cabinet-courses" aria-labelledby="my-courses">
+            <header>
               <h2 id="my-courses">Мои курсы</h2>
+              <Link href="/courses">Каталог</Link>
+            </header>
+            <div className="cabinet-course-grid">
+              <Link
+                className="cabinet-course-card"
+                href="/courses/healthy-habits"
+              >
+                <div>
+                  <Image
+                    src="/images/course-cover-abstract.png"
+                    alt=""
+                    fill
+                    sizes="(max-width: 767px) 100vw, 260px"
+                  />
+                </div>
+                <section>
+                  <h3>Здоровые привычки</h3>
+                  <p>
+                    <span>Урок 3 из 12</span>
+                    <span>25%</span>
+                  </p>
+                  <div className="progress-track">
+                    <span />
+                  </div>
+                </section>
+              </Link>
+              {coming.map(([title, date]) => (
+                <article className="cabinet-coming-card" key={title}>
+                  <span className="badge badge-neutral">Скоро</span>
+                  <h3>{title}</h3>
+                  <p>{date} · войдёт в подписку</p>
+                </article>
+              ))}
             </div>
-            <Link className="text-link" href="/courses">
-              Все курсы
-              <ArrowRightIcon aria-hidden="true" size={18} />
-            </Link>
-          </div>
-          <article className="dashboard-course-row">
-            <div className="dashboard-course-mark">
-              <Image
-                src="/brand/logo-mark.svg"
-                alt=""
-                width={58}
-                height={58}
-              />
-            </div>
-            <div>
-              <h3>Здоровые привычки: система на каждый день</h3>
-              <p>12 уроков · 4 модуля</p>
-            </div>
-            <Link
-              className="button button-small button-secondary"
-              href="/courses/healthy-habits"
-            >
-              Открыть
-            </Link>
-          </article>
-        </section>
+          </section>
+        </div>
       </div>
     </main>
   );

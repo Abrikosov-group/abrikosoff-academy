@@ -3,29 +3,134 @@
 import Link from "next/link";
 import {
   CheckCircleIcon,
-  EnvelopeSimpleIcon,
+  SpinnerGapIcon,
   TelegramLogoIcon,
 } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
+import { TelegramLoginWidget } from "./telegram-login-widget";
 
 type LoginPanelProps = {
   plan: "annual" | "monthly";
+  demoAuthEnabled: boolean;
+  emailAuthEnabled: boolean;
+  telegram?: {
+    botUsername: string;
+    authUrl: string;
+  };
 };
 
-export function LoginPanel({ plan }: LoginPanelProps) {
+export function LoginPanel({
+  plan,
+  demoAuthEnabled,
+  emailAuthEnabled,
+  telegram,
+}: LoginPanelProps) {
   const [email, setEmail] = useState("");
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [sent, setSent] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
 
-  function submitEmail(event: FormEvent<HTMLFormElement>) {
+  async function submitEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!privacyAccepted) {
+      setError("Подтвердите согласие на обработку персональных данных");
+      return;
+    }
     if (!email.trim() || !email.includes("@")) {
       setError("Укажите корректную электронную почту");
       return;
     }
 
     setError("");
-    setSent(true);
+    setProcessing(true);
+
+    try {
+      const response = await fetch("/api/auth/email/request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          plan,
+          privacyAccepted: true,
+        }),
+      });
+      const payload = (await response.json()) as {
+        verificationUrl?: unknown;
+        error?: { message?: unknown };
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload.error?.message === "string"
+            ? payload.error.message
+            : "Не удалось отправить ссылку для входа.",
+        );
+      }
+
+      if (typeof payload.verificationUrl === "string") {
+        window.location.assign(payload.verificationUrl);
+        return;
+      }
+
+      setProcessing(false);
+      setSent(true);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось отправить ссылку для входа.",
+      );
+      setProcessing(false);
+    }
+  }
+
+  async function loginWithDemoTelegram() {
+    if (!privacyAccepted || processing) {
+      if (!privacyAccepted) {
+        setError("Подтвердите согласие на обработку персональных данных");
+      }
+      return;
+    }
+
+    setError("");
+    setProcessing(true);
+
+    try {
+      const response = await fetch("/api/auth/demo", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          plan,
+          privacyAccepted: true,
+        }),
+      });
+      const payload = (await response.json()) as {
+        nextUrl?: unknown;
+        error?: { message?: unknown };
+      };
+
+      if (!response.ok || typeof payload.nextUrl !== "string") {
+        throw new Error(
+          typeof payload.error?.message === "string"
+            ? payload.error.message
+            : "Не удалось войти через Telegram.",
+        );
+      }
+
+      window.location.assign(payload.nextUrl);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось войти через Telegram.",
+      );
+      setProcessing(false);
+    }
   }
 
   if (sent) {
@@ -34,12 +139,9 @@ export function LoginPanel({ plan }: LoginPanelProps) {
         <CheckCircleIcon aria-hidden="true" size={38} weight="fill" />
         <h2>Ссылка отправлена</h2>
         <p>
-          В рабочей версии письмо придёт на <strong>{email}</strong>. В
-          прототипе можно сразу продолжить оформление.
+          Письмо со ссылкой для входа отправлено на{" "}
+          <strong>{email}</strong>.
         </p>
-        <Link className="button button-primary" href={`/checkout?plan=${plan}`}>
-          Продолжить
-        </Link>
         <button
           className="text-button"
           type="button"
@@ -53,47 +155,103 @@ export function LoginPanel({ plan }: LoginPanelProps) {
 
   return (
     <>
-      <Link
-        className="button button-telegram"
-        href={`/checkout?plan=${plan}`}
-      >
-        <TelegramLogoIcon aria-hidden="true" size={21} weight="fill" />
-        Войти через Telegram
-      </Link>
+      <label className="privacy-consent">
+        <input
+          checked={privacyAccepted}
+          onChange={(event) => {
+            setPrivacyAccepted(event.target.checked);
+            if (event.target.checked) setError("");
+          }}
+          type="checkbox"
+        />
+        <span>
+          Даю согласие на обработку персональных данных для создания аккаунта,
+          предоставления доступа и поддержки на условиях{" "}
+          <Link href="/privacy">Политики конфиденциальности</Link>.
+        </span>
+      </label>
+
+      {demoAuthEnabled ? (
+        <button
+          className={`button button-telegram ${
+            privacyAccepted ? "" : "button-disabled"
+          }`}
+          disabled={processing}
+          type="button"
+          onClick={loginWithDemoTelegram}
+        >
+          {processing ? (
+            <SpinnerGapIcon className="spinner" aria-hidden="true" size={21} />
+          ) : (
+            <TelegramLogoIcon aria-hidden="true" size={21} weight="fill" />
+          )}
+          Войти через Telegram
+        </button>
+      ) : telegram && privacyAccepted ? (
+        <TelegramLoginWidget
+          botUsername={telegram.botUsername}
+          authUrl={telegram.authUrl}
+        />
+      ) : (
+        <button
+          className="button button-telegram button-disabled"
+          type="button"
+          onClick={() =>
+            setError(
+              privacyAccepted
+                ? "Вход через Telegram ещё не настроен."
+                : "Подтвердите согласие на обработку персональных данных",
+            )
+          }
+        >
+          <TelegramLogoIcon aria-hidden="true" size={21} weight="fill" />
+          Войти через Telegram
+        </button>
+      )}
 
       <div className="auth-divider">
-        <span>или</span>
+        <span>или по почте</span>
       </div>
 
       <form className="email-form" onSubmit={submitEmail} noValidate>
         <label htmlFor="email">Электронная почта</label>
         <div className="input-with-icon">
-          <EnvelopeSimpleIcon aria-hidden="true" size={21} />
           <input
             id="email"
             name="email"
             type="email"
             autoComplete="email"
-            placeholder="name@example.com"
+            placeholder="name@example.ru"
             value={email}
             aria-invalid={Boolean(error)}
             aria-describedby={error ? "email-error" : undefined}
             onChange={(event) => setEmail(event.target.value)}
           />
         </div>
-        {error ? (
-          <p className="field-error" id="email-error">
-            {error}
-          </p>
-        ) : null}
-        <button className="button button-secondary" type="submit">
-          Получить ссылку для входа
+        <button
+          className="button button-secondary"
+          type="submit"
+          disabled={!privacyAccepted || processing || !emailAuthEnabled}
+        >
+          {processing ? "Отправляем…" : "Получить ссылку для входа"}
         </button>
       </form>
 
+      {!emailAuthEnabled ? (
+        <p className="auth-method-note">
+          Вход по почте будет доступен после подключения отправки писем.
+        </p>
+      ) : null}
+
+      {error ? (
+        <p className="field-error auth-consent-error" id="email-error">
+          {error}
+        </p>
+      ) : null}
+
       <p className="auth-legal">
-        Продолжая, вы принимаете <Link href="/terms">условия оферты</Link> и{" "}
-        <Link href="/privacy">политику конфиденциальности</Link>.
+        Оформляя подписку, вы принимаете <Link href="/terms">условия</Link>.
+        Пароли не нужны.
       </p>
     </>
   );

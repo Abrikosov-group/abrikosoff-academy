@@ -3,6 +3,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { LoginPanel } from "@/components/academy/login-panel";
+import {
+  getIdentityConfig,
+  privacyDocumentVersion,
+} from "@/modules/identity/server/identity-config";
 
 export const metadata: Metadata = {
   title: "Вход",
@@ -10,12 +14,35 @@ export const metadata: Metadata = {
 };
 
 type LoginPageProps = {
-  searchParams: Promise<{ plan?: string }>;
+  searchParams: Promise<{ plan?: string; error?: string }>;
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { plan } = await searchParams;
+  const { plan, error } = await searchParams;
   const selectedPlan = plan === "monthly" ? "monthly" : "annual";
+  const identityConfig = getIdentityConfig();
+  let telegram:
+    | {
+        botUsername: string;
+        authUrl: string;
+      }
+    | undefined;
+
+  if (identityConfig.telegram) {
+    const publicBaseUrl =
+      process.env.APP_BASE_URL?.trim() ||
+      "https://academy.abrikosoff.com";
+    const authUrl = new URL(
+      "/api/auth/telegram/callback",
+      publicBaseUrl,
+    );
+    authUrl.searchParams.set("plan", selectedPlan);
+    authUrl.searchParams.set("consent", privacyDocumentVersion);
+    telegram = {
+      botUsername: identityConfig.telegram.botUsername,
+      authUrl: authUrl.toString(),
+    };
+  }
 
   return (
     <main className="auth-page">
@@ -34,14 +61,21 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             priority
           />
         </Link>
-        <p className="overline">Академия Абрикософф</p>
         <h1 id="login-title">Вход в Академию</h1>
         <p className="auth-intro">
-          Если вы здесь впервые — аккаунт создастся автоматически. После входа
-          продолжим оформление{" "}
-          {selectedPlan === "annual" ? "годовой" : "месячной"} подписки.
+          Если вы здесь впервые — аккаунт создастся автоматически.
         </p>
-        <LoginPanel plan={selectedPlan} />
+        {error ? (
+          <p className="field-error auth-page-error" role="alert">
+            Ссылка для входа недействительна или устарела. Попробуйте ещё раз.
+          </p>
+        ) : null}
+        <LoginPanel
+          plan={selectedPlan}
+          demoAuthEnabled={identityConfig.demoAuthEnabled}
+          emailAuthEnabled={identityConfig.emailAuthMode === "demo"}
+          telegram={telegram}
+        />
       </section>
     </main>
   );

@@ -22,11 +22,11 @@ export function LessonCompleteButton() {
           size={21}
           weight={completed ? "fill" : "regular"}
         />
-        {completed ? "Урок завершён" : "Отметить урок как пройденный"}
+        {completed ? "Урок прочитан" : "Урок прочитан — дальше"}
       </button>
       {completed ? (
         <p role="status">
-          Отличное начало. Следующий урок откроется в полной версии курса.
+          Готово. Прогресс курса обновлён.
         </p>
       ) : null}
     </div>
