@@ -1,6 +1,31 @@
 name: academy-abrikosoff
 
 services:
+  migrate:
+    image: ${ACADEMY_IMAGE:?ACADEMY_IMAGE must be set}
+    restart: "no"
+    command: ["node", "scripts/migrate.mjs"]
+    env_file:
+      - ${ACADEMY_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   app:
     image: ${ACADEMY_IMAGE:?ACADEMY_IMAGE must be set}
     restart: unless-stopped
@@ -12,8 +37,8 @@ services:
       NODE_ENV: production
       PORT: 3000
     depends_on:
-      database:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     expose:
       - "3000"
     networks:

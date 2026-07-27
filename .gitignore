@@ -44,3 +44,7 @@ next-env.d.ts
 
 # local infrastructure data
 /.data/
+
+# local visual QA artifacts
+/.artifacts/
+/design-qa.md
