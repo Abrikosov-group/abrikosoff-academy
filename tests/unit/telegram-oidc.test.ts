@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import * as oidc from "openid-client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildTelegramAuthorizationUrl,
   exchangeTelegramAuthorizationCode,
@@ -48,6 +49,10 @@ describe("buildTelegramAuthorizationUrl", () => {
 });
 
 describe("exchangeTelegramAuthorizationCode", () => {
+  beforeEach(() => {
+    authorizationCodeGrantMock.mockReset();
+  });
+
   it("передаёт state, nonce и PKCE verifier при обмене кода", async () => {
     authorizationCodeGrantMock.mockResolvedValue({
       claims: () => ({
@@ -87,6 +92,11 @@ describe("exchangeTelegramAuthorizationCode", () => {
         idTokenExpected: true,
       },
     );
+    expect(
+      authorizationCodeGrantMock.mock.calls[0]?.[0]?.[
+        oidc.customFetch
+      ],
+    ).toBeUndefined();
     expect(identity).toEqual({
       subject: "123456789",
       displayName: "Светлана Федотова",
@@ -141,6 +151,99 @@ describe("exchangeTelegramAuthorizationCode", () => {
     expect(authorizationCodeGrantMock.mock.calls[2]?.[0]).not.toBe(
       authorizationCodeGrantMock.mock.calls[1]?.[0],
     );
+  });
+
+  it("задаёт прокси только для запросов Telegram OIDC", async () => {
+    authorizationCodeGrantMock.mockResolvedValue({
+      claims: () => ({
+        sub: "123456789",
+      }),
+    });
+    const currentUrl = new URL(
+      "https://academy.abrikosoff.com/api/auth/telegram/callback" +
+        "?code=authorization-code&state=state-value",
+    );
+    const input = {
+      state: "state-value",
+      nonce: "nonce-value",
+      codeVerifier: "pkce-code-verifier",
+    };
+
+    await exchangeTelegramAuthorizationCode(
+      {
+        ...telegramConfig,
+        proxyUrl: "http://telegram-egress-tunnel:3128/",
+      },
+      currentUrl,
+      input,
+    );
+
+    const configuration =
+      authorizationCodeGrantMock.mock.calls[0]?.[0];
+
+    expect(configuration?.[oidc.customFetch]).toEqual(
+      expect.any(Function),
+    );
+  });
+
+  it.each([
+    { code: "ETIMEDOUT" },
+    new AggregateError([
+      Object.assign(new Error("IPv4"), { code: "ENETUNREACH" }),
+      Object.assign(new Error("IPv6"), { code: "EHOSTUNREACH" }),
+    ]),
+    new TypeError("fetch failed", {
+      cause: new DOMException("Request was cancelled.", "AbortError"),
+    }),
+    { status: 503 },
+  ])(
+    "возвращает временную ошибку при недоступности транспорта",
+    async (transportError) => {
+      authorizationCodeGrantMock.mockRejectedValue(transportError);
+
+      await expect(
+        exchangeTelegramAuthorizationCode(
+          telegramConfig,
+          new URL(
+            "https://academy.abrikosoff.com/api/auth/telegram/callback" +
+              "?code=authorization-code&state=state-value",
+          ),
+          {
+            state: "state-value",
+            nonce: "nonce-value",
+            codeVerifier: "pkce-code-verifier",
+          },
+        ),
+      ).rejects.toMatchObject({
+        name: "IdentityError",
+        code: "AUTH_UNAVAILABLE",
+        publicMessage: "Telegram временно недоступен.",
+        httpStatus: 503,
+      });
+    },
+  );
+
+  it("не маскирует ошибку протокола как сетевую", async () => {
+    const protocolError = Object.assign(
+      new Error("invalid_grant"),
+      { status: 400 },
+    );
+    authorizationCodeGrantMock.mockRejectedValue(protocolError);
+
+    await expect(
+      exchangeTelegramAuthorizationCode(
+        telegramConfig,
+        new URL(
+          "https://academy.abrikosoff.com/api/auth/telegram/callback" +
+            "?code=authorization-code&state=state-value",
+        ),
+        {
+          state: "state-value",
+          nonce: "nonce-value",
+          codeVerifier: "pkce-code-verifier",
+        },
+      ),
+    ).rejects.toBe(protocolError);
   });
 
   it("отклоняет вход, если Telegram не вернул claims", async () => {

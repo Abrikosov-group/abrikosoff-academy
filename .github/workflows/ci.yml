@@ -14,6 +14,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  telegram-egress:
+    name: Контур исходящих запросов Telegram
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Проверить сценарий запуска
+        run: shellcheck deploy/telegram-egress/entrypoint
+
+      - name: Подготовить Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Собрать образ Telegram-egress
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./deploy/telegram-egress
+          file: ./deploy/telegram-egress/Dockerfile
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: academy-telegram-egress:ci
+          cache-from: type=gha,scope=telegram-egress
+          cache-to: type=gha,mode=max,scope=telegram-egress
+
+      - name: Проверить Squid и Compose
+        env:
+          ACADEMY_EDGE_NETWORK: academy-abrikosoff_edge
+          TELEGRAM_EGRESS_IMAGE: academy-telegram-egress:ci
+          TELEGRAM_EGRESS_KNOWN_HOSTS_FILE: /tmp/known_hosts
+          TELEGRAM_EGRESS_SSH_HOST: 192.0.2.1
+          TELEGRAM_EGRESS_SSH_KEY_FILE: /tmp/id_ed25519
+        run: |
+          docker run \
+            --rm \
+            --read-only \
+            --tmpfs /tmp:uid=31,gid=31,mode=0700 \
+            --user 31:31 \
+            academy-telegram-egress:ci \
+            squid -k parse -f /etc/squid/squid.conf
+
+          docker compose \
+            -f deploy/telegram-egress/compose.remote.yaml \
+            config --quiet
+          docker compose \
+            -f deploy/telegram-egress/compose.tunnel.yaml \
+            config --quiet
+
   quality:
     name: Код, тесты и production-сборка
     runs-on: ubuntu-24.04

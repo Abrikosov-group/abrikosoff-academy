@@ -1,6 +1,7 @@
 import "server-only";
 
 import * as oidc from "openid-client";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
 import type { IdentityConfig } from "./identity-config";
 import {
   telegramIdentityFromClaims,
@@ -13,6 +14,24 @@ type TelegramConfig = NonNullable<IdentityConfig["telegram"]>;
 type CachedConfiguration = TelegramConfig & {
   configuration: oidc.Configuration;
 };
+
+const temporaryTransportErrorCodes = new Set([
+  "EAI_AGAIN",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
 const telegramServerMetadata: oidc.ServerMetadata = {
   issuer: "https://oauth.telegram.org",
@@ -40,6 +59,7 @@ function configurationFor(config: TelegramConfig) {
   if (
     cachedConfiguration?.clientId === config.clientId &&
     cachedConfiguration.clientSecret === config.clientSecret &&
+    cachedConfiguration.proxyUrl === config.proxyUrl &&
     cachedConfiguration.redirectUri === config.redirectUri
   ) {
     return cachedConfiguration.configuration;
@@ -59,11 +79,87 @@ function configurationFor(config: TelegramConfig) {
   );
 
   configuration.timeout = 10;
+
+  if (config.proxyUrl) {
+    const dispatcher = new ProxyAgent(config.proxyUrl);
+
+    const proxyFetch = (
+      input: Parameters<typeof undiciFetch>[0],
+      init?: Parameters<typeof undiciFetch>[1],
+    ) =>
+      undiciFetch(input, {
+        ...init,
+        dispatcher,
+      });
+
+    configuration[oidc.customFetch] =
+      proxyFetch as unknown as NonNullable<
+        (typeof configuration)[typeof oidc.customFetch]
+      >;
+  }
+
   cachedConfiguration = {
     ...config,
     configuration,
   };
   return configuration;
+}
+
+function isTemporaryTransportError(
+  error: unknown,
+  visited = new Set<unknown>(),
+): boolean {
+  if (
+    !error ||
+    (typeof error !== "object" && typeof error !== "function") ||
+    visited.has(error)
+  ) {
+    return false;
+  }
+
+  visited.add(error);
+  const candidate = error as {
+    cause?: unknown;
+    code?: unknown;
+    errors?: unknown;
+    name?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+
+  if (
+    typeof candidate.code === "string" &&
+    temporaryTransportErrorCodes.has(candidate.code)
+  ) {
+    return true;
+  }
+
+  if (
+    candidate.name === "AbortError" ||
+    candidate.name === "TimeoutError"
+  ) {
+    return true;
+  }
+
+  const status =
+    typeof candidate.status === "number"
+      ? candidate.status
+      : candidate.statusCode;
+
+  if (typeof status === "number" && status >= 500 && status <= 599) {
+    return true;
+  }
+
+  if (
+    Array.isArray(candidate.errors) &&
+    candidate.errors.some((item) =>
+      isTemporaryTransportError(item, visited),
+    )
+  ) {
+    return true;
+  }
+
+  return isTemporaryTransportError(candidate.cause, visited);
 }
 
 export function buildTelegramAuthorizationUrl(
@@ -97,16 +193,32 @@ export async function exchangeTelegramAuthorizationCode(
   const callbackUrl = new URL(config.redirectUri);
   callbackUrl.search = currentUrl.search;
 
-  const tokens = await oidc.authorizationCodeGrant(
-    configurationFor(config),
-    callbackUrl,
-    {
-      expectedState: input.state,
-      expectedNonce: input.nonce,
-      pkceCodeVerifier: input.codeVerifier,
-      idTokenExpected: true,
-    },
-  );
+  let tokens: Awaited<ReturnType<typeof oidc.authorizationCodeGrant>>;
+
+  try {
+    tokens = await oidc.authorizationCodeGrant(
+      configurationFor(config),
+      callbackUrl,
+      {
+        expectedState: input.state,
+        expectedNonce: input.nonce,
+        pkceCodeVerifier: input.codeVerifier,
+        idTokenExpected: true,
+      },
+    );
+  } catch (error) {
+    if (isTemporaryTransportError(error)) {
+      throw new IdentityError(
+        "AUTH_UNAVAILABLE",
+        "Telegram временно недоступен.",
+        503,
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
+
   const claims = tokens.claims();
 
   if (!claims) {

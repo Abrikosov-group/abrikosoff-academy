@@ -107,8 +107,12 @@ Telegram, email и телефон. Локально доступны demo-Telegr
 по почте. Production-вход Telegram включается после заполнения
 `TELEGRAM_OIDC_CLIENT_ID`, `TELEGRAM_OIDC_CLIENT_SECRET` и
 `TELEGRAM_OIDC_REDIRECT_URI`. Redirect URI должен быть дословно зарегистрирован
-в BotFather для OpenID Connect. Модель сессий описана в
-[ADR-0003](docs/decisions/0003-identity-and-sessions.md).
+в BotFather для OpenID Connect. Если серверу нужен отдельный маршрут до
+Telegram, `TELEGRAM_HTTPS_PROXY_URL` включает прокси только для OIDC-запросов.
+Модель сессий описана в
+[ADR-0003](docs/decisions/0003-identity-and-sessions.md), а изолированный
+исходящий контур — в
+[ADR-0004](docs/decisions/0004-telegram-egress.md).
 
 ## Секреты
 
@@ -124,6 +128,9 @@ Production-конфигурация находится в `deploy/compose.produc
 Каждый релиз привязан к полному SHA коммита и проверяется через `/api/health`.
 Подробности и порядок аварийной проверки описаны в
 [инструкции по развёртыванию](deploy/README.md).
+
+Подготовленный, но не включённый автоматически Telegram-egress находится в
+[отдельной инструкции](deploy/telegram-egress/README.md).
 
 PostgreSQL ежедневно сохраняется локальным systemd-таймером. Каждый архив
 проверяется полным восстановлением во временную базу; порядок контроля описан в

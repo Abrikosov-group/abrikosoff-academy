@@ -75,13 +75,25 @@ export async function GET(request: NextRequest) {
     clearTelegramLoginStateCookie(response);
     return response;
   } catch (error) {
+    const errorCode =
+      error instanceof IdentityError &&
+      error.code === "AUTH_UNAVAILABLE"
+        ? "telegram_unavailable"
+        : "telegram";
     const response = NextResponse.redirect(
-      new URL("/login?error=telegram", publicOrigin),
+      new URL(`/login?error=${errorCode}`, publicOrigin),
     );
 
     clearTelegramLoginStateCookie(response);
 
     if (error instanceof IdentityError) {
+      if (error.code === "AUTH_UNAVAILABLE") {
+        logUnexpectedServerError(
+          "identity.telegram_transport_unavailable",
+          error,
+        );
+      }
+
       return response;
     }
 

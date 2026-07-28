@@ -1,0 +1,11 @@
+Match User academy-egress
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding local
+    PermitOpen 127.0.0.1:18083
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    GatewayPorts no
+    MaxSessions 0
