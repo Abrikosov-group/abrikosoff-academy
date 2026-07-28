@@ -67,9 +67,7 @@ jobs:
               -f deploy/telegram-egress/compose.tunnel.yaml \
               config
           )"
-          grep -Fq \
-            'http://127.0.0.1:$${TELEGRAM_EGRESS_LOCAL_PORT}' \
-            <<< "$tunnel_config"
+          grep -Fq 'http://127.0.0.1:3210' <<< "$tunnel_config"
           grep -Fq 'create_host_path: false' <<< "$tunnel_config"
 
   quality:

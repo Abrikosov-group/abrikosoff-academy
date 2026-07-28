@@ -44,8 +44,16 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "exec curl --fail --silent --show-error --max-time 10 --proxy \"http://127.0.0.1:$${TELEGRAM_EGRESS_LOCAL_PORT}\" https://oauth.telegram.org/.well-known/openid-configuration",
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--max-time",
+          "10",
+          "--proxy",
+          "http://127.0.0.1:${TELEGRAM_EGRESS_LOCAL_PORT:-3128}",
+          "https://oauth.telegram.org/.well-known/openid-configuration",
         ]
       interval: 30s
       timeout: 12s
