@@ -30,6 +30,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     ? checkoutRedirectPath(purchasePlan)
     : normalizeLoginRedirectPath(next);
   const identityConfig = getIdentityConfig();
+  const errorMessage =
+    error === "telegram_unavailable"
+      ? "Telegram временно недоступен. Попробуйте ещё раз через несколько минут."
+      : "Ссылка для входа недействительна или устарела. Попробуйте ещё раз.";
 
   return (
     <main className="auth-page">
@@ -54,7 +58,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </p>
         {error ? (
           <p className="field-error auth-page-error" role="alert">
-            Ссылка для входа недействительна или устарела. Попробуйте ещё раз.
+            {errorMessage}
           </p>
         ) : null}
         <LoginPanel

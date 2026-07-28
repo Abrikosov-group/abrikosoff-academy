@@ -9,9 +9,34 @@ export type IdentityConfig = {
   telegram?: {
     clientId: string;
     clientSecret: string;
+    proxyUrl?: string;
     redirectUri: string;
   };
 };
+
+function readTelegramProxyUrl() {
+  const configuredProxyUrl =
+    process.env.TELEGRAM_HTTPS_PROXY_URL?.trim();
+
+  if (!configuredProxyUrl) {
+    return undefined;
+  }
+
+  const proxyUrl = new URL(configuredProxyUrl);
+
+  if (
+    !["http:", "https:"].includes(proxyUrl.protocol) ||
+    proxyUrl.username ||
+    proxyUrl.password ||
+    proxyUrl.pathname !== "/" ||
+    proxyUrl.search ||
+    proxyUrl.hash
+  ) {
+    throw new TypeError("Некорректный URL Telegram HTTPS-прокси.");
+  }
+
+  return proxyUrl.toString();
+}
 
 function readTelegramConfig(production: boolean) {
   const clientId = process.env.TELEGRAM_OIDC_CLIENT_ID?.trim();
@@ -46,9 +71,12 @@ function readTelegramConfig(production: boolean) {
       return undefined;
     }
 
+    const proxyUrl = readTelegramProxyUrl();
+
     return {
       clientId,
       clientSecret,
+      ...(proxyUrl ? { proxyUrl } : {}),
       redirectUri: callbackUrl.toString(),
     };
   } catch {

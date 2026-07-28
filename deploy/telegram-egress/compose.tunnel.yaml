@@ -1,0 +1,69 @@
+name: academy-telegram-egress-tunnel
+
+services:
+  tunnel:
+    image: ${TELEGRAM_EGRESS_IMAGE:?TELEGRAM_EGRESS_IMAGE must be set}
+    command: ["tunnel"]
+    restart: unless-stopped
+    environment:
+      TELEGRAM_EGRESS_LOCAL_PORT: ${TELEGRAM_EGRESS_LOCAL_PORT:-3128}
+      TELEGRAM_EGRESS_REMOTE_PROXY_PORT: ${TELEGRAM_EGRESS_REMOTE_PROXY_PORT:-18083}
+      TELEGRAM_EGRESS_SSH_HOST: ${TELEGRAM_EGRESS_SSH_HOST:?TELEGRAM_EGRESS_SSH_HOST must be set}
+      TELEGRAM_EGRESS_SSH_PORT: ${TELEGRAM_EGRESS_SSH_PORT:-22}
+      TELEGRAM_EGRESS_SSH_USER: ${TELEGRAM_EGRESS_SSH_USER:-academy-egress}
+    expose:
+      - "${TELEGRAM_EGRESS_LOCAL_PORT:-3128}"
+    secrets:
+      - source: telegram_egress_ssh_key
+        target: telegram-egress-ssh-key
+      - source: telegram_egress_known_hosts
+        target: telegram-egress-known-hosts
+    networks:
+      academy_edge:
+        aliases:
+          - telegram-egress-tunnel
+    read_only: true
+    tmpfs:
+      - /tmp:uid=0,gid=0,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 50
+    mem_limit: 64m
+    cpus: 0.10
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--max-time",
+          "10",
+          "--proxy",
+          "http://127.0.0.1:${TELEGRAM_EGRESS_LOCAL_PORT:-3128}",
+          "https://oauth.telegram.org/.well-known/openid-configuration",
+        ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+networks:
+  academy_edge:
+    external: true
+    name: ${ACADEMY_EDGE_NETWORK:-academy-abrikosoff_edge}
+
+secrets:
+  telegram_egress_ssh_key:
+    file: ${TELEGRAM_EGRESS_SSH_KEY_FILE:?TELEGRAM_EGRESS_SSH_KEY_FILE must be set}
+  telegram_egress_known_hosts:
+    file: ${TELEGRAM_EGRESS_KNOWN_HOSTS_FILE:?TELEGRAM_EGRESS_KNOWN_HOSTS_FILE must be set}

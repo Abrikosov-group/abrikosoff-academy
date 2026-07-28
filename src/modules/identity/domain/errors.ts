@@ -1,6 +1,7 @@
 export type IdentityErrorCode =
   | "AUTH_REQUIRED"
   | "AUTH_NOT_CONFIGURED"
+  | "AUTH_UNAVAILABLE"
   | "INVALID_LOGIN"
   | "INVALID_REQUEST"
   | "LOGIN_EXPIRED";

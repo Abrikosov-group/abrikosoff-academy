@@ -15,8 +15,62 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/abrikosov-group/abrikosoff-academy
+  TELEGRAM_EGRESS_IMAGE_NAME: ghcr.io/abrikosov-group/abrikosoff-academy-telegram-egress
 
 jobs:
+  build-telegram-egress:
+    name: Собрать и опубликовать Telegram-egress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Подготовить Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Войти в GitHub Container Registry
+        uses: docker/login-action@abd2ef45e78f5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Собрать и опубликовать образ
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./deploy/telegram-egress
+          file: ./deploy/telegram-egress/Dockerfile
+          platforms: linux/amd64
+          push: true
+          pull: true
+          tags: |
+            ${{ env.TELEGRAM_EGRESS_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.TELEGRAM_EGRESS_IMAGE_NAME }}:main
+          labels: |
+            org.opencontainers.image.title=Telegram-egress Академии Абрикософф
+            org.opencontainers.image.description=Изолированный исходящий контур Telegram OIDC
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=telegram-egress
+          cache-to: type=gha,mode=max,scope=telegram-egress
+          provenance: mode=max
+          sbom: true
+
+      - name: Записать опубликованный образ
+        run: |
+          printf '### Опубликованный Telegram-egress\n\n' \
+            >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- `%s@%s`\n' \
+            "${TELEGRAM_EGRESS_IMAGE_NAME}:${GITHUB_SHA}" \
+            "${{ steps.build.outputs.digest }}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Собрать и опубликовать образ
     runs-on: ubuntu-24.04

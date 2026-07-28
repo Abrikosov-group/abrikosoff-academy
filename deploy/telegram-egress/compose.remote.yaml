@@ -1,0 +1,44 @@
+name: academy-telegram-egress
+
+services:
+  proxy:
+    image: ${TELEGRAM_EGRESS_IMAGE:?TELEGRAM_EGRESS_IMAGE must be set}
+    command: ["proxy"]
+    restart: unless-stopped
+    user: "31:31"
+    ports:
+      - "127.0.0.1:${TELEGRAM_EGRESS_REMOTE_PROXY_PORT:-18083}:3128"
+    read_only: true
+    tmpfs:
+      - /tmp:uid=31,gid=31,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 128m
+    cpus: 0.25
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--max-time",
+          "10",
+          "--proxy",
+          "http://127.0.0.1:3128",
+          "https://oauth.telegram.org/.well-known/openid-configuration",
+        ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "3"

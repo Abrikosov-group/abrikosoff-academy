@@ -46,4 +46,34 @@ describe("getIdentityConfig", () => {
 
     expect(getIdentityConfig().telegram).toBeUndefined();
   });
+
+  it("принимает отдельный HTTPS-прокси без реквизитов доступа", () => {
+    configureTelegram();
+    vi.stubEnv(
+      "TELEGRAM_HTTPS_PROXY_URL",
+      "http://telegram-egress-tunnel:3128",
+    );
+
+    expect(getIdentityConfig().telegram).toEqual({
+      clientId: "8802171680",
+      clientSecret: "telegram-oidc-client-secret-for-tests",
+      proxyUrl: "http://telegram-egress-tunnel:3128/",
+      redirectUri: callbackUrl,
+    });
+  });
+
+  it.each([
+    "socks5://telegram-egress-tunnel:1080",
+    "http://user:password@telegram-egress-tunnel:3128",
+    "http://telegram-egress-tunnel:3128/path",
+    "http://telegram-egress-tunnel:3128/?token=secret",
+  ])(
+    "отключает Telegram при небезопасном URL прокси: %s",
+    (proxyUrl) => {
+      configureTelegram();
+      vi.stubEnv("TELEGRAM_HTTPS_PROXY_URL", proxyUrl);
+
+      expect(getIdentityConfig().telegram).toBeUndefined();
+    },
+  );
 });

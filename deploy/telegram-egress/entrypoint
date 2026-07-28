@@ -1,0 +1,96 @@
+#!/bin/sh
+
+set -eu
+
+fail() {
+  printf 'Ошибка Telegram-egress: %s\n' "$*" >&2
+  exit 1
+}
+
+validate_port() {
+  case "$1" in
+    "" | *[!0-9]*)
+      return 1
+      ;;
+  esac
+
+  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+run_proxy() {
+  exec squid -N -f /etc/squid/squid.conf
+}
+
+run_tunnel() {
+  ssh_host="${TELEGRAM_EGRESS_SSH_HOST:-}"
+  ssh_port="${TELEGRAM_EGRESS_SSH_PORT:-22}"
+  ssh_user="${TELEGRAM_EGRESS_SSH_USER:-academy-egress}"
+  local_port="${TELEGRAM_EGRESS_LOCAL_PORT:-3128}"
+  remote_proxy_port="${TELEGRAM_EGRESS_REMOTE_PROXY_PORT:-18083}"
+  identity_file="/run/secrets/telegram-egress-ssh-key"
+  known_hosts_file="/run/secrets/telegram-egress-known-hosts"
+
+  case "${ssh_host}" in
+    "" | *[!A-Za-z0-9._-]*)
+      fail "некорректный SSH-хост"
+      ;;
+  esac
+  case "${ssh_user}" in
+    "" | *[!A-Za-z0-9_-]*)
+      fail "некорректный SSH-пользователь"
+      ;;
+  esac
+  validate_port "${ssh_port}" || fail "некорректный SSH-порт"
+  validate_port "${local_port}" || fail "некорректный локальный порт"
+  validate_port "${remote_proxy_port}" || \
+    fail "некорректный порт удалённого прокси"
+  if [ ! -f "${identity_file}" ] \
+    || [ ! -s "${identity_file}" ] \
+    || [ ! -r "${identity_file}" ]; then
+    fail "закрытый SSH-ключ недоступен"
+  fi
+  if [ ! -f "${known_hosts_file}" ] \
+    || [ ! -s "${known_hosts_file}" ] \
+    || [ ! -r "${known_hosts_file}" ]; then
+    fail "known_hosts недоступен"
+  fi
+
+  exec ssh \
+    -N \
+    -g \
+    -L "0.0.0.0:${local_port}:127.0.0.1:${remote_proxy_port}" \
+    -i "${identity_file}" \
+    -p "${ssh_port}" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o ExitOnForwardFailure=yes \
+    -o ForwardAgent=no \
+    -o GlobalKnownHostsFile=/dev/null \
+    -o IdentitiesOnly=yes \
+    -o KbdInteractiveAuthentication=no \
+    -o LogLevel=ERROR \
+    -o PasswordAuthentication=no \
+    -o PermitLocalCommand=no \
+    -o RequestTTY=no \
+    -o ServerAliveCountMax=3 \
+    -o ServerAliveInterval=15 \
+    -o StrictHostKeyChecking=yes \
+    -o TCPKeepAlive=no \
+    -o "UserKnownHostsFile=${known_hosts_file}" \
+    "${ssh_user}@${ssh_host}"
+}
+
+case "${1:-}" in
+  proxy)
+    run_proxy
+    ;;
+  tunnel)
+    run_tunnel
+    ;;
+  "")
+    fail "режим запуска не задан"
+    ;;
+  *)
+    exec "$@"
+    ;;
+esac

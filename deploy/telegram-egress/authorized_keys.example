@@ -1,0 +1,1 @@
+from="REPLACE_WITH_MOSCOW_IP",restrict,port-forwarding,permitopen="127.0.0.1:18083" ssh-ed25519 REPLACE_WITH_PUBLIC_KEY academy-telegram-egress
