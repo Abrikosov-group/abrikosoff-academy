@@ -52,6 +52,7 @@ describe("exchangeTelegramAuthorizationCode", () => {
     authorizationCodeGrantMock.mockResolvedValue({
       claims: () => ({
         sub: "123456789",
+        id: 987654321,
         name: "Светлана Федотова",
         preferred_username: "svetlana",
       }),
@@ -87,13 +88,59 @@ describe("exchangeTelegramAuthorizationCode", () => {
       },
     );
     expect(identity).toEqual({
-      id: "123456789",
+      subject: "123456789",
       displayName: "Светлана Федотова",
       metadata: {
         username: "svetlana",
         photoUrl: undefined,
+        telegramUserId: "987654321",
       },
     });
+  });
+
+  it("сохраняет JWKS-кэш и обновляет конфигурацию после ротации", async () => {
+    authorizationCodeGrantMock.mockResolvedValue({
+      claims: () => ({
+        sub: "123456789",
+      }),
+    });
+    const currentUrl = new URL(
+      "https://academy.abrikosoff.com/api/auth/telegram/callback" +
+        "?code=authorization-code&state=state-value",
+    );
+    const input = {
+      state: "state-value",
+      nonce: "nonce-value",
+      codeVerifier: "pkce-code-verifier",
+    };
+
+    await exchangeTelegramAuthorizationCode(
+      telegramConfig,
+      currentUrl,
+      input,
+    );
+    await exchangeTelegramAuthorizationCode(
+      telegramConfig,
+      currentUrl,
+      input,
+    );
+    await exchangeTelegramAuthorizationCode(
+      {
+        ...telegramConfig,
+        clientSecret:
+          "rotated-telegram-oidc-client-secret-for-tests",
+      },
+      currentUrl,
+      input,
+    );
+
+    expect(authorizationCodeGrantMock).toHaveBeenCalledTimes(3);
+    expect(authorizationCodeGrantMock.mock.calls[1]?.[0]).toBe(
+      authorizationCodeGrantMock.mock.calls[0]?.[0],
+    );
+    expect(authorizationCodeGrantMock.mock.calls[2]?.[0]).not.toBe(
+      authorizationCodeGrantMock.mock.calls[1]?.[0],
+    );
   });
 
   it("отклоняет вход, если Telegram не вернул claims", async () => {

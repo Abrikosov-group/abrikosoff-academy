@@ -14,6 +14,7 @@ function telegramClaims(overrides: Partial<IDToken> = {}): IDToken {
     family_name: "Иванова",
     preferred_username: "anna",
     picture: "https://t.me/i/userpic/example.jpg",
+    id: 987654321,
     ...overrides,
   };
 }
@@ -21,11 +22,12 @@ function telegramClaims(overrides: Partial<IDToken> = {}): IDToken {
 describe("telegramIdentityFromClaims", () => {
   it("преобразует проверенные OpenID Connect claims в метод входа", () => {
     expect(telegramIdentityFromClaims(telegramClaims())).toEqual({
-      id: "123456789",
+      subject: "123456789",
       displayName: "Анна Иванова",
       metadata: {
         username: "anna",
         photoUrl: "https://t.me/i/userpic/example.jpg",
+        telegramUserId: "987654321",
       },
     });
   });
@@ -40,20 +42,37 @@ describe("telegramIdentityFromClaims", () => {
         }),
       ),
     ).toEqual({
-      id: "123456789",
+      subject: "123456789",
       displayName: "Анна Иванова",
       metadata: {
         username: undefined,
         photoUrl: undefined,
+        telegramUserId: "987654321",
       },
     });
   });
 
-  it("отклоняет некорректный Telegram subject", () => {
+  it("сохраняет строковый Telegram id только как metadata", () => {
+    expect(
+      telegramIdentityFromClaims(
+        telegramClaims({
+          sub: "telegram-subject-v1_123",
+          id: "987654321",
+        }),
+      ),
+    ).toMatchObject({
+      subject: "telegram-subject-v1_123",
+      metadata: {
+        telegramUserId: "987654321",
+      },
+    });
+  });
+
+  it("отклоняет некорректный OpenID Connect subject", () => {
     expect(() =>
       telegramIdentityFromClaims(
         telegramClaims({
-          sub: "not-a-telegram-id",
+          sub: "",
         }),
       ),
     ).toThrowError(

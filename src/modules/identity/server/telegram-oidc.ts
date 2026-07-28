@@ -10,6 +10,10 @@ import { IdentityError } from "../domain/errors";
 
 type TelegramConfig = NonNullable<IdentityConfig["telegram"]>;
 
+type CachedConfiguration = TelegramConfig & {
+  configuration: oidc.Configuration;
+};
+
 const telegramServerMetadata: oidc.ServerMetadata = {
   issuer: "https://oauth.telegram.org",
   authorization_endpoint: "https://oauth.telegram.org/auth",
@@ -30,7 +34,17 @@ const telegramServerMetadata: oidc.ServerMetadata = {
   code_challenge_methods_supported: ["S256", "plain"],
 };
 
-function createConfiguration(config: TelegramConfig) {
+let cachedConfiguration: CachedConfiguration | undefined;
+
+function configurationFor(config: TelegramConfig) {
+  if (
+    cachedConfiguration?.clientId === config.clientId &&
+    cachedConfiguration.clientSecret === config.clientSecret &&
+    cachedConfiguration.redirectUri === config.redirectUri
+  ) {
+    return cachedConfiguration.configuration;
+  }
+
   const configuration = new oidc.Configuration(
     telegramServerMetadata,
     config.clientId,
@@ -45,6 +59,10 @@ function createConfiguration(config: TelegramConfig) {
   );
 
   configuration.timeout = 10;
+  cachedConfiguration = {
+    ...config,
+    configuration,
+  };
   return configuration;
 }
 
@@ -56,7 +74,7 @@ export function buildTelegramAuthorizationUrl(
     codeChallenge: string;
   },
 ) {
-  return oidc.buildAuthorizationUrl(createConfiguration(config), {
+  return oidc.buildAuthorizationUrl(configurationFor(config), {
     redirect_uri: config.redirectUri,
     response_type: "code",
     scope: "openid profile",
@@ -80,7 +98,7 @@ export async function exchangeTelegramAuthorizationCode(
   callbackUrl.search = currentUrl.search;
 
   const tokens = await oidc.authorizationCodeGrant(
-    createConfiguration(config),
+    configurationFor(config),
     callbackUrl,
     {
       expectedState: input.state,

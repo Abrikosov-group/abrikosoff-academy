@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     const { service } = getIdentityRuntime();
     const session = await service.authenticateIdentity({
       methodType: "telegram",
-      identifier: identity.id,
+      identifier: identity.subject,
       displayName: identity.displayName,
       metadata: identity.metadata,
       consent: {
