@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
       },
     });
     const response = NextResponse.redirect(
-      new URL(`/checkout?plan=${loginState.plan}`, request.url),
+      new URL(loginState.redirectPath, request.url),
     );
 
     setSessionCookie(response, session);

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { ArrowLeftIcon, CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 import { LessonCompleteButton } from "@/components/academy/lesson-complete-button";
 import { getAccessContext } from "@/modules/access/server/get-access-context";
+import { loginPathFor } from "@/modules/identity/domain/login-redirect";
 
 export const metadata: Metadata = {
   title: "Утренний якорь",
@@ -15,7 +16,7 @@ export default async function FirstLessonPage() {
   const access = await getAccessContext();
 
   if (!access.user) {
-    redirect("/login");
+    redirect(loginPathFor("/courses/healthy-habits/lessons/1"));
   }
 
   if (!access.canReadCourses) {

@@ -227,7 +227,11 @@ describe("Identity и Billing с PostgreSQL", () => {
       metadata: {},
       consent,
     });
-    const paymentRepository = new PostgresPaymentRepository(pool);
+    let processingTime = "2026-07-28T08:15:00.000Z";
+    const paymentRepository = new PostgresPaymentRepository(
+      pool,
+      () => new Date(processingTime),
+    );
     const provider = new PendingPaymentProvider();
     const router = new PaymentProviderRouter({
       providers: [provider],
@@ -315,6 +319,16 @@ describe("Identity и Billing с PostgreSQL", () => {
       autoRenew: false,
     });
     expect(activeSubscription?.currentPeriodEnd).toBeTruthy();
+    await expect(
+      service.createCheckout({
+        ...command,
+        planId: "annual",
+        idempotencyKey: "integration-checkout-active-access",
+      }),
+    ).rejects.toMatchObject({
+      code: "ACCESS_ALREADY_ACTIVE",
+      httpStatus: 409,
+    });
 
     const periodEnd = activeSubscription!.currentPeriodEnd;
     const duplicate =
@@ -327,6 +341,7 @@ describe("Identity и Billing с PostgreSQL", () => {
       mandates: string;
       saved_payment_methods: string;
       subscriptions: string;
+      access_grants: string;
       webhooks: string;
     }>(
       `
@@ -336,6 +351,11 @@ describe("Identity и Billing с PostgreSQL", () => {
             FROM billing_subscriptions
             WHERE customer_id = $1
           ) AS subscriptions,
+          (
+            SELECT count(*)
+            FROM billing_access_grants
+            WHERE customer_id = $1
+          ) AS access_grants,
           (
             SELECT count(*)
             FROM billing_webhook_events
@@ -363,6 +383,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     expect(duplicate.outcome).toBe("duplicate");
     expect(subscriptionAfterDuplicate?.currentPeriodEnd).toBe(periodEnd);
     expect(counts.rows[0]).toEqual({
+      access_grants: "1",
       mandates: "0",
       saved_payment_methods: "0",
       subscriptions: "1",
@@ -384,6 +405,7 @@ describe("Identity и Billing с PostgreSQL", () => {
         event: "refund.succeeded",
       },
     };
+    processingTime = "2026-07-28T08:20:00.000Z";
     const refundResult =
       await paymentRepository.applyRefundEvent(refundEvent);
     const subscriptionAfterRefund = await getSubscriptionSummary(
@@ -425,6 +447,156 @@ describe("Identity и Billing с PostgreSQL", () => {
     });
   });
 
+  it("возврат одного из двух оплаченных заказов сохраняет другой срок доступа", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const identityService = new IdentityService(identityRepository, 30);
+    const session = await identityService.authenticateIdentity({
+      methodType: "telegram",
+      identifier: "integration-telegram-access-grants",
+      displayName: "Два платежа",
+      receiptEmail: "access-grants@example.test",
+      metadata: {},
+      consent,
+    });
+    let processingTime = "2026-07-28T10:00:00.000Z";
+    const paymentRepository = new PostgresPaymentRepository(
+      pool,
+      () => new Date(processingTime),
+    );
+    const provider = new PendingPaymentProvider();
+    const service = new PaymentService({
+      repository: paymentRepository,
+      router: new PaymentProviderRouter({
+        providers: [provider],
+        routes: [
+          {
+            provider: "demo",
+            merchantAccountId: "demo-primary",
+            legalEntityId: "ip-fedotova",
+            currency: "RUB",
+            countryCodes: ["RU"],
+            priority: 100,
+          },
+        ],
+      }),
+    });
+    const baseCommand = {
+      customerId: session.user.id,
+      countryCode: "RU",
+      legalEntityId: "ip-fedotova",
+      receiptContact: {
+        email: "access-grants@example.test",
+      },
+      offerAcceptance: {
+        acceptedAt: "2026-07-28T09:55:00.000Z",
+        offerVersion: "2026-07-28",
+      },
+      publicBaseUrl: "https://academy.example.test",
+    };
+
+    await service.createCheckout({
+      ...baseCommand,
+      planId: "monthly",
+      idempotencyKey: "integration-access-grant-monthly",
+    });
+    await service.createCheckout({
+      ...baseCommand,
+      planId: "annual",
+      idempotencyKey: "integration-access-grant-annual",
+    });
+    const monthlyCheckout =
+      await paymentRepository.findCheckoutByIdempotencyKey(
+        "integration-access-grant-monthly",
+      );
+    const annualCheckout =
+      await paymentRepository.findCheckoutByIdempotencyKey(
+        "integration-access-grant-annual",
+      );
+
+    expect(monthlyCheckout).not.toBeNull();
+    expect(annualCheckout).not.toBeNull();
+
+    await paymentRepository.applyPaymentEvent({
+      provider: "demo",
+      merchantAccountId: "demo-primary",
+      externalEventId: "integration-access-grant-monthly-paid",
+      eventType: "payment.succeeded",
+      externalPaymentId: monthlyCheckout!.externalPaymentId,
+      status: "succeeded",
+      occurredAt: "2026-07-27T10:00:00.000Z",
+      payloadSha256: "d".repeat(64),
+      payload: { event: "payment.succeeded" },
+    });
+    processingTime = "2026-07-28T10:01:00.000Z";
+    await paymentRepository.applyPaymentEvent({
+      provider: "demo",
+      merchantAccountId: "demo-primary",
+      externalEventId: "integration-access-grant-annual-paid",
+      eventType: "payment.succeeded",
+      externalPaymentId: annualCheckout!.externalPaymentId,
+      status: "succeeded",
+      occurredAt: "2026-07-27T10:01:00.000Z",
+      payloadSha256: "e".repeat(64),
+      payload: { event: "payment.succeeded" },
+    });
+
+    await expect(
+      getSubscriptionSummary(pool, session.user.id),
+    ).resolves.toMatchObject({
+      status: "active",
+      planId: "annual",
+      currentPeriodEnd: "2027-07-28T10:01:00.000Z",
+    });
+
+    processingTime = "2026-07-28T10:05:00.000Z";
+    await paymentRepository.applyRefundEvent({
+      provider: "demo",
+      merchantAccountId: "demo-primary",
+      externalEventId: "integration-access-grant-annual-refunded",
+      eventType: "refund.succeeded",
+      externalPaymentId: annualCheckout!.externalPaymentId,
+      externalRefundId: "integration-access-grant-refund-annual",
+      status: "succeeded",
+      money: annualCheckout!.money,
+      occurredAt: "2026-07-27T10:05:00.000Z",
+      payloadSha256: "f".repeat(64),
+      payload: { event: "refund.succeeded" },
+    });
+
+    await expect(
+      getSubscriptionSummary(pool, session.user.id),
+    ).resolves.toMatchObject({
+      status: "active",
+      planId: "monthly",
+      currentPeriodEnd: "2026-08-28T10:00:00.000Z",
+    });
+    const grants = await pool.query<{
+      order_id: string;
+      status: string;
+    }>(
+      `
+        SELECT order_id, status
+        FROM billing_access_grants
+        WHERE customer_id = $1
+        ORDER BY order_id
+      `,
+      [session.user.id],
+    );
+
+    expect(grants.rows).toEqual(
+      expect.arrayContaining([
+        {
+          order_id: monthlyCheckout!.orderId,
+          status: "granted",
+        },
+        {
+          order_id: annualCheckout!.orderId,
+          status: "revoked",
+        },
+      ]),
+    );
+  });
+
   it("повторно применяет webhook, который пришёл раньше платежа", async () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
@@ -436,7 +608,11 @@ describe("Identity и Billing с PostgreSQL", () => {
       metadata: {},
       consent,
     });
-    const paymentRepository = new PostgresPaymentRepository(pool);
+    const accessGrantedAt = "2026-07-30T09:30:00.000Z";
+    const paymentRepository = new PostgresPaymentRepository(
+      pool,
+      () => new Date(accessGrantedAt),
+    );
     const provider = new PendingPaymentProvider();
     const service = new PaymentService({
       repository: paymentRepository,
@@ -496,6 +672,17 @@ describe("Identity и Billing с PostgreSQL", () => {
       pool,
       session.user.id,
     );
+    const accessGrant = await pool.query<{
+      period_start: Date;
+      period_end: Date;
+    }>(
+      `
+        SELECT period_start, period_end
+        FROM billing_access_grants
+        WHERE order_id = $1
+      `,
+      [retried.checkout?.orderId],
+    );
 
     expect(retried).toMatchObject({
       outcome: "applied",
@@ -508,5 +695,11 @@ describe("Identity и Billing с PostgreSQL", () => {
       planId: "monthly",
       autoRenew: false,
     });
+    expect(accessGrant.rows[0]?.period_start.toISOString()).toBe(
+      accessGrantedAt,
+    );
+    expect(accessGrant.rows[0]?.period_end.toISOString()).toBe(
+      "2026-08-30T09:30:00.000Z",
+    );
   });
 });

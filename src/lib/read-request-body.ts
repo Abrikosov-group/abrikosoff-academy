@@ -1,8 +1,16 @@
 export class RequestBodyTooLargeError extends Error {
   constructor() {
-    super("Request body exceeds the configured limit");
+    super("Размер тела запроса превышает допустимый.");
     this.name = "RequestBodyTooLargeError";
   }
+}
+
+export async function readJsonBodyWithLimit<T>(
+  request: Request,
+  maxBytes: number,
+) {
+  const rawBody = await readTextBodyWithLimit(request, maxBytes);
+  return JSON.parse(rawBody) as T;
 }
 
 export async function readTextBodyWithLimit(

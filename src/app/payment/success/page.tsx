@@ -10,6 +10,7 @@ import {
 import { PaymentStatusPoller } from "@/components/academy/payment-status-poller";
 import { getDatabasePool } from "@/lib/database";
 import { getCustomerOrderSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
+import { loginPathFor } from "@/modules/identity/domain/login-redirect";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
@@ -28,7 +29,11 @@ export default async function PaymentSuccessPage({
   const user = await getCurrentUser();
 
   if (!user) {
-    redirect("/login");
+    const nextPath =
+      orderId && /^[0-9a-f-]{36}$/i.test(orderId)
+        ? `/payment/success?orderId=${encodeURIComponent(orderId)}`
+        : "/dashboard";
+    redirect(loginPathFor(nextPath));
   }
 
   const order =

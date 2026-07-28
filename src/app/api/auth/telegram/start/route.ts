@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { isSubscriptionPlanId } from "@/modules/billing/domain/catalog";
 import { IdentityError } from "@/modules/identity/domain/errors";
+import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redirect";
 import {
   getIdentityConfig,
   privacyDocumentVersion,
@@ -10,9 +10,14 @@ import {
   createTelegramLoginState,
   setTelegramLoginStateCookie,
 } from "@/modules/identity/server/telegram-login-state";
+import {
+  readJsonBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/lib/read-request-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+const maxLoginBodyBytes = 4 * 1024;
 
 function publicBaseUrl(requestUrl: string) {
   const configured = process.env.APP_BASE_URL?.trim();
@@ -50,13 +55,24 @@ export async function POST(request: Request) {
     }
 
     let body: {
-      plan?: unknown;
+      redirectPath?: unknown;
       privacyAccepted?: unknown;
     };
 
     try {
-      body = (await request.json()) as typeof body;
+      body = await readJsonBodyWithLimit<typeof body>(
+        request,
+        maxLoginBodyBytes,
+      );
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        throw new IdentityError(
+          "INVALID_REQUEST",
+          "Размер данных для входа через Telegram превышает допустимый.",
+          413,
+        );
+      }
+
       throw new IdentityError(
         "INVALID_REQUEST",
         "Некорректные данные для входа через Telegram.",
@@ -65,19 +81,17 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      !isSubscriptionPlanId(body.plan) ||
-      body.privacyAccepted !== true
-    ) {
+    if (body.privacyAccepted !== true) {
       throw new IdentityError(
         "INVALID_REQUEST",
         "Подтвердите согласие на обработку персональных данных.",
         400,
       );
     }
+    const redirectPath = normalizeLoginRedirectPath(body.redirectPath);
 
     const state = createTelegramLoginState(
-      body.plan,
+      redirectPath,
       privacyDocumentVersion,
       config.telegram.botToken,
     );

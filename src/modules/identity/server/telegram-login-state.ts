@@ -6,15 +6,15 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import type { NextResponse } from "next/server";
-import type { SubscriptionPlanId } from "@/modules/billing/domain/types";
+import { isSafeInternalRedirectPath } from "../domain/login-redirect";
 import { IdentityError } from "../domain/errors";
 
 const telegramLoginStateTtlMs = 10 * 60_000;
 
 type TelegramLoginStatePayload = {
-  version: 1;
+  version: 2;
   state: string;
-  plan: SubscriptionPlanId;
+  redirectPath: string;
   consentVersion: string;
   issuedAt: number;
 };
@@ -54,16 +54,20 @@ function invalidState() {
 }
 
 export function createTelegramLoginState(
-  plan: SubscriptionPlanId,
+  redirectPath: string,
   consentVersion: string,
   botToken: string,
   now: Date = new Date(),
 ): TelegramLoginState {
+  if (!isSafeInternalRedirectPath(redirectPath)) {
+    throw invalidState();
+  }
+
   const state = randomBytes(32).toString("base64url");
   const payload: TelegramLoginStatePayload = {
-    version: 1,
+    version: 2,
     state,
-    plan,
+    redirectPath,
     consentVersion,
     issuedAt: now.getTime(),
   };
@@ -125,12 +129,12 @@ export function verifyTelegramLoginState(
     typeof payload !== "object" ||
     payload === null ||
     !("version" in payload) ||
-    payload.version !== 1 ||
+    payload.version !== 2 ||
     !("state" in payload) ||
     typeof payload.state !== "string" ||
     !equalText(payload.state, state) ||
-    !("plan" in payload) ||
-    (payload.plan !== "monthly" && payload.plan !== "annual") ||
+    !("redirectPath" in payload) ||
+    !isSafeInternalRedirectPath(payload.redirectPath) ||
     !("consentVersion" in payload) ||
     payload.consentVersion !== expectedConsentVersion ||
     !("issuedAt" in payload) ||
@@ -150,7 +154,7 @@ export function verifyTelegramLoginState(
   }
 
   return {
-    plan: payload.plan,
+    redirectPath: payload.redirectPath,
     consentVersion: payload.consentVersion,
   };
 }

@@ -3451,9 +3451,13 @@ h3 {
   align-items: start;
   gap: 10px;
   color: var(--text-secondary);
-  cursor: pointer;
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+.privacy-consent label,
+.checkout-consent label {
+  cursor: pointer;
 }
 
 .privacy-consent input {
@@ -3629,7 +3633,6 @@ h3 {
   align-items: start;
   gap: 10px;
   color: var(--text-secondary);
-  cursor: pointer;
   font-size: 12.5px;
   line-height: 1.5;
 }

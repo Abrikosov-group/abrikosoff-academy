@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readJsonBodyWithLimit,
   readTextBodyWithLimit,
   RequestBodyTooLargeError,
 } from "@/lib/read-request-body";
@@ -39,5 +40,18 @@ describe("readTextBodyWithLimit", () => {
     await expect(
       readTextBodyWithLimit(request, 256),
     ).rejects.toBeInstanceOf(RequestBodyTooLargeError);
+  });
+});
+
+describe("readJsonBodyWithLimit", () => {
+  it("разбирает JSON после проверки размера", async () => {
+    const request = new Request("https://academy.example.test/api", {
+      method: "POST",
+      body: JSON.stringify({ redirectPath: "/dashboard" }),
+    });
+
+    await expect(
+      readJsonBodyWithLimit<{ redirectPath: string }>(request, 256),
+    ).resolves.toEqual({ redirectPath: "/dashboard" });
   });
 });

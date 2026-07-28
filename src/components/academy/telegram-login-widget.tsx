@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 
 type TelegramLoginWidgetProps = {
   botUsername: string;
-  plan: "annual" | "monthly";
+  redirectPath: string;
 };
 
 export function TelegramLoginWidget({
   botUsername,
-  plan,
+  redirectPath,
 }: TelegramLoginWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -32,7 +32,7 @@ export function TelegramLoginWidget({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            plan,
+            redirectPath,
             privacyAccepted: true,
           }),
           cache: "no-store",
@@ -81,7 +81,7 @@ export function TelegramLoginWidget({
       abortController.abort();
       widgetContainer.replaceChildren();
     };
-  }, [botUsername, plan]);
+  }, [botUsername, redirectPath]);
 
   return (
     <>

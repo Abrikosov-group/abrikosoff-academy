@@ -5,10 +5,15 @@ import {
 } from "@/modules/identity/server/identity-config";
 import { getIdentityRuntime } from "@/modules/identity/server/get-identity-service";
 import { identityErrorResponse } from "@/modules/identity/server/http";
-import { isSubscriptionPlanId } from "@/modules/billing/domain/catalog";
+import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redirect";
+import {
+  readJsonBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/lib/read-request-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+const maxLoginBodyBytes = 4 * 1024;
 
 function normalizeEmail(value: unknown) {
   if (
@@ -40,13 +45,24 @@ export async function POST(request: Request) {
 
     let body: {
       email?: unknown;
-      plan?: unknown;
+      redirectPath?: unknown;
       privacyAccepted?: unknown;
     };
 
     try {
-      body = (await request.json()) as typeof body;
+      body = await readJsonBodyWithLimit<typeof body>(
+        request,
+        maxLoginBodyBytes,
+      );
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        throw new IdentityError(
+          "INVALID_REQUEST",
+          "Размер данных для входа превышает допустимый.",
+          413,
+        );
+      }
+
       throw new IdentityError(
         "INVALID_REQUEST",
         "Некорректные данные запроса.",
@@ -55,10 +71,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      !isSubscriptionPlanId(body.plan) ||
-      body.privacyAccepted !== true
-    ) {
+    if (body.privacyAccepted !== true) {
       throw new IdentityError(
         "INVALID_REQUEST",
         "Подтвердите согласие на обработку персональных данных.",
@@ -67,6 +80,7 @@ export async function POST(request: Request) {
     }
 
     const email = normalizeEmail(body.email);
+    const redirectPath = normalizeLoginRedirectPath(body.redirectPath);
     const displayName =
       email
         .split("@")[0]
@@ -78,7 +92,7 @@ export async function POST(request: Request) {
     const challenge = await service.requestEmailLogin({
       email,
       displayName,
-      redirectPath: `/checkout?plan=${body.plan}`,
+      redirectPath,
       consent: {
         acceptedAt: new Date().toISOString(),
         documentVersion: privacyDocumentVersion,

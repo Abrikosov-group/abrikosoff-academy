@@ -19,6 +19,7 @@ import type {
   StoredCheckout,
   SubscriptionPlanId,
 } from "../domain/types";
+import { BillingError } from "../domain/errors";
 import { addSubscriptionPeriod } from "../domain/subscription-period";
 
 type CheckoutRow = {
@@ -343,92 +344,191 @@ async function markWebhookEvent(
   );
 }
 
-async function activateSubscription(
+async function lockCustomerAccess(
   client: PoolClient,
-  checkout: StoredCheckout,
-  activatedAt: Date,
+  customerId: string,
 ) {
-  const existing = await client.query<{
-    id: string;
-    current_period_end: Date | null;
-  }>(
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 2147483647))",
+    [customerId],
+  );
+}
+
+type AccessGrantRow = {
+  order_id: string;
+  plan_id: SubscriptionPlanId;
+  period_start: Date;
+  period_end: Date;
+};
+
+async function rebuildSubscriptionProjection(
+  client: PoolClient,
+  customerId: string,
+  changedAt: Date,
+) {
+  const grants = await client.query<AccessGrantRow>(
     `
-      SELECT id, current_period_end
+      SELECT order_id, plan_id, period_start, period_end
+      FROM billing_access_grants
+      WHERE customer_id = $1 AND status = 'granted'
+      ORDER BY period_end DESC, granted_at DESC, order_id DESC
+    `,
+    [customerId],
+  );
+  const existing = await client.query<{ id: string }>(
+    `
+      SELECT id
       FROM billing_subscriptions
       WHERE customer_id = $1
-        AND status IN ('pending', 'active', 'past_due', 'grace_period')
       ORDER BY created_at DESC
       LIMIT 1
       FOR UPDATE
     `,
-    [checkout.customerId],
+    [customerId],
   );
-  const current = existing.rows[0];
-  const periodStart =
-    current?.current_period_end &&
-    current.current_period_end.getTime() > activatedAt.getTime()
-      ? current.current_period_end
-      : activatedAt;
-  const periodEnd = addSubscriptionPeriod(
-    periodStart,
-    checkout.planId,
-  );
+  const currentId = existing.rows[0]?.id;
+  const winningGrant = grants.rows[0];
 
-  if (current) {
+  if (!winningGrant) {
+    if (currentId) {
+      await client.query(
+        `
+          UPDATE billing_subscriptions
+          SET
+            status = 'canceled',
+            current_period_end = LEAST(
+              COALESCE(current_period_end, $2::timestamptz),
+              $2::timestamptz
+            ),
+            auto_renew = false,
+            mandate_id = NULL,
+            activated_by_order_id = NULL,
+            cancel_at_period_end = false,
+            canceled_at = COALESCE(canceled_at, $2::timestamptz),
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [currentId, changedAt],
+      );
+    }
+
+    return;
+  }
+
+  const periodStart = grants.rows.reduce(
+    (earliest, grant) =>
+      grant.period_start.getTime() < earliest.getTime()
+        ? grant.period_start
+        : earliest,
+    winningGrant.period_start,
+  );
+  const status =
+    winningGrant.period_end.getTime() > changedAt.getTime()
+      ? "active"
+      : "expired";
+
+  if (currentId) {
     await client.query(
       `
         UPDATE billing_subscriptions
         SET
           plan_id = $2,
-          status = 'active',
-          current_period_start = $3,
-          current_period_end = $4,
+          status = $3,
+          current_period_start = $4,
+          current_period_end = $5,
           auto_renew = false,
           mandate_id = NULL,
-          activated_by_order_id = $5,
+          activated_by_order_id = $6,
           cancel_at_period_end = false,
           canceled_at = NULL,
           updated_at = now()
         WHERE id = $1
       `,
       [
-        current.id,
-        checkout.planId,
+        currentId,
+        winningGrant.plan_id,
+        status,
         periodStart,
-        periodEnd,
-        checkout.orderId,
+        winningGrant.period_end,
+        winningGrant.order_id,
       ],
     );
-  } else {
-    await client.query(
-      `
-        INSERT INTO billing_subscriptions (
-          id,
-          customer_id,
-          plan_id,
-          status,
-          current_period_start,
-          current_period_end,
-          auto_renew,
-          mandate_id,
-          activated_by_order_id
-        )
-        VALUES ($1, $2, $3, 'active', $4, $5, false, NULL, $6)
-      `,
-      [
-        randomUUID(),
-        checkout.customerId,
-        checkout.planId,
-        periodStart,
-        periodEnd,
-        checkout.orderId,
-      ],
-    );
+    return;
   }
+
+  await client.query(
+    `
+      INSERT INTO billing_subscriptions (
+        id,
+        customer_id,
+        plan_id,
+        status,
+        current_period_start,
+        current_period_end,
+        auto_renew,
+        mandate_id,
+        activated_by_order_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, false, NULL, $7)
+    `,
+    [
+      randomUUID(),
+      customerId,
+      winningGrant.plan_id,
+      status,
+      periodStart,
+      winningGrant.period_end,
+      winningGrant.order_id,
+    ],
+  );
+}
+
+async function activateSubscription(
+  client: PoolClient,
+  checkout: StoredCheckout,
+  activatedAt: Date,
+) {
+  await lockCustomerAccess(client, checkout.customerId);
+  const periodEnd = addSubscriptionPeriod(
+    activatedAt,
+    checkout.planId,
+  );
+
+  await client.query(
+    `
+      INSERT INTO billing_access_grants (
+        order_id,
+        customer_id,
+        plan_id,
+        status,
+        period_start,
+        period_end,
+        granted_at
+      )
+      VALUES ($1, $2, $3, 'granted', $4, $5, $4)
+      ON CONFLICT (order_id) DO NOTHING
+    `,
+    [
+      checkout.orderId,
+      checkout.customerId,
+      checkout.planId,
+      activatedAt,
+      periodEnd,
+    ],
+  );
+
+  await rebuildSubscriptionProjection(
+    client,
+    checkout.customerId,
+    activatedAt,
+  );
 }
 
 export class PostgresPaymentRepository implements PaymentRepository {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async findCheckoutReservationByIdempotencyKey(
     idempotencyKey: string,
@@ -440,61 +540,106 @@ export class PostgresPaymentRepository implements PaymentRepository {
   }
 
   async reserveCheckout(input: ReserveCheckoutInput) {
-    await this.pool.query(
-      `
-        INSERT INTO billing_orders (
-          id,
-          customer_id,
-          plan_id,
-          legal_entity_id,
-          country_code,
-          amount_minor,
-          currency,
-          status,
-          idempotency_key,
-          selected_provider,
-          merchant_account_id,
-          offer_accepted_at,
-          offer_version,
-          receipt_email,
-          receipt_phone,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
-          $12, $13, $14, $15, $15
-        )
-        ON CONFLICT (idempotency_key) DO NOTHING
-      `,
-      [
-        input.orderId,
-        input.customerId,
-        input.planId,
-        input.legalEntityId,
-        input.countryCode,
-        input.money.amountMinor,
-        input.money.currency,
+    const client = await this.pool.connect();
+    const checkoutAt = this.now();
+
+    try {
+      await client.query("BEGIN");
+      await lockCustomerAccess(client, input.customerId);
+      const existing = await findReservationByIdempotencyKey(
+        client,
         input.idempotencyKey,
-        input.provider,
-        input.merchantAccountId,
-        input.offerAcceptedAt,
-        input.offerVersion,
-        input.receiptContact.email ?? null,
-        input.receiptContact.phone ?? null,
-        input.createdAt,
-      ],
-    );
-    const reservation = await findReservationByIdempotencyKey(
-      this.pool,
-      input.idempotencyKey,
-    );
+      );
 
-    if (!reservation) {
-      throw new Error("Не удалось зарезервировать заказ");
+      if (existing) {
+        await client.query("COMMIT");
+        return existing;
+      }
+
+      const activeAccess = await client.query<{ exists: boolean }>(
+        `
+          SELECT EXISTS (
+            SELECT 1
+            FROM billing_access_grants
+            WHERE customer_id = $1
+              AND status = 'granted'
+              AND period_start <= $2::timestamptz
+              AND period_end > $2::timestamptz
+          ) AS exists
+        `,
+        [input.customerId, checkoutAt],
+      );
+
+      if (activeAccess.rows[0]?.exists) {
+        throw new BillingError(
+          "ACCESS_ALREADY_ACTIVE",
+          "Доступ уже оплачен. Новый тариф можно выбрать после окончания текущего периода.",
+          409,
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO billing_orders (
+            id,
+            customer_id,
+            plan_id,
+            legal_entity_id,
+            country_code,
+            amount_minor,
+            currency,
+            status,
+            idempotency_key,
+            selected_provider,
+            merchant_account_id,
+            offer_accepted_at,
+            offer_version,
+            receipt_email,
+            receipt_phone,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
+            $12, $13, $14, $15, $15
+          )
+          ON CONFLICT (idempotency_key) DO NOTHING
+        `,
+        [
+          input.orderId,
+          input.customerId,
+          input.planId,
+          input.legalEntityId,
+          input.countryCode,
+          input.money.amountMinor,
+          input.money.currency,
+          input.idempotencyKey,
+          input.provider,
+          input.merchantAccountId,
+          input.offerAcceptedAt,
+          input.offerVersion,
+          input.receiptContact.email ?? null,
+          input.receiptContact.phone ?? null,
+          input.createdAt,
+        ],
+      );
+      const reservation = await findReservationByIdempotencyKey(
+        client,
+        input.idempotencyKey,
+      );
+
+      if (!reservation) {
+        throw new Error("Не удалось зарезервировать заказ");
+      }
+
+      await client.query("COMMIT");
+      return reservation;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-
-    return reservation;
   }
 
   async findCheckoutByIdempotencyKey(idempotencyKey: string) {
@@ -503,6 +648,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
   async saveCheckout(input: SaveCheckoutInput) {
     const client = await this.pool.connect();
+    const processedAt = this.now();
 
     try {
       await client.query("BEGIN");
@@ -588,7 +734,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
       );
 
       if (input.status === "succeeded") {
-        await activateSubscription(client, input, new Date(input.updatedAt));
+        await activateSubscription(client, input, processedAt);
       }
 
       await client.query("COMMIT");
@@ -642,6 +788,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
     input: ApplyPaymentEventInput,
   ): Promise<ApplyPaymentEventResult> {
     const client = await this.pool.connect();
+    const processedAt = this.now();
 
     try {
       await client.query("BEGIN");
@@ -679,7 +826,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
       const updatedCheckout: StoredCheckout = {
         ...checkout,
         status: nextStatus,
-        updatedAt: new Date().toISOString(),
+        updatedAt: processedAt.toISOString(),
       };
 
       await client.query(
@@ -743,7 +890,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         await activateSubscription(
           client,
           updatedCheckout,
-          new Date(input.occurredAt),
+          processedAt,
         );
       }
 
@@ -763,6 +910,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
     input: ApplyRefundEventInput,
   ): Promise<ApplyRefundEventResult> {
     const client = await this.pool.connect();
+    const processedAt = this.now();
 
     try {
       await client.query("BEGIN");
@@ -872,25 +1020,25 @@ export class PostgresPaymentRepository implements PaymentRepository {
           `,
           [checkout.orderId, orderStatusForPayment(nextStatus)],
         );
-        await client.query(
-          `
-            UPDATE billing_subscriptions
-            SET
-              status = 'canceled',
-              current_period_end = LEAST(
-                COALESCE(current_period_end, $3::timestamptz),
-                $3::timestamptz
-              ),
-              auto_renew = false,
-              cancel_at_period_end = false,
-              canceled_at = COALESCE(canceled_at, $3::timestamptz),
-              updated_at = now()
-            WHERE customer_id = $1
-              AND activated_by_order_id = $2
-              AND status IN ('pending', 'active', 'past_due', 'grace_period')
-          `,
-          [checkout.customerId, checkout.orderId, input.occurredAt],
-        );
+        if (nextStatus === "refunded") {
+          await lockCustomerAccess(client, checkout.customerId);
+          await client.query(
+            `
+              UPDATE billing_access_grants
+              SET
+                status = 'revoked',
+                revoked_at = COALESCE(revoked_at, $2::timestamptz),
+                updated_at = now()
+              WHERE order_id = $1 AND status = 'granted'
+            `,
+            [checkout.orderId, processedAt],
+          );
+          await rebuildSubscriptionProjection(
+            client,
+            checkout.customerId,
+            processedAt,
+          );
+        }
       }
 
       await client.query(
@@ -931,7 +1079,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         checkout: {
           ...checkout,
           status: nextStatus,
-          updatedAt: new Date().toISOString(),
+          updatedAt: processedAt.toISOString(),
         },
       };
     } catch (error) {

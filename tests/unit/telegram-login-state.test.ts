@@ -9,9 +9,9 @@ const consentVersion = "2026-07-28";
 const issuedAt = new Date("2026-07-28T10:00:00.000Z");
 
 describe("Telegram login state", () => {
-  it("связывает тариф и согласие с браузерным cookie", () => {
+  it("связывает маршрут и согласие с браузерным cookie", () => {
     const state = createTelegramLoginState(
-      "annual",
+      "/checkout?plan=annual",
       consentVersion,
       botToken,
       issuedAt,
@@ -26,20 +26,20 @@ describe("Telegram login state", () => {
         new Date("2026-07-28T10:05:00.000Z"),
       ),
     ).toEqual({
-      plan: "annual",
+      redirectPath: "/checkout?plan=annual",
       consentVersion,
     });
   });
 
   it("отклоняет state из другого браузерного сценария", () => {
     const state = createTelegramLoginState(
-      "monthly",
+      "/dashboard",
       consentVersion,
       botToken,
       issuedAt,
     );
     const otherState = createTelegramLoginState(
-      "monthly",
+      "/dashboard",
       consentVersion,
       botToken,
       issuedAt,
@@ -63,7 +63,7 @@ describe("Telegram login state", () => {
 
   it("отклоняет изменённое cookie", () => {
     const state = createTelegramLoginState(
-      "annual",
+      "/checkout?plan=annual",
       consentVersion,
       botToken,
       issuedAt,
@@ -88,7 +88,7 @@ describe("Telegram login state", () => {
 
   it("отклоняет просроченное начало входа", () => {
     const state = createTelegramLoginState(
-      "annual",
+      "/checkout?plan=annual",
       consentVersion,
       botToken,
       issuedAt,
@@ -106,6 +106,22 @@ describe("Telegram login state", () => {
       expect.objectContaining({
         code: "LOGIN_EXPIRED",
         httpStatus: 400,
+      }),
+    );
+  });
+
+  it("не создаёт state с внешним маршрутом возврата", () => {
+    expect(() =>
+      createTelegramLoginState(
+        "https://example.com",
+        consentVersion,
+        botToken,
+        issuedAt,
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_LOGIN",
+        httpStatus: 401,
       }),
     );
   });

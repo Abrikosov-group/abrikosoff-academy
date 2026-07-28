@@ -10,9 +10,14 @@ import { billingErrorResponse } from "@/modules/billing/server/http";
 import { IdentityError } from "@/modules/identity/domain/errors";
 import { identityErrorResponse } from "@/modules/identity/server/http";
 import { requireCurrentUser } from "@/modules/identity/server/session";
+import {
+  readJsonBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/lib/read-request-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+const maxCheckoutBodyBytes = 8 * 1024;
 
 type CheckoutRequestBody = {
   plan?: unknown;
@@ -59,14 +64,26 @@ function validateReceiptEmail(value: unknown) {
 
 export async function POST(request: Request) {
   try {
+    const user = await requireCurrentUser();
     const idempotencyKey = validateIdempotencyKey(
       request.headers.get("Idempotency-Key"),
     );
     let body: CheckoutRequestBody;
 
     try {
-      body = (await request.json()) as CheckoutRequestBody;
+      body = await readJsonBodyWithLimit<CheckoutRequestBody>(
+        request,
+        maxCheckoutBodyBytes,
+      );
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        throw new BillingError(
+          "INVALID_REQUEST",
+          "Размер данных оформления подписки превышает допустимый.",
+          413,
+        );
+      }
+
       throw new BillingError(
         "INVALID_REQUEST",
         "Некорректные данные оформления подписки.",
@@ -93,7 +110,6 @@ export async function POST(request: Request) {
 
     const receiptEmail = validateReceiptEmail(body.receiptEmail);
     const { config, service } = getPaymentRuntime();
-    const user = await requireCurrentUser();
 
     const result = await service.createCheckout({
       customerId: user.id,

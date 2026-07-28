@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeftIcon, LockKeyIcon } from "@phosphor-icons/react/dist/ssr";
 import { CheckoutButton } from "@/components/academy/checkout-button";
+import { getDatabasePool } from "@/lib/database";
+import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { addSubscriptionPeriod } from "@/modules/billing/domain/subscription-period";
+import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
@@ -25,6 +28,15 @@ export default async function CheckoutPage({
 
   if (!user) {
     redirect(`/login?plan=${selectedPlan}`);
+  }
+
+  const currentSubscription = await getSubscriptionSummary(
+    getDatabasePool(),
+    user.id,
+  );
+
+  if (hasCurrentSubscriptionAccess(currentSubscription)) {
+    redirect("/dashboard");
   }
 
   const telegramUsername =

@@ -1,6 +1,10 @@
 academy.abrikosoff.com {
 	encode zstd gzip
 
+	request_body {
+		max_size 1MB
+	}
+
 	# ЮKassa публикует этот список источников для HTTP-уведомлений.
 	# Актуальность диапазонов проверена 28 июля 2026 года.
 	@untrusted_yookassa_webhook {

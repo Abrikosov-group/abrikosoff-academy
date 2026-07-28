@@ -1,16 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import {
-  CheckCircleIcon,
-  SpinnerGapIcon,
-  TelegramLogoIcon,
-} from "@phosphor-icons/react";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/icons/CheckCircle";
+import { SpinnerGapIcon } from "@phosphor-icons/react/dist/icons/SpinnerGap";
+import { TelegramLogoIcon } from "@phosphor-icons/react/dist/icons/TelegramLogo";
 import { FormEvent, useState } from "react";
 import { TelegramLoginWidget } from "./telegram-login-widget";
 
 type LoginPanelProps = {
-  plan: "annual" | "monthly";
+  redirectPath: string;
+  purchasing: boolean;
   demoAuthEnabled: boolean;
   emailAuthEnabled: boolean;
   telegram?: {
@@ -19,7 +18,8 @@ type LoginPanelProps = {
 };
 
 export function LoginPanel({
-  plan,
+  redirectPath,
+  purchasing,
   demoAuthEnabled,
   emailAuthEnabled,
   telegram,
@@ -52,7 +52,7 @@ export function LoginPanel({
         },
         body: JSON.stringify({
           email,
-          plan,
+          redirectPath,
           privacyAccepted: true,
         }),
       });
@@ -104,7 +104,7 @@ export function LoginPanel({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          plan,
+          redirectPath,
           privacyAccepted: true,
         }),
       });
@@ -154,8 +154,9 @@ export function LoginPanel({
 
   return (
     <>
-      <label className="privacy-consent">
+      <div className="privacy-consent">
         <input
+          id="privacy-consent"
           checked={privacyAccepted}
           onChange={(event) => {
             setPrivacyAccepted(event.target.checked);
@@ -164,11 +165,13 @@ export function LoginPanel({
           type="checkbox"
         />
         <span>
-          Даю согласие на обработку персональных данных для создания аккаунта,
-          предоставления доступа и поддержки на условиях{" "}
+          <label htmlFor="privacy-consent">
+            Даю согласие на обработку персональных данных для создания
+            аккаунта, предоставления доступа и поддержки на условиях
+          </label>{" "}
           <Link href="/privacy">Политики конфиденциальности</Link>.
         </span>
-      </label>
+      </div>
 
       {demoAuthEnabled ? (
         <button
@@ -189,7 +192,7 @@ export function LoginPanel({
       ) : telegram && privacyAccepted ? (
         <TelegramLoginWidget
           botUsername={telegram.botUsername}
-          plan={plan}
+          redirectPath={redirectPath}
         />
       ) : (
         <button
@@ -252,8 +255,14 @@ export function LoginPanel({
       ) : null}
 
       <p className="auth-legal">
-        Оформляя подписку, вы принимаете <Link href="/terms">условия</Link>.
-        Пароли не нужны.
+        {purchasing ? (
+          <>
+            Оформляя подписку, вы принимаете{" "}
+            <Link href="/terms">условия</Link>. Пароли не нужны.
+          </>
+        ) : (
+          <>Пароли не нужны. После входа откроется личный кабинет.</>
+        )}
       </p>
     </>
   );

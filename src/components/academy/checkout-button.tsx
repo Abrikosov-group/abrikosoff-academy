@@ -1,6 +1,6 @@
 "use client";
 
-import { SpinnerGapIcon } from "@phosphor-icons/react";
+import { SpinnerGapIcon } from "@phosphor-icons/react/dist/icons/SpinnerGap";
 import Link from "next/link";
 import { useRef, useState } from "react";
 
@@ -96,21 +96,25 @@ export function CheckoutButton({
           />
         </label>
       ) : null}
-      <label className="checkout-consent">
+      <div className="checkout-consent">
         <input
+          id="checkout-consent"
           checked={accepted}
           onChange={(event) => setAccepted(event.target.checked)}
           type="checkbox"
         />
         <span>
-          Принимаю <Link href="/terms">оферту</Link> и подтверждаю разовую
-          оплату{" "}
+          <label htmlFor="checkout-consent">Принимаю</label>{" "}
+          <Link href="/terms">оферту</Link>{" "}
+          <label htmlFor="checkout-consent">
+            и подтверждаю разовую оплату{" "}
           {plan === "annual"
             ? "14 000 ₽ за 12 месяцев"
             : "1 500 ₽ за 1 месяц"}{" "}
-          доступа. Автоматического продления и повторных списаний нет.
+            доступа. Автоматического продления и повторных списаний нет.
+          </label>
         </span>
-      </label>
+      </div>
       <button
         className="button button-primary checkout-submit"
         type="button"

@@ -28,6 +28,19 @@ test("вход, оплата и доступ к уроку работают ка
   expect(invalidDemoLogin.status()).toBe(400);
   expect(invalidEmailLogin.status()).toBe(400);
 
+  const oversizedDemoLogin = await page.request.post("/api/auth/demo", {
+    data: JSON.stringify({
+      redirectPath: "/dashboard",
+      privacyAccepted: true,
+      padding: "x".repeat(5 * 1024),
+    }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  expect(oversizedDemoLogin.status()).toBe(413);
+
   const unauthorizedCheckout = await page.request.post(
     "/api/payments/checkout",
     {
@@ -44,8 +57,45 @@ test("вход, оплата и доступ к уроку работают ка
 
   expect(unauthorizedCheckout.status()).toBe(401);
 
+  const oversizedUnauthorizedCheckout = await page.request.post(
+    "/api/payments/checkout",
+    {
+      data: "x".repeat(9 * 1024),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "e2e-unauthorized-large-checkout",
+      },
+    },
+  );
+
+  expect(oversizedUnauthorizedCheckout.status()).toBe(401);
+
   await page.goto(lessonPath);
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/login\\?next=${encodeURIComponent(lessonPath)}$`,
+    ),
+  );
+  await page.getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Войти через Telegram" })
+    .click();
+  await expect(page).toHaveURL(/\/pricing$/, {
+    timeout: 15_000,
+  });
+
+  const oversizedAuthorizedCheckout = await page.request.post(
+    "/api/payments/checkout",
+    {
+      data: "x".repeat(9 * 1024),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "e2e-authorized-large-checkout",
+      },
+    },
+  );
+
+  expect(oversizedAuthorizedCheckout.status()).toBe(413);
 
   await page.goto("/login?plan=annual");
   await page.getByRole("checkbox").check();
@@ -89,6 +139,33 @@ test("вход, оплата и доступ к уроку работают ка
     }),
   ).toBeVisible();
 
+  const repeatedCheckout = await page.request.post(
+    "/api/payments/checkout",
+    {
+      data: {
+        plan: "monthly",
+        offerAccepted: true,
+      },
+      headers: {
+        "Idempotency-Key": "e2e-active-access-checkout",
+      },
+    },
+  );
+
+  expect(repeatedCheckout.status()).toBe(409);
+  await page.goto("/checkout?plan=monthly");
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  await page.request.post("/api/auth/logout");
+  await page.goto("/login");
+  await page.getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Войти через Telegram" })
+    .click();
+  await expect(page).toHaveURL(/\/dashboard$/, {
+    timeout: 15_000,
+  });
+
   const database = new Client({
     connectionString: testDatabaseUrl,
     application_name: "academy-e2e-expiry-check",
@@ -97,11 +174,23 @@ test("вход, оплата и доступ к уроку работают ка
   await database.connect();
 
   try {
+    await database.query("BEGIN");
+    await database.query(`
+      UPDATE billing_access_grants
+      SET
+        period_start = now() - interval '2 seconds',
+        period_end = now() - interval '1 second'
+      WHERE status = 'granted'
+    `);
     await database.query(`
       UPDATE billing_subscriptions
       SET current_period_end = now() - interval '1 second'
       WHERE status = 'active'
     `);
+    await database.query("COMMIT");
+  } catch (error) {
+    await database.query("ROLLBACK");
+    throw error;
   } finally {
     await database.end();
   }
