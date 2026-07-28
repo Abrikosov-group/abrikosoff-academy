@@ -1136,6 +1136,72 @@ export async function getSubscriptionSummary(
     : null;
 }
 
+export type CustomerOrderHistoryItem = {
+  id: string;
+  planId: SubscriptionPlanId;
+  status: OrderStatus;
+  amountMinor: number;
+  currency: "RUB";
+  provider: PaymentProviderId;
+  createdAt: string;
+  paidAt?: string;
+};
+
+export async function getCustomerOrderHistory(
+  pool: Pool,
+  customerId: string,
+  requestedLimit = 50,
+): Promise<CustomerOrderHistoryItem[]> {
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100)
+    : 50;
+  const result = await pool.query<{
+    id: string;
+    plan_id: SubscriptionPlanId;
+    status: OrderStatus;
+    amount_minor: string;
+    currency: "RUB";
+    selected_provider: PaymentProviderId;
+    created_at: Date;
+    paid_at: Date | null;
+  }>(
+    `
+      SELECT
+        orders.id,
+        orders.plan_id,
+        orders.status,
+        orders.amount_minor,
+        orders.currency,
+        orders.selected_provider,
+        orders.created_at,
+        payments.paid_at
+      FROM billing_orders orders
+      LEFT JOIN LATERAL (
+        SELECT paid_at
+        FROM billing_payments
+        WHERE order_id = orders.id
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      ) payments ON true
+      WHERE orders.customer_id = $1
+      ORDER BY orders.created_at DESC, orders.id DESC
+      LIMIT $2
+    `,
+    [customerId, limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    planId: row.plan_id,
+    status: row.status,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    provider: row.selected_provider,
+    createdAt: row.created_at.toISOString(),
+    paidAt: row.paid_at?.toISOString(),
+  }));
+}
+
 export type CustomerOrderSummary = {
   id: string;
   planId: SubscriptionPlanId;
