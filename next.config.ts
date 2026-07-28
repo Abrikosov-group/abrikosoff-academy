@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  experimental: {
+    authInterrupts: true,
+  },
   turbopack: {
     root: process.cwd(),
   },

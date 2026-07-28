@@ -107,6 +107,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const repository = new PostgresIdentityRepository(pool);
     const service = new IdentityService(repository, 30);
     const session = await service.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-session",
       displayName: "Тестовая ученица",
@@ -221,6 +222,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-payment",
       displayName: "Плательщик",
@@ -473,6 +475,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-access-grants",
       displayName: "Два платежа",
@@ -623,6 +626,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-late-webhook",
       displayName: "Раннее уведомление",

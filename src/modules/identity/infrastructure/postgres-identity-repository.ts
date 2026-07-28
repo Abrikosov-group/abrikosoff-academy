@@ -11,12 +11,14 @@ import type {
 import type {
   AuthenticatedUser,
   IdentityMethodType,
+  SessionAuthenticationMethod,
 } from "../domain/types";
 
 type IdentityRow = {
   user_id: string;
   display_name: string;
   receipt_email: string | null;
+  method_id: string;
   method_type: IdentityMethodType;
   identifier: string;
   metadata: Record<string, unknown>;
@@ -28,6 +30,7 @@ function mapIdentityRow(row: IdentityRow): AuthenticatedUser {
     displayName: row.display_name,
     receiptEmail: row.receipt_email ?? undefined,
     primaryMethod: {
+      id: row.method_id,
       type: row.method_type,
       identifier: row.identifier,
       metadata: row.metadata,
@@ -46,6 +49,7 @@ async function findIdentity(
         users.id AS user_id,
         users.display_name,
         users.receipt_email,
+        methods.id AS method_id,
         methods.method_type,
         methods.identifier,
         methods.metadata
@@ -126,6 +130,7 @@ async function updateExistingIdentity(
     displayName: input.displayName,
     receiptEmail: input.receiptEmail ?? existing.receiptEmail,
     primaryMethod: {
+      id: existing.primaryMethod.id,
       type: input.methodType,
       identifier: input.identifier,
       metadata: input.metadata,
@@ -169,6 +174,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
       }
 
       const userId = randomUUID();
+      const methodId = randomUUID();
 
       await client.query(
         `
@@ -195,7 +201,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
           VALUES ($1, $2, $3, $4, now(), $5::jsonb)
         `,
         [
-          randomUUID(),
+          methodId,
           userId,
           input.methodType,
           input.identifier,
@@ -210,6 +216,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
         displayName: input.displayName,
         receiptEmail: input.receiptEmail,
         primaryMethod: {
+          id: methodId,
           type: input.methodType,
           identifier: input.identifier,
           metadata: input.metadata,
@@ -254,6 +261,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
     userId: string;
     tokenSha256: string;
     expiresAt: Date;
+    authenticatedAt: Date;
+    authenticationMethod: SessionAuthenticationMethod;
+    authenticationMethodId: string;
+    userAgentFamily?: string;
   }) {
     await this.pool.query(
       `
@@ -261,15 +272,23 @@ export class PostgresIdentityRepository implements IdentityRepository {
           id,
           user_id,
           token_sha256,
-          expires_at
+          expires_at,
+          authenticated_at,
+          authentication_method,
+          authentication_method_id,
+          user_agent_family
         )
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         randomUUID(),
         input.userId,
         input.tokenSha256,
         input.expiresAt,
+        input.authenticatedAt,
+        input.authenticationMethod,
+        input.authenticationMethodId,
+        input.userAgentFamily ?? null,
       ],
     );
   }
@@ -281,13 +300,14 @@ export class PostgresIdentityRepository implements IdentityRepository {
           users.id AS user_id,
           users.display_name,
           users.receipt_email,
+          methods.id AS method_id,
           methods.method_type,
           methods.identifier,
           methods.metadata
         FROM identity_sessions sessions
         JOIN identity_users users ON users.id = sessions.user_id
         JOIN LATERAL (
-          SELECT method_type, identifier, metadata
+          SELECT id, method_type, identifier, metadata
           FROM identity_methods
           WHERE user_id = users.id
           ORDER BY

@@ -42,22 +42,27 @@ export function clearSessionCookie(response: NextResponse) {
   });
 }
 
-export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
+export async function getCurrentSessionTokenSha256() {
   const cookieStore = await cookies();
+  const token = cookieStore.get(getSessionCookieName())?.value;
 
+  return token ? hashIdentityToken(token) : undefined;
+}
+
+export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
   if (!hasDatabaseConfiguration()) {
     return null;
   }
 
-  const token = cookieStore.get(getSessionCookieName())?.value;
+  const tokenSha256 = await getCurrentSessionTokenSha256();
 
-  if (!token) {
+  if (!tokenSha256) {
     return null;
   }
 
   const { repository } = getIdentityRuntime();
   return repository.findUserBySessionTokenSha256(
-    hashIdentityToken(token),
+    tokenSha256,
   );
 }
 
@@ -80,13 +85,12 @@ export async function revokeCurrentSession() {
     return;
   }
 
-  const cookieStore = await cookies();
-  const token = cookieStore.get(getSessionCookieName())?.value;
+  const tokenSha256 = await getCurrentSessionTokenSha256();
 
-  if (!token) {
+  if (!tokenSha256) {
     return;
   }
 
   const { repository } = getIdentityRuntime();
-  await repository.revokeSession(hashIdentityToken(token));
+  await repository.revokeSession(tokenSha256);
 }

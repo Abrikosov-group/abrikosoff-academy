@@ -3,12 +3,15 @@ import {
   hasDatabaseConfiguration,
 } from "@/lib/database";
 import { logUnexpectedServerError } from "@/lib/safe-server-log";
+import { getAdministrationConfig } from "@/modules/administration/server/administration-config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
+    getAdministrationConfig();
+
     if (hasDatabaseConfiguration()) {
       await getDatabasePool().query("SELECT 1");
     } else if (process.env.NODE_ENV === "production") {
@@ -30,7 +33,7 @@ export async function GET() {
       },
     );
   } catch (error) {
-    logUnexpectedServerError("health.database_unavailable", error);
+    logUnexpectedServerError("health.dependencies_unavailable", error);
 
     return Response.json(
       {

@@ -24,6 +24,7 @@ export default defineConfig({
     env: {
       ...process.env,
       APP_BASE_URL: baseURL,
+      ADMINISTRATION_ENABLED: "true",
       AUTH_DEMO_MODE: "enabled",
       DATABASE_URL: testDatabaseUrl,
       DEMO_WEBHOOK_SECRET: "e2e-demo-webhook-secret",

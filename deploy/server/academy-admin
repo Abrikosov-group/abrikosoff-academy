@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly academy_root="/opt/academy"
+readonly shared_root="${academy_root}/shared"
+readonly environment_file="${shared_root}/.env"
+readonly current_link="${academy_root}/current"
+readonly current_image_file="${shared_root}/current-image"
+readonly project_name="academy-abrikosoff"
+readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+
+fail() {
+  printf 'Ошибка административной команды: %s\n' "$*" >&2
+  exit 1
+}
+
+validate_uuid() {
+  [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] \
+    || fail "передан некорректный UUID"
+}
+
+[[ "${EUID}" -eq 0 ]] || fail "wrapper должен запускаться через sudo"
+[[ "$#" -eq 10 ]] || fail "ожидалось ровно 10 аргументов"
+[[ "$1" == "grant" ]] || fail "разрешена только команда grant"
+[[ "$2" == "--user-id" ]] || fail "ожидался --user-id"
+validate_uuid "$3"
+[[ "$4" == "--role" && "$5" == "owner" ]] \
+  || fail "разрешена только роль owner"
+[[ "$6" == "--reason" ]] || fail "ожидался --reason"
+[[ "${#7}" -ge 10 && "${#7}" -le 500 ]] \
+  || fail "некорректная длина причины"
+[[ "$7" != *$'\n'* && "$7" != *$'\r'* && "$7" != *$'\t'* ]] \
+  || fail "причина содержит управляющий символ"
+[[ "$8" == "--idempotency-key" ]] \
+  || fail "ожидался --idempotency-key"
+[[ "$9" =~ ^[A-Za-z0-9_-]{16,64}$ ]] \
+  || fail "некорректный ключ идемпотентности"
+[[ "${10}" == "--production" ]] \
+  || fail "требуется флаг --production"
+
+[[ -L "${current_link}" ]] || fail "текущий релиз не найден"
+release_directory="$(readlink -f "${current_link}")"
+readonly release_directory
+[[ -f "${release_directory}/compose.production.yaml" ]] \
+  || fail "Compose-конфигурация текущего релиза не найдена"
+[[ -f "${environment_file}" ]] || fail "файл окружения не найден"
+[[ -f "${current_image_file}" ]] || fail "текущий образ не найден"
+image_reference="$(<"${current_image_file}")"
+readonly image_reference
+readonly app_version="${image_reference##*:}"
+
+[[ "${image_reference}" == "${image_prefix}"* ]] \
+  || fail "текущий образ не принадлежит Академии"
+[[ "${app_version}" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "тег текущего образа не является SHA релиза"
+
+ACADEMY_IMAGE="${image_reference}" \
+ACADEMY_ENV_FILE="${environment_file}" \
+APP_VERSION="${app_version}" \
+  docker compose \
+    --project-name "${project_name}" \
+    --env-file "${environment_file}" \
+    --file "${release_directory}/compose.production.yaml" \
+    run \
+      --rm \
+      --no-deps \
+      -T \
+      app \
+      node scripts/academy-admin.mjs \
+        grant \
+        --user-id "$3" \
+        --role owner \
+        --reason "$7" \
+        --idempotency-key "$9" \
+        --production

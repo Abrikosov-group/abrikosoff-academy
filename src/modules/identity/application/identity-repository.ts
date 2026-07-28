@@ -2,6 +2,7 @@ import type {
   AuthenticatedUser,
   IdentityMethodType,
   PrivacyConsent,
+  SessionAuthenticationMethod,
 } from "../domain/types";
 
 export type UpsertIdentityInput = {
@@ -38,6 +39,10 @@ export interface IdentityRepository {
     userId: string;
     tokenSha256: string;
     expiresAt: Date;
+    authenticatedAt: Date;
+    authenticationMethod: SessionAuthenticationMethod;
+    authenticationMethodId: string;
+    userAgentFamily?: string;
   }): Promise<void>;
 
   findUserBySessionTokenSha256(

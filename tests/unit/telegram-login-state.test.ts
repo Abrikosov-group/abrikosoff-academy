@@ -30,6 +30,7 @@ describe("Telegram login state", () => {
       consentVersion,
       nonce: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      purpose: "login",
     });
     expect(state.codeChallenge).toBe(
       createHash("sha256")
@@ -133,6 +134,60 @@ describe("Telegram login state", () => {
       expect.objectContaining({
         code: "INVALID_LOGIN",
         httpStatus: 401,
+      }),
+    );
+  });
+
+  it("связывает административное подтверждение с точной сессией", () => {
+    const state = createTelegramLoginState(
+      "/admin",
+      consentVersion,
+      clientSecret,
+      issuedAt,
+      {
+        purpose: "admin",
+        requestedBySessionId:
+          "11111111-1111-4111-8111-111111111111",
+        requestedByUserId:
+          "22222222-2222-4222-8222-222222222222",
+      },
+    );
+
+    expect(
+      verifyTelegramLoginState(
+        state.state,
+        state.cookieValue,
+        consentVersion,
+        clientSecret,
+        issuedAt,
+      ),
+    ).toMatchObject({
+      purpose: "admin",
+      redirectPath: "/admin",
+      requestedBySessionId:
+        "11111111-1111-4111-8111-111111111111",
+      requestedByUserId:
+        "22222222-2222-4222-8222-222222222222",
+    });
+  });
+
+  it("отклоняет административное намерение без UUID сессии", () => {
+    expect(() =>
+      createTelegramLoginState(
+        "/admin",
+        consentVersion,
+        clientSecret,
+        issuedAt,
+        {
+          purpose: "admin",
+          requestedBySessionId: "not-a-session",
+          requestedByUserId:
+            "22222222-2222-4222-8222-222222222222",
+        },
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_LOGIN",
       }),
     );
   });
