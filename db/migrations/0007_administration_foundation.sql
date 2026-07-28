@@ -108,6 +108,11 @@ BEFORE UPDATE OR DELETE ON admin_invariant_locks
 FOR EACH ROW
 EXECUTE FUNCTION prevent_admin_invariant_lock_mutation();
 
+CREATE TRIGGER admin_invariant_locks_no_truncate
+BEFORE TRUNCATE ON admin_invariant_locks
+FOR EACH STATEMENT
+EXECUTE FUNCTION prevent_admin_invariant_lock_mutation();
+
 CREATE TABLE admin_role_assignments (
   id uuid PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES identity_users(id),
@@ -230,6 +235,7 @@ CREATE TABLE admin_command_executions (
       status IN ('succeeded', 'rejected', 'failed')
       AND lease_expires_at IS NULL
       AND completed_at IS NOT NULL
+      AND result_status IS NOT NULL
       AND result_status BETWEEN 100 AND 599
     )
   ),
@@ -319,8 +325,9 @@ CREATE TABLE admin_audit_events (
   CHECK (
     (ip_hmac IS NULL AND ip_hmac_key_version IS NULL)
     OR (
-      ip_hmac ~ '^[0-9a-f]{64}$'
+      ip_hmac IS NOT NULL
       AND ip_hmac_key_version IS NOT NULL
+      AND ip_hmac ~ '^[0-9a-f]{64}$'
       AND ip_hmac_key_version > 0
     )
   ),
@@ -369,6 +376,11 @@ BEFORE UPDATE OR DELETE ON admin_audit_events
 FOR EACH ROW
 EXECUTE FUNCTION prevent_admin_audit_mutation();
 
+CREATE TRIGGER admin_audit_events_no_truncate
+BEFORE TRUNCATE ON admin_audit_events
+FOR EACH STATEMENT
+EXECUTE FUNCTION prevent_admin_audit_mutation();
+
 CREATE FUNCTION prevent_admin_role_assignment_delete()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -382,6 +394,11 @@ $$;
 CREATE TRIGGER admin_role_assignments_no_delete
 BEFORE DELETE ON admin_role_assignments
 FOR EACH ROW
+EXECUTE FUNCTION prevent_admin_role_assignment_delete();
+
+CREATE TRIGGER admin_role_assignments_no_truncate
+BEFORE TRUNCATE ON admin_role_assignments
+FOR EACH STATEMENT
 EXECUTE FUNCTION prevent_admin_role_assignment_delete();
 
 COMMENT ON TABLE admin_role_assignments IS

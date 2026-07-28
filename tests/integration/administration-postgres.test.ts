@@ -591,4 +591,114 @@ describe("Administration с PostgreSQL", () => {
       audit_events: "1",
     });
   });
+
+  it("не сохраняет завершённую команду без result_status", async () => {
+    await expect(
+      pool.query(
+        `
+          INSERT INTO admin_command_executions (
+            id,
+            principal_key,
+            actor_user_id,
+            action,
+            idempotency_key,
+            request_sha256,
+            target_type,
+            target_id,
+            execution_kind,
+            status,
+            result_status,
+            completed_at
+          )
+          VALUES (
+            $1,
+            'system:constraint-test',
+            NULL,
+            'admin.constraint.test',
+            $2,
+            $3,
+            'identity_user',
+            'constraint-test',
+            'internal',
+            'succeeded',
+            NULL,
+            now()
+          )
+        `,
+        [randomUUID(), randomUUID(), "a".repeat(64)],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+    });
+  });
+
+  it("требует согласованную пару IP HMAC и версии ключа", async () => {
+    const invalidPairs = [
+      {
+        ipHmac: null,
+        ipHmacKeyVersion: 1,
+      },
+      {
+        ipHmac: "b".repeat(64),
+        ipHmacKeyVersion: null,
+      },
+    ];
+
+    for (const pair of invalidPairs) {
+      await expect(
+        pool.query(
+          `
+            INSERT INTO admin_audit_events (
+              id,
+              request_id,
+              actor_kind,
+              actor_user_id,
+              action,
+              target_type,
+              target_id,
+              outcome,
+              ip_hmac,
+              ip_hmac_key_version
+            )
+            VALUES (
+              $1,
+              $2,
+              'system',
+              NULL,
+              'admin.constraint.test',
+              'identity_user',
+              'constraint-test',
+              'succeeded',
+              $3,
+              $4
+            )
+          `,
+          [
+            randomUUID(),
+            randomUUID(),
+            pair.ipHmac,
+            pair.ipHmacKeyVersion,
+          ],
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+      });
+    }
+  });
+
+  it("запрещает TRUNCATE неизменяемых административных таблиц", async () => {
+    const protectedTables = [
+      "admin_audit_events",
+      "admin_role_assignments",
+      "admin_invariant_locks",
+    ];
+
+    for (const table of protectedTables) {
+      await expect(
+        pool.query(`TRUNCATE TABLE ${table}`),
+      ).rejects.toMatchObject({
+        code: "55000",
+      });
+    }
+  });
 });
