@@ -1,5 +1,11 @@
 import "server-only";
 
+import { Buffer } from "node:buffer";
+import {
+  createRemoteJWKSet,
+  customFetch as joseCustomFetch,
+  jwtVerify,
+} from "jose";
 import * as oidc from "openid-client";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import type { IdentityConfig } from "./identity-config";
@@ -13,6 +19,8 @@ type TelegramConfig = NonNullable<IdentityConfig["telegram"]>;
 
 type CachedConfiguration = TelegramConfig & {
   configuration: oidc.Configuration;
+  jwks: ReturnType<typeof createRemoteJWKSet>;
+  telegramFetch: typeof undiciFetch;
 };
 
 const temporaryTransportErrorCodes = new Set([
@@ -26,6 +34,7 @@ const temporaryTransportErrorCodes = new Set([
   "ENOTFOUND",
   "ETIMEDOUT",
   "ERR_TLS_CERT_ALTNAME_INVALID",
+  "ERR_JWKS_TIMEOUT",
   "SELF_SIGNED_CERT_IN_CHAIN",
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
   "UND_ERR_CONNECT_TIMEOUT",
@@ -79,21 +88,21 @@ function configurationFor(config: TelegramConfig) {
   );
 
   configuration.timeout = 10;
+  const dispatcher = config.proxyUrl
+    ? new ProxyAgent(config.proxyUrl)
+    : undefined;
+  const telegramFetch = ((
+    input: Parameters<typeof undiciFetch>[0],
+    init?: Parameters<typeof undiciFetch>[1],
+  ) =>
+    undiciFetch(input, {
+      ...init,
+      ...(dispatcher ? { dispatcher } : {}),
+    })) as typeof undiciFetch;
 
-  if (config.proxyUrl) {
-    const dispatcher = new ProxyAgent(config.proxyUrl);
-
-    const proxyFetch = (
-      input: Parameters<typeof undiciFetch>[0],
-      init?: Parameters<typeof undiciFetch>[1],
-    ) =>
-      undiciFetch(input, {
-        ...init,
-        dispatcher,
-      });
-
+  if (dispatcher) {
     configuration[oidc.customFetch] =
-      proxyFetch as unknown as NonNullable<
+      telegramFetch as unknown as NonNullable<
         (typeof configuration)[typeof oidc.customFetch]
       >;
   }
@@ -101,8 +110,35 @@ function configurationFor(config: TelegramConfig) {
   cachedConfiguration = {
     ...config,
     configuration,
+    jwks: createRemoteJWKSet(
+      new URL(telegramServerMetadata.jwks_uri!),
+      {
+        [joseCustomFetch]: async (url, options) => {
+          const response = await telegramFetch(
+            url,
+            options as Parameters<typeof undiciFetch>[1],
+          );
+
+          if (response.status >= 500) {
+            throw Object.assign(
+              new Error("Telegram JWKS is temporarily unavailable."),
+              { status: response.status },
+            );
+          }
+
+          return response as unknown as Response;
+        },
+        timeoutDuration: 10_000,
+      },
+    ),
+    telegramFetch,
   };
   return configuration;
+}
+
+function runtimeFor(config: TelegramConfig) {
+  configurationFor(config);
+  return cachedConfiguration!;
 }
 
 function isTemporaryTransportError(
@@ -146,7 +182,10 @@ function isTemporaryTransportError(
       ? candidate.status
       : candidate.statusCode;
 
-  if (typeof status === "number" && status >= 500 && status <= 599) {
+  if (
+    typeof status === "number" &&
+    (status === 429 || (status >= 500 && status <= 599))
+  ) {
     return true;
   }
 
@@ -162,6 +201,95 @@ function isTemporaryTransportError(
   return isTemporaryTransportError(candidate.cause, visited);
 }
 
+function invalidTelegramLogin(cause?: unknown) {
+  return new IdentityError(
+    "INVALID_LOGIN",
+    "Telegram не подтвердил вход.",
+    401,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function telegramAudienceMatches(
+  audience: unknown,
+  clientId: string,
+) {
+  // Telegram Client ID is decimal. Accept a numeric `aud` only when its
+  // exact safe-integer representation matches the configured Client ID.
+  const matches = (value: unknown) =>
+    value === clientId ||
+    (typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      String(value) === clientId);
+
+  return Array.isArray(audience)
+    ? audience.length === 1 && matches(audience[0])
+    : matches(audience);
+}
+
+async function exchangeCodeForIdToken(
+  runtime: CachedConfiguration,
+  code: string,
+  codeVerifier: string,
+) {
+  // Telegram exposes all requested identity claims in the ID token. The
+  // manual exchange keeps compatibility with its token response while the
+  // caller still verifies signature, issuer, audience, expiry and nonce.
+  const response = await runtime.telegramFetch(
+    telegramServerMetadata.token_endpoint!,
+    {
+      body: new URLSearchParams({
+        client_id: runtime.clientId,
+        code,
+        code_verifier: codeVerifier,
+        grant_type: "authorization_code",
+        redirect_uri: runtime.redirectUri,
+      }),
+      headers: {
+        authorization: `Basic ${Buffer.from(
+          `${runtime.clientId}:${runtime.clientSecret}`,
+        ).toString("base64")}`,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      method: "POST",
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (response.status === 429 || response.status >= 500) {
+    throw Object.assign(
+      new Error("Telegram token endpoint is temporarily unavailable."),
+      { status: response.status },
+    );
+  }
+
+  if (!response.ok) {
+    throw invalidTelegramLogin();
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw invalidTelegramLogin(error);
+  }
+
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("id_token" in payload) ||
+    typeof payload.id_token !== "string" ||
+    payload.id_token.length === 0 ||
+    payload.id_token.length > 16_384
+  ) {
+    throw invalidTelegramLogin();
+  }
+
+  return payload.id_token;
+}
+
 export function buildTelegramAuthorizationUrl(
   config: TelegramConfig,
   input: {
@@ -170,7 +298,7 @@ export function buildTelegramAuthorizationUrl(
     codeChallenge: string;
   },
 ) {
-  return oidc.buildAuthorizationUrl(configurationFor(config), {
+  return oidc.buildAuthorizationUrl(runtimeFor(config).configuration, {
     redirect_uri: config.redirectUri,
     response_type: "code",
     scope: "openid profile",
@@ -185,28 +313,46 @@ export async function exchangeTelegramAuthorizationCode(
   config: TelegramConfig,
   currentUrl: URL,
   input: {
-    state: string;
     nonce: string;
     codeVerifier: string;
   },
 ): Promise<VerifiedTelegramIdentity> {
-  const callbackUrl = new URL(config.redirectUri);
-  callbackUrl.search = currentUrl.search;
-
-  let tokens: Awaited<ReturnType<typeof oidc.authorizationCodeGrant>>;
-
   try {
-    tokens = await oidc.authorizationCodeGrant(
-      configurationFor(config),
-      callbackUrl,
-      {
-        expectedState: input.state,
-        expectedNonce: input.nonce,
-        pkceCodeVerifier: input.codeVerifier,
-        idTokenExpected: true,
-      },
+    const code = currentUrl.searchParams.get("code");
+
+    if (!code || currentUrl.searchParams.getAll("code").length !== 1) {
+      throw invalidTelegramLogin();
+    }
+
+    const runtime = runtimeFor(config);
+    const idToken = await exchangeCodeForIdToken(
+      runtime,
+      code,
+      input.codeVerifier,
+    );
+    const { payload } = await jwtVerify(idToken, runtime.jwks, {
+      algorithms: ["RS256"],
+      clockTolerance: 5,
+      issuer: telegramServerMetadata.issuer,
+      maxTokenAge: "10m",
+      requiredClaims: ["sub", "iat", "exp", "nonce"],
+    });
+
+    if (
+      payload.nonce !== input.nonce ||
+      !telegramAudienceMatches(payload.aud, config.clientId)
+    ) {
+      throw invalidTelegramLogin();
+    }
+
+    return telegramIdentityFromClaims(
+      payload as unknown as oidc.IDToken,
     );
   } catch (error) {
+    if (error instanceof IdentityError) {
+      throw error;
+    }
+
     if (isTemporaryTransportError(error)) {
       throw new IdentityError(
         "AUTH_UNAVAILABLE",
@@ -216,18 +362,6 @@ export async function exchangeTelegramAuthorizationCode(
       );
     }
 
-    throw error;
+    throw invalidTelegramLogin(error);
   }
-
-  const claims = tokens.claims();
-
-  if (!claims) {
-    throw new IdentityError(
-      "INVALID_LOGIN",
-      "Telegram не вернул подтверждение личности.",
-      401,
-    );
-  }
-
-  return telegramIdentityFromClaims(claims);
 }
