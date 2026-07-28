@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-e2e/
 /out/
 
 # production
@@ -44,3 +45,11 @@ next-env.d.ts
 
 # local infrastructure data
 /.data/
+
+# local visual QA artifacts
+/.artifacts/
+/design-qa.md
+
+# browser test artifacts
+/playwright-report/
+/test-results/

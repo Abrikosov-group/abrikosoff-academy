@@ -8,6 +8,9 @@ FROM base AS dependencies
 COPY package.json package-lock.json ./
 RUN npm ci --strict-allow-scripts
 
+FROM dependencies AS production-dependencies
+RUN npm prune --omit=dev
+
 FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
@@ -24,11 +27,14 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs nextjs \
   && mkdir -p /app/.next/cache \
-  && chown -R nextjs:nodejs /app
+    && chown -R nextjs:nodejs /app
 
+COPY --from=production-dependencies --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/db ./db
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 
 USER nextjs
 

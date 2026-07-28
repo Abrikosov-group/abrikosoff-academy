@@ -2,11 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRightIcon,
-  MoonStarsIcon,
-  SparkleIcon,
-} from "@phosphor-icons/react";
 import { useState } from "react";
 
 type Filter = "all" | "available" | "coming";
@@ -53,11 +48,11 @@ export function CourseCatalog() {
 
       <div className="catalog-grid">
         {showAvailable ? (
-          <article className="catalog-card">
+          <Link className="catalog-card" href="/courses/healthy-habits">
             <div className="catalog-card-cover">
               <Image
-                src="/images/academy-morning-routine.png"
-                alt="Утренний стол с блокнотом и чаем"
+                src="/images/course-cover-abstract.png"
+                alt=""
                 fill
                 priority
                 sizes="(max-width: 767px) 100vw, 33vw"
@@ -69,22 +64,11 @@ export function CourseCatalog() {
               <p>
                 Система на каждый день: сон, питание, движение и внимание.
               </p>
-              <div className="catalog-progress-copy">
-                <span>Первый урок открыт</span>
-                <span>12 уроков</span>
-              </div>
-              <div className="catalog-progress" aria-hidden="true">
-                <span />
-              </div>
-              <Link
-                className="text-link catalog-card-link"
-                href="/courses/healthy-habits"
-              >
-                Открыть курс
-                <ArrowRightIcon aria-hidden="true" size={18} />
-              </Link>
+              <span className="catalog-coming-note">
+                12 уроков · 6 разделов
+              </span>
             </div>
-          </article>
+          </Link>
         ) : null}
 
         {showComing ? (
@@ -92,11 +76,6 @@ export function CourseCatalog() {
             <article className="catalog-card catalog-card-coming">
               <div className="catalog-icon">
                 <span className="badge badge-neutral">Скоро · август</span>
-                <MoonStarsIcon
-                  aria-hidden="true"
-                  size={54}
-                  weight="duotone"
-                />
               </div>
               <div className="catalog-card-body">
                 <h2>Сон: восстановление как навык</h2>
@@ -110,13 +89,8 @@ export function CourseCatalog() {
             </article>
 
             <article className="catalog-card catalog-card-coming">
-              <div className="catalog-icon catalog-icon-gold">
+              <div className="catalog-icon">
                 <span className="badge badge-neutral">Скоро · осень</span>
-                <SparkleIcon
-                  aria-hidden="true"
-                  size={54}
-                  weight="duotone"
-                />
               </div>
               <div className="catalog-card-body">
                 <h2>Питание без крайностей</h2>

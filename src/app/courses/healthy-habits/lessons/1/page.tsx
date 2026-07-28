@@ -1,108 +1,142 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowLeftIcon,
-  BookOpenTextIcon,
-  ClockIcon,
-  ListIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { redirect } from "next/navigation";
+import { ArrowLeftIcon, CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 import { LessonCompleteButton } from "@/components/academy/lesson-complete-button";
+import { getAccessContext } from "@/modules/access/server/get-access-context";
+import { loginPathFor } from "@/modules/identity/domain/login-redirect";
 
 export const metadata: Metadata = {
-  title: "Урок 1. Маленький шаг",
-  description: "Первый урок курса «Здоровые привычки».",
+  title: "Утренний якорь",
+  description: "Текстовый урок курса «Здоровые привычки».",
 };
 
-export default function FirstLessonPage() {
+export default async function FirstLessonPage() {
+  const access = await getAccessContext();
+
+  if (!access.user) {
+    redirect(loginPathFor("/courses/healthy-habits/lessons/1"));
+  }
+
+  if (!access.canReadCourses) {
+    redirect("/pricing");
+  }
+
   return (
-    <main className="lesson-shell">
-      <header className="lesson-header">
-        <Link className="lesson-brand" href="/dashboard">
-          <Image
-            src="/brand/logo-horizontal.svg"
-            alt="Академия Абрикософф"
-            width={384}
-            height={100}
-            priority
-          />
+    <main className="lesson-page">
+      <header className="lesson-topbar">
+        <Link href="/dashboard" aria-label="Вернуться к курсу">
+          <ArrowLeftIcon aria-hidden="true" size={20} />
+          <span>Здоровые привычки</span>
         </Link>
-        <span>Урок 1 из 12</span>
-        <Link
-          className="icon-link"
-          href="/courses/healthy-habits"
-          aria-label="Содержание курса"
-        >
-          <ListIcon aria-hidden="true" size={23} />
-        </Link>
+        <div>
+          <span>Материал курса · 7 минут</span>
+          <a href="#course-content">Содержание</a>
+        </div>
       </header>
 
       <div className="lesson-layout">
-        <aside className="lesson-sidebar">
-          <Link href="/courses/healthy-habits">
-            <ArrowLeftIcon aria-hidden="true" size={18} />
-            К курсу
-          </Link>
-          <p className="overline">Модуль 1</p>
-          <h2>Начинаем с опоры</h2>
-          <ol>
-            <li className="active">Маленький шаг, который останется</li>
-            <li>Ваша точка старта</li>
-            <li>Среда вместо силы воли</li>
-          </ol>
+        <aside className="lesson-sidebar" id="course-content">
+          <h2>Здоровые привычки: система на каждый день</h2>
+          <div className="lesson-course-progress">
+            <p>
+              <span>12 уроков</span>
+              <span>6 разделов</span>
+            </p>
+          </div>
+          <nav aria-label="Содержание курса">
+            <strong>Раздел 1. Основы</strong>
+            <strong className="active">Раздел 2. Утренний распорядок</strong>
+            <Link href="#">
+              Сигналы и награды <small>6 мин</small>
+            </Link>
+            <Link className="current" href="#">
+              Утренний якорь <small>7 мин</small>
+            </Link>
+            <Link href="#">
+              Вечерняя рутина <small>6 мин</small>
+            </Link>
+            <strong>Раздел 3. Питание и энергия</strong>
+            <strong>Раздел 4. Движение</strong>
+            <strong>Раздел 5. Сон</strong>
+            <strong>Раздел 6. Система целиком</strong>
+          </nav>
         </aside>
 
         <article className="lesson-content">
-          <div className="lesson-breadcrumbs">
-            <BookOpenTextIcon aria-hidden="true" size={19} />
-            Здоровые привычки · Модуль 1
-          </div>
-          <h1>Маленький шаг, который останется</h1>
-          <div className="lesson-meta">
-            <ClockIcon aria-hidden="true" size={18} />
-            5 минут чтения
-          </div>
+          <p className="overline">
+            Раздел 2 · Утренний распорядок
+          </p>
+          <h1>Утренний якорь: с чего начинается система</h1>
+          <p className="lesson-meta">
+            7 минут чтения · обновлён 12 июля 2026
+          </p>
 
           <div className="lesson-prose">
             <p className="lesson-lead">
-              Устойчивая привычка начинается не с силы воли, а с действия,
-              которое настолько посильно, что ему легко найти место в обычном
-              дне.
-            </p>
-            <h2>Почему мы начинаем с малого</h2>
-            <p>
-              Когда новая цель требует слишком много времени и внимания, мозг
-              быстро записывает её в категорию «сложно». Первые несколько дней
-              могут держаться на энтузиазме, но затем вмешиваются работа,
-              усталость и неожиданные дела.
-            </p>
-            <p>
-              Наша задача — выбрать минимальную версию полезного действия. Не
-              час тренировки, а пять минут движения. Не идеальный рацион, а
-              один понятный завтрак. Такой шаг создаёт повторение, а повторение
-              постепенно становится опорой.
+              Самая частая ошибка при построении привычек — надеяться на силу
+              воли. Она заканчивается раньше, чем день. Вместо этого мы
+              построим систему, которая начинается с одного маленького
+              утреннего действия — якоря.
             </p>
 
-            <div className="lesson-quote">
-              <p>
-                Хорошая первая привычка выглядит почти слишком простой. Именно
-                поэтому у неё есть шанс остаться.
-              </p>
-            </div>
+            <h2>Почему якорь работает</h2>
+            <p>
+              Якорь — это привязка нового действия к{" "}
+              <a href="#anchor">уже существующему распорядку</a>. Сигналом
+              становится сама жизнь:{" "}
+              <strong>
+                после того как я налью утренний чай — я открою блокнот
+              </strong>
+              . Телефон и напоминания больше не нужны.
+            </p>
+            <ul>
+              <li>сигнал — событие, которое уже происходит каждый день;</li>
+              <li>действие — короче двух минут;</li>
+              <li>награда — заметная сразу.</li>
+            </ul>
 
-            <h2>Практика на сегодня</h2>
+            <figure className="lesson-image">
+              <Image
+                src="/images/academy-morning-routine.png"
+                alt="Утренний стол с блокнотом и чаем"
+                width={1536}
+                height={1024}
+                sizes="(max-width: 767px) 100vw, 680px"
+              />
+              <figcaption>
+                Якорь может быть простым предметом — блокнот рядом с чайником.
+              </figcaption>
+            </figure>
+
+            <blockquote>
+              <span>«</span>
+              <div>
+                <p>
+                  Мы не поднимаемся до уровня своих целей — мы опускаемся до
+                  уровня своих систем.
+                </p>
+                <cite>Джеймс Клир, «Атомные привычки»</cite>
+              </div>
+            </blockquote>
+
             <div className="lesson-task">
-              <span>Задание</span>
-              <h3>Выберите действие на две минуты</h3>
+              <CheckCircleIcon aria-hidden="true" size={20} weight="fill" />
               <p>
-                Запишите одну привычку, которую хотите развить, и её самую
-                маленькую версию. Формулировка должна начинаться с глагола:
-                «выпить стакан воды», «пройтись пять минут», «открыть дневник».
+                <strong>Задание на сегодня.</strong> Выберите один якорь и
+                запишите его формулой «после X — я сделаю Y».
               </p>
             </div>
           </div>
 
-          <LessonCompleteButton />
+          <div className="lesson-navigation">
+            <Link href="/courses/healthy-habits">
+              <ArrowLeftIcon aria-hidden="true" size={18} />
+              К описанию курса
+            </Link>
+            <LessonCompleteButton />
+          </div>
         </article>
       </div>
     </main>

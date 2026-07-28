@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { TelegramLogoIcon } from "@phosphor-icons/react/dist/ssr";
+import { legalDetails } from "@/config/legal";
 
 export function SiteFooter() {
   return (
@@ -14,43 +15,43 @@ export function SiteFooter() {
             height={100}
           />
           <p>
-            Практические знания для устойчивых изменений — спокойно и по
-            системе.
+            Продавец — {legalDetails.seller.shortName}. Оплата через защищённую
+            страницу {legalDetails.payments.provider}.
           </p>
         </div>
 
         <div>
           <p className="footer-heading">Академия</p>
           <nav aria-label="Навигация в подвале">
-            <Link href="/courses">Курсы</Link>
+            <Link href="/courses">Каталог</Link>
             <Link href="/pricing">Тарифы</Link>
-            <Link href="/dashboard">Личный кабинет</Link>
+            <Link href="/#about">Об Академии</Link>
           </nav>
         </div>
 
         <div>
-          <p className="footer-heading">Помощь</p>
-          <nav aria-label="Поддержка">
+          <p className="footer-heading">Документы</p>
+          <nav aria-label="Документы">
+            <Link href="/terms">Оферта</Link>
+            <Link href="/privacy">Конфиденциальность</Link>
+          </nav>
+        </div>
+
+        <div>
+          <p className="footer-heading">Поддержка</p>
+          <nav aria-label="Контакты поддержки">
             <a
-              href="https://t.me/AbrikosoffBot"
+              href={legalDetails.contacts.telegramUrl}
               rel="noreferrer"
               target="_blank"
             >
               <TelegramLogoIcon aria-hidden="true" size={18} />
-              @AbrikosoffBot
+              {legalDetails.contacts.telegram}
             </a>
-            <a href="mailto:support@abrikosoff.com">
-              support@abrikosoff.com
+            <a href={`mailto:${legalDetails.contacts.supportEmail}`}>
+              {legalDetails.contacts.supportEmail}
             </a>
           </nav>
-        </div>
-      </div>
-
-      <div className="page-shell footer-bottom">
-        <span>© 2026 Академия Абрикософф</span>
-        <div>
-          <Link href="/terms">Оферта</Link>
-          <Link href="/privacy">Политика конфиденциальности</Link>
         </div>
       </div>
     </footer>

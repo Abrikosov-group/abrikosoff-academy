@@ -3,25 +3,50 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { LoginPanel } from "@/components/academy/login-panel";
+import { isSubscriptionPlanId } from "@/modules/billing/domain/catalog";
+import {
+  checkoutRedirectPath,
+  normalizeLoginRedirectPath,
+} from "@/modules/identity/domain/login-redirect";
+import { getIdentityConfig } from "@/modules/identity/server/identity-config";
 
 export const metadata: Metadata = {
   title: "Вход",
-  description: "Вход в Академию через Telegram или электронную почту.",
+  description: "Безопасный вход в Академию Абрикософф.",
 };
 
 type LoginPageProps = {
-  searchParams: Promise<{ plan?: string }>;
+  searchParams: Promise<{
+    plan?: string;
+    next?: string;
+    error?: string;
+  }>;
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { plan } = await searchParams;
-  const selectedPlan = plan === "monthly" ? "monthly" : "annual";
+  const { plan, next, error } = await searchParams;
+  const purchasePlan = isSubscriptionPlanId(plan) ? plan : undefined;
+  const redirectPath = purchasePlan
+    ? checkoutRedirectPath(purchasePlan)
+    : normalizeLoginRedirectPath(next);
+  const identityConfig = getIdentityConfig();
+  let telegram:
+    | {
+        botUsername: string;
+      }
+    | undefined;
+
+  if (identityConfig.telegram) {
+    telegram = {
+      botUsername: identityConfig.telegram.botUsername,
+    };
+  }
 
   return (
     <main className="auth-page">
-      <Link className="back-link" href="/pricing">
+      <Link className="back-link" href={purchasePlan ? "/pricing" : "/"}>
         <ArrowLeftIcon aria-hidden="true" size={18} />
-        Назад к тарифам
+        {purchasePlan ? "Назад к тарифам" : "На главную"}
       </Link>
 
       <section className="auth-card" aria-labelledby="login-title">
@@ -34,14 +59,22 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             priority
           />
         </Link>
-        <p className="overline">Академия Абрикософф</p>
         <h1 id="login-title">Вход в Академию</h1>
         <p className="auth-intro">
-          Если вы здесь впервые — аккаунт создастся автоматически. После входа
-          продолжим оформление{" "}
-          {selectedPlan === "annual" ? "годовой" : "месячной"} подписки.
+          Если вы здесь впервые — аккаунт создастся автоматически.
         </p>
-        <LoginPanel plan={selectedPlan} />
+        {error ? (
+          <p className="field-error auth-page-error" role="alert">
+            Ссылка для входа недействительна или устарела. Попробуйте ещё раз.
+          </p>
+        ) : null}
+        <LoginPanel
+          redirectPath={redirectPath}
+          purchasing={Boolean(purchasePlan)}
+          demoAuthEnabled={identityConfig.demoAuthEnabled}
+          emailAuthEnabled={identityConfig.emailAuthMode === "demo"}
+          telegram={telegram}
+        />
       </section>
     </main>
   );

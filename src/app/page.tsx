@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRightIcon,
-  BookOpenTextIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  SparkleIcon,
-} from "@phosphor-icons/react/dist/ssr";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 import { SiteFooter } from "@/components/academy/site-footer";
-import { SiteHeader } from "@/components/academy/site-header";
+import { AuthenticatedSiteHeader } from "@/components/academy/authenticated-site-header";
 
 export const metadata: Metadata = {
   title: "Здоровые привычки — спокойно и по системе",
@@ -33,16 +27,43 @@ const benefits = [
 ];
 
 const included = [
-  "Все курсы библиотеки — одна подписка открывает всё.",
-  "Новые материалы каждый месяц — без доплат.",
-  "Прогресс и продолжение — вернётесь туда, где остановились.",
-  "Отмена в один клик — доступ до конца оплаченного периода.",
+  {
+    title: "Все курсы библиотеки",
+    text: "одна подписка открывает всё.",
+  },
+  {
+    title: "Новые материалы каждый месяц",
+    text: "без доплат.",
+  },
+  {
+    title: "Короткие текстовые уроки",
+    text: "по 5–10 минут в удобном темпе.",
+  },
+  {
+    title: "Без повторных списаний",
+    text: "оплачиваете только выбранный период.",
+  },
+];
+
+const comingCourses = [
+  {
+    title: "Сон: восстановление как навык",
+    text: "Режим, среда и вечерние ритуалы.",
+  },
+  {
+    title: "Питание без крайностей",
+    text: "Спокойные отношения с едой.",
+  },
+  {
+    title: "Внимание и фокус",
+    text: "Работа без постоянных отвлечений.",
+  },
 ];
 
 export default function HomePage() {
   return (
     <main>
-      <SiteHeader />
+      <AuthenticatedSiteHeader />
 
       <section className="home-hero" aria-labelledby="home-title">
         <div className="page-shell home-hero-grid">
@@ -66,20 +87,27 @@ export default function HomePage() {
               </Link>
             </div>
             <p className="hero-note">
-              От 1 167 ₽ в месяц · отмена продления в один клик
+              От 1 167 ₽ в месяц · без автоматического продления
             </p>
           </div>
 
           <div className="hero-photo">
             <Image
               src="/images/academy-morning-routine.png"
-              alt="Утренний стол с блокнотом, чаем и веточкой зелени"
-              width={1536}
-              height={1024}
+              alt="Утренний стол с блокнотом и чаем"
+              fill
               priority
-              loading="eager"
-              sizes="(max-width: 767px) 100vw, 46vw"
+              sizes="(max-width: 767px) 100vw, 480px"
             />
+          </div>
+
+          <div className="home-about" id="about">
+            <h2>Что такое Академия</h2>
+            <p>
+              Это авторская образовательная среда: последовательные курсы без
+              инфошума и обещаний «результата за неделю». Мы объясняем, как
+              устроены привычки, и помогаем встроить их в обычную жизнь.
+            </p>
           </div>
 
           <div className="benefit-grid" aria-label="Для кого Академия">
@@ -95,150 +123,113 @@ export default function HomePage() {
 
       <section className="included-section" aria-labelledby="included-title">
         <div className="page-shell included-grid">
-          <div>
-            <p className="overline overline-light">Одна подписка</p>
-            <h2 id="included-title">Что входит в подписку</h2>
-          </div>
+          <h2 id="included-title">Что входит в подписку</h2>
           <ul className="included-list">
             {included.map((item) => (
-              <li key={item}>
-                <CheckCircleIcon aria-hidden="true" size={22} weight="fill" />
-                <span>{item}</span>
+              <li key={item.title}>
+                <CheckCircleIcon aria-hidden="true" size={20} weight="fill" />
+                <span>
+                  <strong>{item.title}</strong> — {item.text}
+                </span>
               </li>
             ))}
           </ul>
         </div>
       </section>
 
-      <section className="section page-shell" id="courses">
-        <div className="section-heading">
-          <div>
-            <p className="overline">Курсы Академии</p>
-            <h2>Начните с первого курса</h2>
-          </div>
-          <Link className="text-link" href="/courses">
-            Каталог <ArrowRightIcon aria-hidden="true" size={18} />
-          </Link>
+      <section className="home-courses page-shell" aria-labelledby="courses-title">
+        <div className="home-section-heading">
+          <h2 id="courses-title">Курсы</h2>
+          <Link href="/courses">Весь каталог</Link>
         </div>
 
         <div className="home-course-grid">
-          <article className="featured-course">
-            <div className="course-cover course-cover-photo">
+          <Link
+            className="home-course-card"
+            href="/courses/healthy-habits"
+          >
+            <div className="home-course-cover">
               <Image
-                src="/images/academy-morning-routine.png"
+                src="/images/course-cover-abstract.png"
                 alt=""
                 fill
-                loading="eager"
-                sizes="(max-width: 767px) 100vw, 55vw"
+                sizes="(max-width: 767px) 100vw, 285px"
               />
               <span className="badge badge-warm">Первый курс</span>
             </div>
-            <div className="course-body">
-              <p className="overline">Курс Академии</p>
+            <div>
               <h3>Здоровые привычки</h3>
-              <p>
-                Система на каждый день: сон, питание, движение и внимание —
-                маленькими шагами.
-              </p>
-              <div className="course-meta">
-                <span>
-                  <BookOpenTextIcon aria-hidden="true" size={18} /> 12 уроков
-                </span>
-                <span>
-                  <ClockIcon aria-hidden="true" size={18} /> 5–10 минут
-                </span>
-              </div>
-              <Link
-                className="button button-secondary button-inline"
-                href="/courses/healthy-habits"
-              >
-                О курсе
-              </Link>
+              <p>Система на каждый день — маленькими шагами.</p>
+              <small>12 уроков · 6 разделов</small>
             </div>
-          </article>
-
-          <div className="coming-course-list">
-            <article className="coming-course-card">
-              <div className="coming-course-visual" aria-hidden="true">
-                <Image
-                  src="/brand/logo-mark.svg"
-                  alt=""
-                  width={72}
-                  height={72}
-                />
-              </div>
-              <div>
-                <span className="badge badge-neutral">Скоро</span>
-                <h3>Сон: восстановление как навык</h3>
-                <p>Режим, среда и вечерние ритуалы без борьбы с собой.</p>
-              </div>
-            </article>
-            <article className="coming-course-card">
-              <div className="coming-course-visual" aria-hidden="true">
-                <SparkleIcon size={56} weight="duotone" />
-              </div>
-              <div>
-                <span className="badge badge-neutral">Скоро</span>
-                <h3>Питание без крайностей</h3>
-                <p>Спокойные отношения с едой — без диет и запретов.</p>
-              </div>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section className="pricing-preview" id="pricing">
-        <div className="page-shell pricing-preview-grid">
-          <div>
-            <p className="overline">Подписка</p>
-            <h2>Вся Академия — по одному тарифу</h2>
-            <p>Все текущие и будущие курсы входят в подписку без доплат.</p>
-          </div>
-          <div className="price-summary">
-            <span className="badge badge-success">−22% · выгода 4 000 ₽</span>
-            <p>Годовой</p>
-            <strong>14 000 ₽</strong>
-            <span>≈ 1 167 ₽ в месяц</span>
-          </div>
-          <div className="price-summary price-summary-secondary">
-            <p>Месячный</p>
-            <strong>1 500 ₽</strong>
-            <span>в месяц</span>
-          </div>
-          <Link className="button button-primary" href="/pricing">
-            Смотреть тарифы
           </Link>
+
+          {comingCourses.map((course) => (
+            <article className="home-course-card is-coming" key={course.title}>
+              <div className="home-course-cover">
+                <span className="badge badge-neutral">Скоро</span>
+              </div>
+              <div>
+                <h3>{course.title}</h3>
+                <p>{course.text}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+        <p className="home-course-note">
+          Библиотека пополняется каждый месяц — новые курсы и уроки сразу
+          входят в подписку.
+        </p>
+      </section>
+
+      <section className="home-pricing page-shell" aria-labelledby="home-pricing">
+        <div>
+          <h2 id="home-pricing">Одна подписка — вся Академия</h2>
+          <p>
+            Годовой тариф — 14 000 ₽ (выгода 4 000 ₽, −22%), месячный —
+            1 500 ₽. Это разовая оплата выбранного периода без повторных
+            списаний.
+          </p>
+          <div className="home-pricing-actions">
+            <Link className="button button-primary" href="/pricing">
+              Смотреть тарифы
+            </Link>
+            <Link href="/terms">Условия подписки</Link>
+          </div>
+        </div>
+        <div className="home-price-card">
+          <span className="badge badge-success">−22% · выгода 4 000 ₽</span>
+          <div>
+            <strong>Годовой</strong>
+            <b>14 000 ₽<small>/год</small></b>
+          </div>
+          <div>
+            <strong>Месячный</strong>
+            <b>1 500 ₽<small>/мес</small></b>
+          </div>
         </div>
       </section>
 
-      <section className="section page-shell faq-section" id="about">
-        <div className="section-heading">
-          <div>
-            <p className="overline">Коротко и ясно</p>
-            <h2>Частые вопросы</h2>
-          </div>
-        </div>
+      <section className="home-faq page-shell" aria-labelledby="faq-title">
+        <h2 id="faq-title">Частые вопросы</h2>
         <div className="faq-list">
           <details open>
-            <summary>Как отменить продление?</summary>
+            <summary>Что будет после окончания оплаченного периода?</summary>
             <p>
-              В кабинете, в разделе «Подписка», одним нажатием. Доступ
-              сохранится до конца оплаченного периода.
+              Доступ закроется автоматически. Когда захотите вернуться,
+              выбранный период можно оплатить снова.
             </p>
           </details>
           <details>
             <summary>Как войти без Telegram?</summary>
             <p>
-              Укажите электронную почту — мы пришлём одноразовую ссылку для
-              входа. Пароль не потребуется.
+              На запуске вход работает через Telegram. Вход по электронной
+              почте добавим после подключения сервиса отправки писем.
             </p>
           </details>
           <details>
             <summary>Что будет с прогрессом после отмены?</summary>
-            <p>
-              Прогресс останется в кабинете. После возобновления подписки вы
-              продолжите с того же места.
-            </p>
+            <p>Он сохранится, и после возвращения можно продолжить чтение.</p>
           </details>
         </div>
       </section>

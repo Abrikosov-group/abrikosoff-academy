@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { CourseCatalog } from "@/components/academy/course-catalog";
 import { SiteFooter } from "@/components/academy/site-footer";
-import { SiteHeader } from "@/components/academy/site-header";
+import { AuthenticatedSiteHeader } from "@/components/academy/authenticated-site-header";
 
 export const metadata: Metadata = {
   title: "Курсы",
@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default function CoursesPage() {
   return (
     <main>
-      <SiteHeader />
+      <AuthenticatedSiteHeader />
       <section className="inner-page catalog-page">
         <div className="page-shell">
           <CourseCatalog />

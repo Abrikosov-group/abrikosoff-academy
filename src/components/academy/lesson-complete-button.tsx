@@ -1,34 +1,20 @@
-"use client";
-
-import { CheckCircleIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import Link from "next/link";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 
 export function LessonCompleteButton() {
-  const [completed, setCompleted] = useState(false);
-
   return (
     <div className="lesson-complete">
-      <button
-        className={
-          completed
-            ? "button button-success"
-            : "button button-primary"
-        }
-        type="button"
-        onClick={() => setCompleted(true)}
+      <Link
+        className="button button-primary"
+        href="/dashboard"
       >
         <CheckCircleIcon
           aria-hidden="true"
           size={21}
-          weight={completed ? "fill" : "regular"}
+          weight="regular"
         />
-        {completed ? "Урок завершён" : "Отметить урок как пройденный"}
-      </button>
-      {completed ? (
-        <p role="status">
-          Отличное начало. Следующий урок откроется в полной версии курса.
-        </p>
-      ) : null}
+        Вернуться в кабинет
+      </Link>
     </div>
   );
 }
