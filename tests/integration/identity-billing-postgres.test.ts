@@ -19,6 +19,7 @@ import type {
 } from "@/modules/billing/domain/payment-provider";
 import { PostgresPaymentRepository } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import {
+  getCustomerOrderHistory,
   getSubscriptionSummary,
 } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import {
@@ -290,6 +291,18 @@ describe("Identity и Billing с PostgreSQL", () => {
       );
 
     expect(storedCheckout).not.toBeNull();
+    await expect(
+      getCustomerOrderHistory(pool, session.user.id),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: storedCheckout!.orderId,
+        planId: "monthly",
+        status: "pending",
+        amountMinor: 150_000,
+        currency: "RUB",
+        provider: "demo",
+      }),
+    ]);
 
     const paymentEvent = {
       provider: "demo" as const,
@@ -319,6 +332,15 @@ describe("Identity и Billing с PostgreSQL", () => {
       autoRenew: false,
     });
     expect(activeSubscription?.currentPeriodEnd).toBeTruthy();
+    await expect(
+      getCustomerOrderHistory(pool, session.user.id),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: storedCheckout!.orderId,
+        status: "paid",
+        paidAt: paymentEvent.occurredAt,
+      }),
+    ]);
     await expect(
       service.createCheckout({
         ...command,

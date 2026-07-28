@@ -166,17 +166,97 @@ test("вход, оплата и доступ к уроку работают ка
     timeout: 15_000,
   });
 
-  const myCoursesLink = page.getByRole("link", {
-    name: "Мои курсы",
-    exact: true,
+  const cabinetSections = [
+    {
+      href: "/dashboard",
+      link: "Обзор",
+      heading: /Добрый день/,
+    },
+    {
+      href: "/dashboard/courses",
+      link: "Мои курсы",
+      heading: "Мои курсы",
+    },
+    {
+      href: "/dashboard/subscription",
+      link: "Подписка",
+      heading: "Подписка",
+    },
+    {
+      href: "/dashboard/payments",
+      link: "История платежей",
+      heading: "История платежей",
+    },
+    {
+      href: "/dashboard/profile",
+      link: "Профиль и вход",
+      heading: "Профиль и вход",
+    },
+  ] as const;
+
+  for (const section of cabinetSections) {
+    const link = page.getByRole("link", {
+      name: section.link,
+      exact: true,
+    });
+
+    await expect(link).toHaveAttribute("href", section.href);
+    await link.click();
+    await expect(page).toHaveURL(
+      new RegExp(`${section.href.replaceAll("/", "\\/")}$`),
+    );
+    await expect(
+      page.getByRole("heading", {
+        name: section.heading,
+        exact: typeof section.heading === "string",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: section.link,
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+  }
+
+  await page.goto("/dashboard/payments");
+  await expect(page.getByText("Оплачен", { exact: true })).toBeVisible();
+  await expect(page.getByText("14 000 ₽", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dashboard");
+  const mobileMenuButton = page.getByRole("button", {
+    name: /Раздел кабинета/,
   });
-  await expect(myCoursesLink).toHaveAttribute(
-    "href",
-    "/dashboard#my-courses",
+
+  await expect(mobileMenuButton).toBeVisible();
+  await expect(mobileMenuButton).toHaveAttribute(
+    "aria-expanded",
+    "false",
   );
-  await myCoursesLink.click();
-  await expect(page).toHaveURL(/\/dashboard#my-courses$/);
-  await expect(page.locator("#my-courses")).toBeInViewport();
+  await mobileMenuButton.click();
+  await expect(mobileMenuButton).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await page
+    .getByRole("link", {
+      name: "История платежей",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\/dashboard\/payments$/);
+  await expect(mobileMenuButton).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "История платежей",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   const database = new Client({
     connectionString: testDatabaseUrl,
