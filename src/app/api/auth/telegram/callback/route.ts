@@ -31,8 +31,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const returnedStates = url.searchParams.getAll("state");
     const loginState = verifyTelegramLoginState(
-      url.searchParams.get("state"),
+      returnedStates.length === 1 ? returnedStates[0] : null,
       getTelegramLoginStateCookie(request),
       privacyDocumentVersion,
       config.telegram.clientSecret,
@@ -50,7 +51,6 @@ export async function GET(request: NextRequest) {
       config.telegram,
       url,
       {
-        state: url.searchParams.get("state")!,
         nonce: loginState.nonce,
         codeVerifier: loginState.codeVerifier,
       },
