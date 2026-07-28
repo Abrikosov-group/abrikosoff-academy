@@ -90,7 +90,7 @@ export default async function DashboardPage() {
             <Link className="active" href="/dashboard">
               Обзор
             </Link>
-            <Link href="/courses">Мои курсы</Link>
+            <Link href="/dashboard#my-courses">Мои курсы</Link>
             <Link href="/pricing">Подписка</Link>
             <Link href="/dashboard">История платежей</Link>
             <Link href="/dashboard">Профиль и вход</Link>
