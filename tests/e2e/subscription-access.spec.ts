@@ -166,6 +166,18 @@ test("вход, оплата и доступ к уроку работают ка
     timeout: 15_000,
   });
 
+  const myCoursesLink = page.getByRole("link", {
+    name: "Мои курсы",
+    exact: true,
+  });
+  await expect(myCoursesLink).toHaveAttribute(
+    "href",
+    "/dashboard#my-courses",
+  );
+  await myCoursesLink.click();
+  await expect(page).toHaveURL(/\/dashboard#my-courses$/);
+  await expect(page.locator("#my-courses")).toBeInViewport();
+
   const database = new Client({
     connectionString: testDatabaseUrl,
     application_name: "academy-e2e-expiry-check",
