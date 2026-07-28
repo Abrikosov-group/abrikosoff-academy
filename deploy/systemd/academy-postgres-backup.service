@@ -10,7 +10,7 @@ ConditionPathExists=/opt/academy/shared/.env
 Type=oneshot
 User=deploy
 Group=deploy
-SupplementaryGroups=docker
+SupplementaryGroups=docker academy-runtime
 RuntimeDirectory=academy-postgres-backup
 RuntimeDirectoryMode=0700
 Environment=DOCKER_CONFIG=/run/academy-postgres-backup/docker
