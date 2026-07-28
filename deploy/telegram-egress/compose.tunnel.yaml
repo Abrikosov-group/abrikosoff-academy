@@ -13,19 +13,11 @@ services:
       TELEGRAM_EGRESS_SSH_USER: ${TELEGRAM_EGRESS_SSH_USER:-academy-egress}
     expose:
       - "${TELEGRAM_EGRESS_LOCAL_PORT:-3128}"
-    volumes:
-      - type: bind
-        source: ${TELEGRAM_EGRESS_SSH_KEY_FILE:?TELEGRAM_EGRESS_SSH_KEY_FILE must be set}
-        target: /run/secrets/telegram-egress-ssh-key
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${TELEGRAM_EGRESS_KNOWN_HOSTS_FILE:?TELEGRAM_EGRESS_KNOWN_HOSTS_FILE must be set}
-        target: /run/secrets/telegram-egress-known-hosts
-        read_only: true
-        bind:
-          create_host_path: false
+    secrets:
+      - source: telegram_egress_ssh_key
+        target: telegram-egress-ssh-key
+      - source: telegram_egress_known_hosts
+        target: telegram-egress-known-hosts
     networks:
       academy_edge:
         aliases:
@@ -69,3 +61,9 @@ networks:
   academy_edge:
     external: true
     name: ${ACADEMY_EDGE_NETWORK:-academy-abrikosoff_edge}
+
+secrets:
+  telegram_egress_ssh_key:
+    file: ${TELEGRAM_EGRESS_SSH_KEY_FILE:?TELEGRAM_EGRESS_SSH_KEY_FILE must be set}
+  telegram_egress_known_hosts:
+    file: ${TELEGRAM_EGRESS_KNOWN_HOSTS_FILE:?TELEGRAM_EGRESS_KNOWN_HOSTS_FILE must be set}

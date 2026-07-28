@@ -65,10 +65,46 @@ jobs:
           tunnel_config="$(
             docker compose \
               -f deploy/telegram-egress/compose.tunnel.yaml \
-              config
+              config --format json
           )"
-          grep -Fq 'http://127.0.0.1:3210' <<< "$tunnel_config"
-          grep -Fq 'create_host_path: false' <<< "$tunnel_config"
+          jq -e \
+            '.services.tunnel.healthcheck.test
+              | index("http://127.0.0.1:3210")' \
+            <<< "$tunnel_config"
+          jq -e \
+            '[.services.tunnel.secrets[].source] | sort
+              == [
+                "telegram_egress_known_hosts",
+                "telegram_egress_ssh_key"
+              ]' \
+            <<< "$tunnel_config"
+          jq -e \
+            '.secrets.telegram_egress_known_hosts.file
+                == "/tmp/known_hosts"
+              and .secrets.telegram_egress_ssh_key.file
+                == "/tmp/id_ed25519"' \
+            <<< "$tunnel_config"
+
+          test ! -e "$TELEGRAM_EGRESS_KNOWN_HOSTS_FILE"
+          test ! -e "$TELEGRAM_EGRESS_SSH_KEY_FILE"
+          docker network create "$ACADEMY_EDGE_NETWORK" >/dev/null
+          set +e
+          create_output="$(
+            docker compose \
+              -f deploy/telegram-egress/compose.tunnel.yaml \
+              create 2>&1
+          )"
+          create_exit=$?
+          set -e
+          docker compose \
+            -f deploy/telegram-egress/compose.tunnel.yaml \
+            down --remove-orphans >/dev/null 2>&1 || true
+          docker network rm "$ACADEMY_EDGE_NETWORK" >/dev/null
+
+          test "$create_exit" -ne 0
+          grep -Fq 'bind source path does not exist' <<< "$create_output"
+          test ! -e "$TELEGRAM_EGRESS_KNOWN_HOSTS_FILE"
+          test ! -e "$TELEGRAM_EGRESS_SSH_KEY_FILE"
 
   quality:
     name: Код, тесты и production-сборка
