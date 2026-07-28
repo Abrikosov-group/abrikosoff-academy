@@ -206,6 +206,11 @@ Telegram-egress разрешает точный `api.telegram.org:443`, а OIDC 
 26. Фоновые задачи на одном VPS запускаются host-level `systemd`-таймерами
     через закрытый wrapper, используют PostgreSQL advisory lock и не выполняются
     внутри web-процесса или GitHub Actions.
+27. Production-гейт Administration остаётся выключенным до привязки двух
+    методов первого владельца, установки обеих очередей и worker-ов, успешных
+    smoke-тестов email и Telegram Bot API и подключения общего сигнала
+    доставки. Локальная или staging-приёмка защитного layout не открывает
+    production endpoint-ы административного подтверждения.
 
 ## Масштабирование
 
