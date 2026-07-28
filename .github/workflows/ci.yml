@@ -128,28 +128,29 @@ jobs:
           cache: npm
 
       - name: Установить зависимости
-        run: npm ci --strict-allow-scripts
+        run: npm ci --strict-allow-scripts --prefer-offline --no-audit
 
-      - name: Проверить код
-        run: npm run lint
+      - parallel:
+          - name: Проверить код
+            run: npm run lint
 
-      - name: Проверить типы
-        run: npm run typecheck
+          - name: Проверить типы
+            run: npm run typecheck
 
-      - name: Выполнить модульные тесты
-        run: npm run test:unit
+          - name: Выполнить модульные тесты
+            run: npm run test:unit
 
-      - name: Выполнить интеграционные тесты с PostgreSQL
-        run: npm run test:integration
+          - name: Выполнить интеграционные тесты с PostgreSQL
+            run: npm run test:integration
 
-      - name: Проверить production-зависимости
-        run: npm run audit:production
+          - name: Проверить production-зависимости
+            run: npm run audit:production
 
-      - name: Собрать приложение
-        run: npm run build
+          - name: Собрать приложение
+            run: npm run build
 
-      - name: Установить Chromium для браузерных тестов
-        run: npx playwright install --with-deps chromium
+          - name: Установить Chromium для браузерных тестов
+            run: npx playwright install --with-deps chromium
 
       - name: Выполнить сквозной тест подписки и доступа
         run: npm run test:e2e
