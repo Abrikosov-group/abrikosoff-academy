@@ -223,6 +223,33 @@ test("вход, оплата и доступ к уроку работают ка
   await expect(page.getByText("Оплачен", { exact: true })).toBeVisible();
   await expect(page.getByText("14 000 ₽", { exact: true })).toBeVisible();
 
+  await page.goto("/dashboard/profile");
+  const accountMenuTrigger = page.getByRole("button", {
+    name: "Открыть меню профиля",
+  });
+
+  await accountMenuTrigger.click();
+  const accountMenu = page.getByRole("dialog", {
+    name: "Меню профиля",
+  });
+
+  await expect(accountMenu).toBeVisible();
+  const profileLink = accountMenu.getByRole("link", {
+    name: "Профиль и вход",
+    exact: true,
+  });
+  await expect(profileLink).toHaveAttribute("aria-current", "page");
+  await expect(profileLink).toBeFocused();
+  await expect(
+    accountMenu.getByRole("button", {
+      name: "Выйти из аккаунта",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(accountMenu).toBeHidden();
+  await expect(accountMenuTrigger).toBeFocused();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard");
   const mobileMenuButton = page.getByRole("button", {

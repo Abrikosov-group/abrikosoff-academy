@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { CabinetAccountMenu } from "@/components/academy/cabinet-account-menu";
 import { CabinetNavigation } from "@/components/academy/cabinet-navigation";
 import { getCabinetContext } from "./_lib/cabinet-context";
 
@@ -49,13 +50,10 @@ export default async function DashboardLayout({
                 ? "Доступ завершён"
                 : "Нет подписки"}
           </span>
-          <Link
-            aria-label="Открыть профиль"
-            className="header-avatar"
-            href="/dashboard/profile"
-          >
-            {getInitials(user.displayName)}
-          </Link>
+          <CabinetAccountMenu
+            displayName={user.displayName}
+            initials={getInitials(user.displayName)}
+          />
         </div>
       </header>
 
