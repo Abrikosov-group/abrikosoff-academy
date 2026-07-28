@@ -46,6 +46,7 @@ jobs:
           ACADEMY_EDGE_NETWORK: academy-abrikosoff_edge
           TELEGRAM_EGRESS_IMAGE: academy-telegram-egress:ci
           TELEGRAM_EGRESS_KNOWN_HOSTS_FILE: /tmp/known_hosts
+          TELEGRAM_EGRESS_LOCAL_PORT: 3210
           TELEGRAM_EGRESS_SSH_HOST: 192.0.2.1
           TELEGRAM_EGRESS_SSH_KEY_FILE: /tmp/id_ed25519
         run: |
@@ -60,9 +61,16 @@ jobs:
           docker compose \
             -f deploy/telegram-egress/compose.remote.yaml \
             config --quiet
-          docker compose \
-            -f deploy/telegram-egress/compose.tunnel.yaml \
-            config --quiet
+
+          tunnel_config="$(
+            docker compose \
+              -f deploy/telegram-egress/compose.tunnel.yaml \
+              config
+          )"
+          grep -Fq \
+            'http://127.0.0.1:$${TELEGRAM_EGRESS_LOCAL_PORT}' \
+            <<< "$tunnel_config"
+          grep -Fq 'create_host_path: false' <<< "$tunnel_config"
 
   quality:
     name: Код, тесты и production-сборка

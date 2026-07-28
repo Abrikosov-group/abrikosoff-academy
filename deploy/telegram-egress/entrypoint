@@ -44,8 +44,14 @@ run_tunnel() {
   validate_port "${local_port}" || fail "некорректный локальный порт"
   validate_port "${remote_proxy_port}" || \
     fail "некорректный порт удалённого прокси"
-  [ -r "${identity_file}" ] || fail "закрытый SSH-ключ недоступен"
-  [ -r "${known_hosts_file}" ] || fail "known_hosts недоступен"
+  [ -f "${identity_file}" ] \
+    && [ -s "${identity_file}" ] \
+    && [ -r "${identity_file}" ] || \
+    fail "закрытый SSH-ключ недоступен"
+  [ -f "${known_hosts_file}" ] \
+    && [ -s "${known_hosts_file}" ] \
+    && [ -r "${known_hosts_file}" ] || \
+    fail "known_hosts недоступен"
 
   exec ssh \
     -N \

@@ -3,8 +3,11 @@ Match User academy-egress
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     AllowTcpForwarding local
+    AllowStreamLocalForwarding no
     PermitOpen 127.0.0.1:18083
     PermitTTY no
+    PermitUserRC no
+    PermitTunnel no
     X11Forwarding no
     AllowAgentForwarding no
     GatewayPorts no

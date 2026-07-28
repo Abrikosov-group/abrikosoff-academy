@@ -5,13 +5,32 @@ import {
   exchangeTelegramAuthorizationCode,
 } from "@/modules/identity/server/telegram-oidc";
 
-const { authorizationCodeGrantMock } = vi.hoisted(() => ({
-  authorizationCodeGrantMock: vi.fn(),
-}));
+const {
+  authorizationCodeGrantMock,
+  proxyAgentMock,
+  proxyDispatcher,
+  undiciFetchMock,
+} = vi.hoisted(() => {
+  const dispatcher = { type: "proxy-dispatcher" };
+
+  return {
+    authorizationCodeGrantMock: vi.fn(),
+    proxyAgentMock: vi.fn(function ProxyAgentMock() {
+      return dispatcher;
+    }),
+    proxyDispatcher: dispatcher,
+    undiciFetchMock: vi.fn(),
+  };
+});
 
 vi.mock("openid-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("openid-client")>()),
   authorizationCodeGrant: authorizationCodeGrantMock,
+}));
+
+vi.mock("undici", () => ({
+  fetch: undiciFetchMock,
+  ProxyAgent: proxyAgentMock,
 }));
 
 const telegramConfig = {
@@ -51,6 +70,8 @@ describe("buildTelegramAuthorizationUrl", () => {
 describe("exchangeTelegramAuthorizationCode", () => {
   beforeEach(() => {
     authorizationCodeGrantMock.mockReset();
+    proxyAgentMock.mockClear();
+    undiciFetchMock.mockReset();
   });
 
   it("передаёт state, nonce и PKCE verifier при обмене кода", async () => {
@@ -183,6 +204,37 @@ describe("exchangeTelegramAuthorizationCode", () => {
 
     expect(configuration?.[oidc.customFetch]).toEqual(
       expect.any(Function),
+    );
+    undiciFetchMock.mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+
+    await configuration?.[oidc.customFetch]?.(
+      "https://oauth.telegram.org/token",
+      {
+        body: "code=authorization-code",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        method: "POST",
+        redirect: "manual",
+      },
+    );
+
+    expect(proxyAgentMock).toHaveBeenCalledWith(
+      "http://telegram-egress-tunnel:3128/",
+    );
+    expect(undiciFetchMock).toHaveBeenCalledWith(
+      "https://oauth.telegram.org/token",
+      {
+        body: "code=authorization-code",
+        dispatcher: proxyDispatcher,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        method: "POST",
+        redirect: "manual",
+      },
     );
   });
 
