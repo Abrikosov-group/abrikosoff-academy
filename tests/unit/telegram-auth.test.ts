@@ -1,90 +1,64 @@
-import {
-  createHash,
-  createHmac,
-} from "node:crypto";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
-import { verifyTelegramLogin } from "@/modules/identity/server/telegram-auth";
+import type { IDToken } from "openid-client";
+import { describe, expect, it } from "vitest";
+import { telegramIdentityFromClaims } from "@/modules/identity/server/telegram-auth";
 
-const botToken = "123456:telegram-test-token";
-const now = new Date("2026-07-28T08:00:00.000Z");
-
-function createTelegramPayload(overrides: Record<string, string> = {}) {
-  const params = new URLSearchParams({
-    auth_date: String(Math.floor(now.getTime() / 1_000)),
-    first_name: "Анна",
-    id: "123456789",
-    last_name: "Иванова",
-    username: "anna",
+function telegramClaims(overrides: Partial<IDToken> = {}): IDToken {
+  return {
+    iss: "https://oauth.telegram.org",
+    sub: "123456789",
+    aud: "8802171680",
+    iat: 1_775_000_000,
+    exp: 1_775_000_600,
+    name: "Анна Иванова",
+    given_name: "Анна",
+    family_name: "Иванова",
+    preferred_username: "anna",
+    picture: "https://t.me/i/userpic/example.jpg",
     ...overrides,
-  });
-  const dataCheckString = [...params.entries()]
-    .map(([key, value]) => `${key}=${value}`)
-    .sort()
-    .join("\n");
-  const secretKey = createHash("sha256").update(botToken).digest();
-  const hash = createHmac("sha256", secretKey)
-    .update(dataCheckString)
-    .digest("hex");
-
-  params.set("hash", hash);
-  return params;
+  };
 }
 
-describe("verifyTelegramLogin", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(now);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("принимает подлинную и свежую подпись Telegram", () => {
-    const identity = verifyTelegramLogin(
-      createTelegramPayload(),
-      botToken,
-    );
-
-    expect(identity).toEqual({
+describe("telegramIdentityFromClaims", () => {
+  it("преобразует проверенные OpenID Connect claims в метод входа", () => {
+    expect(telegramIdentityFromClaims(telegramClaims())).toEqual({
       id: "123456789",
       displayName: "Анна Иванова",
       metadata: {
         username: "anna",
+        photoUrl: "https://t.me/i/userpic/example.jpg",
+      },
+    });
+  });
+
+  it("собирает имя из отдельных полей при отсутствии name", () => {
+    expect(
+      telegramIdentityFromClaims(
+        telegramClaims({
+          name: undefined,
+          preferred_username: undefined,
+          picture: "http://example.com/avatar.jpg",
+        }),
+      ),
+    ).toEqual({
+      id: "123456789",
+      displayName: "Анна Иванова",
+      metadata: {
+        username: undefined,
         photoUrl: undefined,
       },
     });
   });
 
-  it("отклоняет изменённые после подписи данные", () => {
-    const params = createTelegramPayload();
-    params.set("first_name", "Другая");
-
-    expect(() => verifyTelegramLogin(params, botToken)).toThrowError(
+  it("отклоняет некорректный Telegram subject", () => {
+    expect(() =>
+      telegramIdentityFromClaims(
+        telegramClaims({
+          sub: "not-a-telegram-id",
+        }),
+      ),
+    ).toThrowError(
       expect.objectContaining({
         code: "INVALID_LOGIN",
-        httpStatus: 401,
-      }),
-    );
-  });
-
-  it("отклоняет подтверждение старше десяти минут", () => {
-    const params = createTelegramPayload({
-      auth_date: String(
-        Math.floor((now.getTime() - 11 * 60_000) / 1_000),
-      ),
-    });
-
-    expect(() => verifyTelegramLogin(params, botToken)).toThrowError(
-      expect.objectContaining({
-        code: "LOGIN_EXPIRED",
         httpStatus: 400,
       }),
     );

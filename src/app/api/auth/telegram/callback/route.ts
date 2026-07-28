@@ -6,12 +6,12 @@ import {
 } from "@/modules/identity/server/identity-config";
 import { getIdentityRuntime } from "@/modules/identity/server/get-identity-service";
 import { setSessionCookie } from "@/modules/identity/server/session";
-import { verifyTelegramLogin } from "@/modules/identity/server/telegram-auth";
 import {
   clearTelegramLoginStateCookie,
   getTelegramLoginStateCookie,
   verifyTelegramLoginState,
 } from "@/modules/identity/server/telegram-login-state";
+import { exchangeTelegramAuthorizationCode } from "@/modules/identity/server/telegram-oidc";
 import { logUnexpectedServerError } from "@/lib/safe-server-log";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +20,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const config = getIdentityConfig();
+  const publicOrigin = config.telegram?.redirectUri || request.url;
 
   try {
     if (!config.telegram) {
@@ -34,11 +35,25 @@ export async function GET(request: NextRequest) {
       url.searchParams.get("state"),
       getTelegramLoginStateCookie(request),
       privacyDocumentVersion,
-      config.telegram.botToken,
+      config.telegram.clientSecret,
     );
-    const identity = verifyTelegramLogin(
-      url.searchParams,
-      config.telegram.botToken,
+
+    if (url.searchParams.has("error")) {
+      throw new IdentityError(
+        "INVALID_LOGIN",
+        "Вход через Telegram был отменён.",
+        400,
+      );
+    }
+
+    const identity = await exchangeTelegramAuthorizationCode(
+      config.telegram,
+      url,
+      {
+        state: url.searchParams.get("state")!,
+        nonce: loginState.nonce,
+        codeVerifier: loginState.codeVerifier,
+      },
     );
     const { service } = getIdentityRuntime();
     const session = await service.authenticateIdentity({
@@ -49,11 +64,11 @@ export async function GET(request: NextRequest) {
       consent: {
         acceptedAt: new Date().toISOString(),
         documentVersion: privacyDocumentVersion,
-        source: "telegram-login-widget",
+        source: "telegram-openid-connect",
       },
     });
     const response = NextResponse.redirect(
-      new URL(loginState.redirectPath, request.url),
+      new URL(loginState.redirectPath, publicOrigin),
     );
 
     setSessionCookie(response, session);
@@ -61,7 +76,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     const response = NextResponse.redirect(
-      new URL("/login?error=telegram", request.url),
+      new URL("/login?error=telegram", publicOrigin),
     );
 
     clearTelegramLoginStateCookie(response);

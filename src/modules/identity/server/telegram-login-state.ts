@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  createHash,
   createHmac,
   randomBytes,
   timingSafeEqual,
@@ -12,8 +13,10 @@ import { IdentityError } from "../domain/errors";
 const telegramLoginStateTtlMs = 10 * 60_000;
 
 type TelegramLoginStatePayload = {
-  version: 2;
+  version: 3;
   state: string;
+  nonce: string;
+  codeVerifier: string;
   redirectPath: string;
   consentVersion: string;
   issuedAt: number;
@@ -21,6 +24,8 @@ type TelegramLoginStatePayload = {
 
 type TelegramLoginState = {
   state: string;
+  nonce: string;
+  codeChallenge: string;
   cookieValue: string;
   expiresAt: Date;
 };
@@ -31,8 +36,8 @@ function stateCookieName() {
     : "academy_telegram_state";
 }
 
-function signatureFor(value: string, botToken: string) {
-  return createHmac("sha256", botToken).update(value).digest("hex");
+function signatureFor(value: string, clientSecret: string) {
+  return createHmac("sha256", clientSecret).update(value).digest("hex");
 }
 
 function equalText(left: string, right: string) {
@@ -56,7 +61,7 @@ function invalidState() {
 export function createTelegramLoginState(
   redirectPath: string,
   consentVersion: string,
-  botToken: string,
+  clientSecret: string,
   now: Date = new Date(),
 ): TelegramLoginState {
   if (!isSafeInternalRedirectPath(redirectPath)) {
@@ -64,9 +69,13 @@ export function createTelegramLoginState(
   }
 
   const state = randomBytes(32).toString("base64url");
+  const nonce = randomBytes(32).toString("base64url");
+  const codeVerifier = randomBytes(32).toString("base64url");
   const payload: TelegramLoginStatePayload = {
-    version: 2,
+    version: 3,
     state,
+    nonce,
+    codeVerifier,
     redirectPath,
     consentVersion,
     issuedAt: now.getTime(),
@@ -77,7 +86,14 @@ export function createTelegramLoginState(
 
   return {
     state,
-    cookieValue: `${encodedPayload}.${signatureFor(encodedPayload, botToken)}`,
+    nonce,
+    codeChallenge: createHash("sha256")
+      .update(codeVerifier)
+      .digest("base64url"),
+    cookieValue: `${encodedPayload}.${signatureFor(
+      encodedPayload,
+      clientSecret,
+    )}`,
     expiresAt: new Date(now.getTime() + telegramLoginStateTtlMs),
   };
 }
@@ -86,7 +102,7 @@ export function verifyTelegramLoginState(
   state: string | null,
   cookieValue: string | undefined,
   expectedConsentVersion: string,
-  botToken: string,
+  clientSecret: string,
   now: Date = new Date(),
 ) {
   if (
@@ -109,7 +125,7 @@ export function verifyTelegramLoginState(
     throw invalidState();
   }
 
-  const expectedSignature = signatureFor(encodedPayload, botToken);
+  const expectedSignature = signatureFor(encodedPayload, clientSecret);
 
   if (!equalText(receivedSignature, expectedSignature)) {
     throw invalidState();
@@ -129,10 +145,16 @@ export function verifyTelegramLoginState(
     typeof payload !== "object" ||
     payload === null ||
     !("version" in payload) ||
-    payload.version !== 2 ||
+    payload.version !== 3 ||
     !("state" in payload) ||
     typeof payload.state !== "string" ||
     !equalText(payload.state, state) ||
+    !("nonce" in payload) ||
+    typeof payload.nonce !== "string" ||
+    !/^[A-Za-z0-9_-]{43}$/.test(payload.nonce) ||
+    !("codeVerifier" in payload) ||
+    typeof payload.codeVerifier !== "string" ||
+    !/^[A-Za-z0-9_-]{43}$/.test(payload.codeVerifier) ||
     !("redirectPath" in payload) ||
     !isSafeInternalRedirectPath(payload.redirectPath) ||
     !("consentVersion" in payload) ||
@@ -156,6 +178,8 @@ export function verifyTelegramLoginState(
   return {
     redirectPath: payload.redirectPath,
     consentVersion: payload.consentVersion,
+    nonce: payload.nonce,
+    codeVerifier: payload.codeVerifier,
   };
 }
 

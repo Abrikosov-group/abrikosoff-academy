@@ -5,16 +5,13 @@ import { CheckCircleIcon } from "@phosphor-icons/react/dist/icons/CheckCircle";
 import { SpinnerGapIcon } from "@phosphor-icons/react/dist/icons/SpinnerGap";
 import { TelegramLogoIcon } from "@phosphor-icons/react/dist/icons/TelegramLogo";
 import { FormEvent, useState } from "react";
-import { TelegramLoginWidget } from "./telegram-login-widget";
 
 type LoginPanelProps = {
   redirectPath: string;
   purchasing: boolean;
   demoAuthEnabled: boolean;
   emailAuthEnabled: boolean;
-  telegram?: {
-    botUsername: string;
-  };
+  telegramEnabled: boolean;
 };
 
 export function LoginPanel({
@@ -22,7 +19,7 @@ export function LoginPanel({
   purchasing,
   demoAuthEnabled,
   emailAuthEnabled,
-  telegram,
+  telegramEnabled,
 }: LoginPanelProps) {
   const [email, setEmail] = useState("");
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
@@ -132,6 +129,53 @@ export function LoginPanel({
     }
   }
 
+  async function loginWithTelegram() {
+    if (!privacyAccepted || processing) {
+      if (!privacyAccepted) {
+        setError("Подтвердите согласие на обработку персональных данных");
+      }
+      return;
+    }
+
+    setError("");
+    setProcessing(true);
+
+    try {
+      const response = await fetch("/api/auth/telegram/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          redirectPath,
+          privacyAccepted: true,
+        }),
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as {
+        authUrl?: unknown;
+        error?: { message?: unknown };
+      };
+
+      if (!response.ok || typeof payload.authUrl !== "string") {
+        throw new Error(
+          typeof payload.error?.message === "string"
+            ? payload.error.message
+            : "Не удалось подготовить вход через Telegram.",
+        );
+      }
+
+      window.location.assign(payload.authUrl);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось подготовить вход через Telegram.",
+      );
+      setProcessing(false);
+    }
+  }
+
   if (sent) {
     return (
       <div className="login-sent" role="status">
@@ -189,11 +233,22 @@ export function LoginPanel({
           )}
           Войти через Telegram
         </button>
-      ) : telegram && privacyAccepted ? (
-        <TelegramLoginWidget
-          botUsername={telegram.botUsername}
-          redirectPath={redirectPath}
-        />
+      ) : telegramEnabled ? (
+        <button
+          className={`button button-telegram ${
+            privacyAccepted ? "" : "button-disabled"
+          }`}
+          disabled={processing}
+          type="button"
+          onClick={loginWithTelegram}
+        >
+          {processing ? (
+            <SpinnerGapIcon className="spinner" aria-hidden="true" size={21} />
+          ) : (
+            <TelegramLogoIcon aria-hidden="true" size={21} weight="fill" />
+          )}
+          Войти через Telegram
+        </button>
       ) : (
         <button
           className="button button-telegram button-disabled"

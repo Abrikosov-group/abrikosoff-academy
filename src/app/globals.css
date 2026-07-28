@@ -3501,12 +3501,6 @@ h3 {
   font-size: 15.5px;
 }
 
-.telegram-login-widget {
-  min-height: 48px;
-  display: grid;
-  place-items: center;
-}
-
 .auth-divider {
   margin: 16px 0;
   font-size: 12.5px;

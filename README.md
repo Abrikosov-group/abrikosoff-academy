@@ -105,8 +105,9 @@ IP, сопоставляются с уже известным внутренни
 Один внутренний аккаунт может иметь несколько подтверждённых способов входа:
 Telegram, email и телефон. Локально доступны demo-Telegram и одноразовая ссылка
 по почте. Production-вход Telegram включается после заполнения
-`TELEGRAM_BOT_TOKEN`, задания `TELEGRAM_BOT_USERNAME` и привязки домена к боту
-в BotFather. Модель сессий описана в
+`TELEGRAM_OIDC_CLIENT_ID`, `TELEGRAM_OIDC_CLIENT_SECRET` и
+`TELEGRAM_OIDC_REDIRECT_URI`. Redirect URI должен быть дословно зарегистрирован
+в BotFather для OpenID Connect. Модель сессий описана в
 [ADR-0003](docs/decisions/0003-identity-and-sessions.md).
 
 ## Секреты

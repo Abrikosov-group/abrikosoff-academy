@@ -30,17 +30,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     ? checkoutRedirectPath(purchasePlan)
     : normalizeLoginRedirectPath(next);
   const identityConfig = getIdentityConfig();
-  let telegram:
-    | {
-        botUsername: string;
-      }
-    | undefined;
-
-  if (identityConfig.telegram) {
-    telegram = {
-      botUsername: identityConfig.telegram.botUsername,
-    };
-  }
 
   return (
     <main className="auth-page">
@@ -73,7 +62,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           purchasing={Boolean(purchasePlan)}
           demoAuthEnabled={identityConfig.demoAuthEnabled}
           emailAuthEnabled={identityConfig.emailAuthMode === "demo"}
-          telegram={telegram}
+          telegramEnabled={Boolean(identityConfig.telegram)}
         />
       </section>
     </main>

@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createTelegramLoginState,
   verifyTelegramLoginState,
 } from "@/modules/identity/server/telegram-login-state";
 
-const botToken = "123456:test-bot-token";
+const clientSecret = "telegram-oidc-client-secret-for-tests";
 const consentVersion = "2026-07-28";
 const issuedAt = new Date("2026-07-28T10:00:00.000Z");
 
@@ -13,35 +14,42 @@ describe("Telegram login state", () => {
     const state = createTelegramLoginState(
       "/checkout?plan=annual",
       consentVersion,
-      botToken,
+      clientSecret,
       issuedAt,
     );
+    const verified = verifyTelegramLoginState(
+      state.state,
+      state.cookieValue,
+      consentVersion,
+      clientSecret,
+      new Date("2026-07-28T10:05:00.000Z"),
+    );
 
-    expect(
-      verifyTelegramLoginState(
-        state.state,
-        state.cookieValue,
-        consentVersion,
-        botToken,
-        new Date("2026-07-28T10:05:00.000Z"),
-      ),
-    ).toEqual({
+    expect(verified).toEqual({
       redirectPath: "/checkout?plan=annual",
       consentVersion,
+      nonce: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
+    expect(state.codeChallenge).toBe(
+      createHash("sha256")
+        .update(verified.codeVerifier)
+        .digest("base64url"),
+    );
+    expect(state.nonce).toBe(verified.nonce);
   });
 
   it("отклоняет state из другого браузерного сценария", () => {
     const state = createTelegramLoginState(
       "/dashboard",
       consentVersion,
-      botToken,
+      clientSecret,
       issuedAt,
     );
     const otherState = createTelegramLoginState(
       "/dashboard",
       consentVersion,
-      botToken,
+      clientSecret,
       issuedAt,
     );
 
@@ -50,7 +58,7 @@ describe("Telegram login state", () => {
         otherState.state,
         state.cookieValue,
         consentVersion,
-        botToken,
+        clientSecret,
         issuedAt,
       ),
     ).toThrowError(
@@ -65,17 +73,20 @@ describe("Telegram login state", () => {
     const state = createTelegramLoginState(
       "/checkout?plan=annual",
       consentVersion,
-      botToken,
+      clientSecret,
       issuedAt,
     );
-    const changedCookie = `${state.cookieValue.slice(0, -1)}0`;
+    const lastCharacter = state.cookieValue.at(-1);
+    const changedCookie = `${state.cookieValue.slice(0, -1)}${
+      lastCharacter === "0" ? "1" : "0"
+    }`;
 
     expect(() =>
       verifyTelegramLoginState(
         state.state,
         changedCookie,
         consentVersion,
-        botToken,
+        clientSecret,
         issuedAt,
       ),
     ).toThrowError(
@@ -90,7 +101,7 @@ describe("Telegram login state", () => {
     const state = createTelegramLoginState(
       "/checkout?plan=annual",
       consentVersion,
-      botToken,
+      clientSecret,
       issuedAt,
     );
 
@@ -99,7 +110,7 @@ describe("Telegram login state", () => {
         state.state,
         state.cookieValue,
         consentVersion,
-        botToken,
+        clientSecret,
         new Date("2026-07-28T10:11:00.000Z"),
       ),
     ).toThrowError(
@@ -115,7 +126,7 @@ describe("Telegram login state", () => {
       createTelegramLoginState(
         "https://example.com",
         consentVersion,
-        botToken,
+        clientSecret,
         issuedAt,
       ),
     ).toThrowError(
