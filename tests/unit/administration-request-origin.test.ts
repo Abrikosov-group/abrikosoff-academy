@@ -53,4 +53,26 @@ describe("requireAdministrationRequestOrigin", () => {
       }),
     );
   });
+
+  it("отклоняет запрос при некорректном APP_BASE_URL", () => {
+    vi.stubEnv("APP_BASE_URL", "не url");
+    const request = new Request(
+      "https://academy.abrikosoff.com/api/admin/auth/telegram/start",
+      {
+        method: "POST",
+        headers: {
+          Origin: "https://academy.abrikosoff.com",
+        },
+      },
+    );
+
+    expect(() =>
+      requireAdministrationRequestOrigin(request),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "ADMIN_PERMISSION_DENIED",
+        httpStatus: 403,
+      }),
+    );
+  });
 });
