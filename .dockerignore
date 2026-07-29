@@ -3,7 +3,11 @@
 .next
 .data
 coverage
-deploy
+deploy/*
+!deploy/server/
+deploy/server/*
+!deploy/server/academy-admin
+!deploy/server/academy-release
 docs
 node_modules
 npm-debug.log*

@@ -10,6 +10,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { UserAvatar } from "./user-avatar";
 
 const navigation = [
   { href: "/courses", label: "Курсы" },
@@ -19,6 +20,7 @@ const navigation = [
 
 type SiteHeaderProps = {
   user?: {
+    avatarUrl?: string;
     displayName: string;
     initials: string;
   };
@@ -85,7 +87,10 @@ export function SiteHeader({ user }: SiteHeaderProps) {
               href="/dashboard"
               aria-label={`Личный кабинет ${user?.displayName}`}
             >
-              {user?.initials}
+              <UserAvatar
+                avatarUrl={user?.avatarUrl}
+                initials={user?.initials ?? "А"}
+              />
             </Link>
           ) : (
             <Link
@@ -122,7 +127,12 @@ export function SiteHeader({ user }: SiteHeaderProps) {
                   href="/dashboard"
                   onClick={() => setMenuOpen(false)}
                 >
-                  <span className="header-avatar">{user?.initials}</span>
+                  <span className="header-avatar">
+                    <UserAvatar
+                      avatarUrl={user?.avatarUrl}
+                      initials={user?.initials ?? "А"}
+                    />
+                  </span>
                   <span>
                     <strong>{user?.displayName}</strong>
                     <small>Личный кабинет</small>

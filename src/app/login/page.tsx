@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/ssr";
 import { LoginPanel } from "@/components/academy/login-panel";
 import { isSubscriptionPlanId } from "@/modules/billing/domain/catalog";
@@ -9,6 +10,7 @@ import {
   normalizeLoginRedirectPath,
 } from "@/modules/identity/domain/login-redirect";
 import { getIdentityConfig } from "@/modules/identity/server/identity-config";
+import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const metadata: Metadata = {
   title: "Вход",
@@ -24,11 +26,19 @@ type LoginPageProps = {
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { plan, next, error } = await searchParams;
+  const [{ plan, next, error }, user] = await Promise.all([
+    searchParams,
+    getCurrentUser(),
+  ]);
   const purchasePlan = isSubscriptionPlanId(plan) ? plan : undefined;
   const redirectPath = purchasePlan
     ? checkoutRedirectPath(purchasePlan)
     : normalizeLoginRedirectPath(next);
+
+  if (user) {
+    redirect(redirectPath);
+  }
+
   const identityConfig = getIdentityConfig();
   const errorMessage =
     error === "telegram_unavailable"

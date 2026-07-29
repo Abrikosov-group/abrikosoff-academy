@@ -14,6 +14,139 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  administration-wrapper:
+    name: Production-wrapper Administration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Проверить allowlist-wrapper
+        run: |
+          bash -n deploy/server/academy-admin
+          bash -n deploy/server/academy-release
+          bash -n tests/server/academy-admin-wrapper.sh
+          shellcheck deploy/server/academy-admin
+          shellcheck deploy/server/academy-release
+          shellcheck tests/server/academy-admin-wrapper.sh
+
+      - name: Проверить fail-closed согласованность production-релиза
+        run: |
+          docker run \
+            --rm \
+            --network none \
+            --read-only \
+            --tmpfs /opt:mode=0755 \
+            --volume "$PWD:/workspace:ro" \
+            ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90 \
+            bash /workspace/tests/server/academy-admin-wrapper.sh
+
+      - name: Подготовить Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Собрать production-образ приложения
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: academy-app:admin-wrapper-ci
+          cache-from: type=gha,scope=administration-wrapper
+          cache-to: type=gha,mode=max,scope=administration-wrapper
+
+      - name: Проверить доставку wrapper-ов в образе
+        run: |
+          for wrapper_name in academy-admin academy-release; do
+            expected_sha="$(
+              sha256sum "deploy/server/${wrapper_name}" | awk '{print $1}'
+            )"
+            actual_sha="$(
+              docker run \
+                --rm \
+                --entrypoint sha256sum \
+                academy-app:admin-wrapper-ci \
+                "/usr/local/share/academy/${wrapper_name}" \
+                | awk '{print $1}'
+            )"
+            actual_mode="$(
+              docker run \
+                --rm \
+                --entrypoint stat \
+                academy-app:admin-wrapper-ci \
+                -c '%a' \
+                "/usr/local/share/academy/${wrapper_name}"
+            )"
+            actual_owner="$(
+              docker run \
+                --rm \
+                --entrypoint stat \
+                academy-app:admin-wrapper-ci \
+                -c '%u:%g' \
+                "/usr/local/share/academy/${wrapper_name}"
+            )"
+
+            test "$actual_sha" = "$expected_sha"
+            test "$actual_mode" = 555
+            test "$actual_owner" = 0:0
+          done
+
+      - name: Проверить CLI внутри собранного образа
+        run: |
+          help_output="$(
+            docker run \
+              --rm \
+              academy-app:admin-wrapper-ci \
+              node scripts/academy-admin.mjs --help
+          )"
+          grep -Fq 'Управление административным контуром Академии' \
+            <<< "$help_output"
+
+          set +e
+          guard_output="$(
+            docker run \
+              --rm \
+              --env NODE_ENV=production \
+              academy-app:admin-wrapper-ci \
+              node scripts/academy-admin.mjs \
+                grant \
+                --user-id 11111111-1111-4111-8111-111111111111 \
+                --role owner \
+                --reason 'Проверка production-флага wrapper' \
+                --idempotency-key 22222222-2222-4222-8222-222222222222 \
+                2>&1
+          )"
+          guard_exit=$?
+          set -e
+
+          test "$guard_exit" -eq 2
+          grep -Fq 'PRODUCTION_CONFIRMATION_REQUIRED' <<< "$guard_output"
+
+          set +e
+          release_gate_output="$(
+            docker run \
+              --rm \
+              --env NODE_ENV=production \
+              --env ADMINISTRATION_ENABLED=true \
+              academy-app:admin-wrapper-ci \
+              node scripts/academy-admin.mjs \
+                grant \
+                --user-id 11111111-1111-4111-8111-111111111111 \
+                --role owner \
+                --reason 'Проверка закрытого production-гейта' \
+                --idempotency-key 33333333-3333-4333-8333-333333333333 \
+                --production \
+                2>&1
+          )"
+          release_gate_exit=$?
+          set -e
+
+          test "$release_gate_exit" -eq 2
+          grep -Fq 'ADMINISTRATION_GATE_MUST_BE_DISABLED' \
+            <<< "$release_gate_output"
+
   telegram-egress:
     name: Контур исходящих запросов Telegram
     runs-on: ubuntu-24.04

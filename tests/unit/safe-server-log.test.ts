@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { logUnexpectedServerError } from "@/lib/safe-server-log";
+import {
+  logSecurityEvent,
+  logUnexpectedServerError,
+} from "@/lib/safe-server-log";
 
 describe("logUnexpectedServerError", () => {
   afterEach(() => {
@@ -83,5 +86,63 @@ describe("logUnexpectedServerError", () => {
     expect(payload.errorDetails).not.toHaveProperty("name");
     expect(payload.errorDetails).not.toHaveProperty("code");
     expect(payload.errorDetails).not.toHaveProperty("oauthError");
+  });
+});
+
+describe("logSecurityEvent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("пишет только разрешённые поля события безопасности", () => {
+    const consoleWarn = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+
+    logSecurityEvent("administration.access_rejected", {
+      code: "ADMIN_PERMISSION_DENIED",
+      requestId: requestId.toUpperCase(),
+      userAgentFamily: "Google Chrome",
+    });
+
+    const payload = JSON.parse(
+      String(consoleWarn.mock.calls[0]?.[0]),
+    );
+
+    expect(payload).toMatchObject({
+      level: "warn",
+      event: "administration.access_rejected",
+      code: "ADMIN_PERMISSION_DENIED",
+      requestId,
+      userAgentFamily: "Google Chrome",
+    });
+    expect(payload.incidentId).toEqual(expect.any(String));
+  });
+
+  it("не переносит произвольные значения в security-log", () => {
+    const consoleWarn = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    logSecurityEvent("event with token=secret", {
+      code: "code with token=secret",
+      requestId: "not-a-request-id?token=secret",
+      userAgentFamily: "private-user@example.test",
+    });
+
+    const payload = JSON.parse(
+      String(consoleWarn.mock.calls[0]?.[0]),
+    );
+    const serialized = JSON.stringify(payload);
+
+    expect(payload).toMatchObject({
+      event: "security.invalid_event",
+      code: "INVALID_SECURITY_CODE",
+    });
+    expect(payload).not.toHaveProperty("requestId");
+    expect(payload).not.toHaveProperty("userAgentFamily");
+    expect(serialized).not.toContain("token=secret");
+    expect(serialized).not.toContain("private-user");
   });
 });

@@ -53,6 +53,81 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 получают её как дополнительную. Wrapper-ы остаются принадлежащими `root` и не
 становятся группово изменяемыми.
 
+Кандидаты release- и административного wrapper-ов доставляются внутри
+неизменяемого production-образа как
+`/usr/local/share/academy/academy-release` и
+`/usr/local/share/academy/academy-admin`. Обычный release-процесс не
+устанавливает и не обновляет root-owned файлы автоматически.
+
+После первого релиза и после каждого изменения любого из этих wrapper-ов
+оператор извлекает оба кандидата из текущего production-образа, проверяет и
+явно устанавливает их как одну согласованную версию. Обновление начинается
+только после завершения текущего release-workflow; на первом переходе оператор
+отдельно подтверждает отсутствие активного релиза, а последующие обновления
+дополнительно сериализуются общей блокировкой:
+
+```bash
+(
+  set -Eeuo pipefail
+  image_reference="$(
+    sudo cat /opt/academy/shared/current-image
+  )"
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  exec 9< /opt/academy
+  flock --exclusive --wait 600 9
+  candidate_directory="$(mktemp -d)"
+  trap '
+    rm -f -- \
+      "$candidate_directory/academy-admin" \
+      "$candidate_directory/academy-release"
+    rmdir -- "$candidate_directory"
+  ' EXIT
+
+  for wrapper_name in academy-admin academy-release; do
+    candidate="$candidate_directory/$wrapper_name"
+    sudo docker run \
+      --rm \
+      --entrypoint cat \
+      "$image_reference" \
+      "/usr/local/share/academy/$wrapper_name" \
+      > "$candidate"
+    test -s "$candidate"
+    bash -n "$candidate"
+    sudo install \
+      --owner=root \
+      --group=root \
+      --mode=0755 \
+      "$candidate" \
+      "/usr/local/sbin/$wrapper_name"
+    test "$(
+      sudo stat -c '%U:%G %a' "/usr/local/sbin/$wrapper_name"
+    )" = "root:root 755"
+    sudo cmp --silent \
+      "$candidate" \
+      "/usr/local/sbin/$wrapper_name"
+  done
+)
+```
+
+Установленный `/usr/local/sbin/academy-admin` принимает только команду
+назначения первого `owner`, проверяет аргументы и запускает CLI из текущего
+production-образа в закрытой Compose-сети. Wrapper и release-шлюз используют
+общую блокировку операций. Перед запуском wrapper сверяет SHA каталога релиза,
+metadata образа и реально работающего контейнера и закрывается при любом
+несовпадении:
+
+```bash
+sudo /usr/local/sbin/academy-admin grant \
+  --user-id 11111111-1111-4111-8111-111111111111 \
+  --role owner \
+  --reason "Первичное назначение владельца" \
+  --idempotency-key 22222222-2222-4222-8222-222222222222 \
+  --production
+```
+
+Wrapper не принимает имя пользователя, email или Telegram username вместо
+внутреннего UUID и не печатает способы входа.
+
 Переход с прежнего режима `root:root 0600` выполняется в таком порядке:
 
 1. создать системную группу `academy-runtime`;
@@ -131,12 +206,17 @@ Actions и процесс Next.js не являются планировщика
 взаимная блокировка и проверка состояния описаны в
 [эксплуатационной инструкции](../docs/operations/background-jobs.md).
 
-`ADMINISTRATION_ENABLED` остаётся равным `false`, пока первый владелец не
-привязал Telegram и личный email, обе очереди и worker-а не установлены,
-email- и Telegram Bot API-smoke-тесты не прошли, а общий сигнал доставки не
-подключён к мониторингу. Миграции и UI можно доставить раньше: endpoint-ы
-административного подтверждения в production откроются только при отдельном
-переключении этого гейта после операционной приёмки.
+`ADMINISTRATION_ENABLED=false` остаётся безопасным значением по умолчанию.
+До полной приёмки двух каналов и уведомлений разрешён только явно заданный
+`ADMINISTRATION_MODE=owner_preview`: он открывает владельцу статический
+защитный фундамент и не выдаёт `dashboard.read` или предметные разрешения.
+Инструкция включения и отката находится в
+[`administration-owner-preview.md`](../docs/operations/administration-owner-preview.md).
+
+Полный `ADMINISTRATION_MODE=operational` остаётся запрещён, пока первый
+владелец не привязал Telegram и личный email, обе очереди и worker-а не
+установлены, email- и Telegram Bot API-smoke-тесты не прошли, а общий сигнал
+доставки не подключён к мониторингу.
 
 ## Уведомления ЮKassa
 

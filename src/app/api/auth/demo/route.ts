@@ -12,6 +12,7 @@ import {
   readJsonBodyWithLimit,
   RequestBodyTooLargeError,
 } from "@/lib/read-request-body";
+import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
 
     const { service } = getIdentityRuntime();
     const session = await service.authenticateIdentity({
+      authenticationMethod: "demo",
       methodType: "telegram",
       identifier: "demo-telegram-anna",
       displayName: "Анна К.",
@@ -80,6 +82,9 @@ export async function POST(request: Request) {
         documentVersion: privacyDocumentVersion,
         source: "local-demo-login",
       },
+      userAgentFamily: normalizeUserAgentFamily(
+        request.headers.get("user-agent"),
+      ),
     });
     const response = NextResponse.json(
       {
