@@ -7,6 +7,8 @@
   [ADR-0005](decisions/0005-admin-authorization-and-audit.md) и
   [ADR-0006](decisions/0006-versioned-course-publication.md), а также
   [ADR-0007](decisions/0007-production-owner-preview.md)
+- Фактический статус:
+  [карта реализации административной панели](admin-panel-implementation-status.md)
 
 ## 1. Резюме решения
 
