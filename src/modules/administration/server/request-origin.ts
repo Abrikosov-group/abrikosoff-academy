@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveIdentityPublicBaseUrl } from "@/modules/identity/server/identity-config";
 import { AdministrationError } from "../domain/errors";
 
 export function requireAdministrationRequestOrigin(
@@ -8,9 +9,7 @@ export function requireAdministrationRequestOrigin(
   let expectedOrigin: string;
 
   try {
-    expectedOrigin = new URL(
-      process.env.APP_BASE_URL?.trim() || request.url,
-    ).origin;
+    expectedOrigin = resolveIdentityPublicBaseUrl(request.url);
   } catch (error) {
     throw new AdministrationError(
       "ADMIN_PERMISSION_DENIED",

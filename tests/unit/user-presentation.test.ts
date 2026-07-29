@@ -20,6 +20,11 @@ describe("представление профиля пользователя", (
     expect(
       normalizeUserAvatarUrl("http://example.test/avatar.jpg"),
     ).toBeUndefined();
+    expect(
+      normalizeUserAvatarUrl(
+        "https://user:password@example.test/avatar.jpg",
+      ),
+    ).toBeUndefined();
     expect(normalizeUserAvatarUrl("не адрес")).toBeUndefined();
   });
 

@@ -1,4 +1,7 @@
-import type { AuthenticatedUser } from "@/modules/identity/domain/types";
+import type {
+  AuthenticatedUser,
+  SessionAuthenticationMethod,
+} from "@/modules/identity/domain/types";
 
 export type AdminRole =
   | "owner"
@@ -49,11 +52,7 @@ export type AdminSessionRecord = {
   actor: AuthenticatedUser;
   sessionId: string;
   authenticatedAt: Date | null;
-  authenticationMethod:
-    | "telegram_oidc"
-    | "email_magic_link"
-    | "demo"
-    | null;
+  authenticationMethod: SessionAuthenticationMethod | null;
   authenticationMethodId: string | null;
   authenticationMethodMatches: boolean;
   adminVerifiedAt: Date | null;

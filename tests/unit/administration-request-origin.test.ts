@@ -54,14 +54,48 @@ describe("requireAdministrationRequestOrigin", () => {
     );
   });
 
-  it("отклоняет запрос при некорректном APP_BASE_URL", () => {
-    vi.stubEnv("APP_BASE_URL", "не url");
+  it.each([
+    "не url",
+    "https://user:password@academy.abrikosoff.com",
+    "https://academy.abrikosoff.com/nested",
+    "https://academy.abrikosoff.com/?source=test",
+  ])(
+    "отклоняет запрос при небезопасном APP_BASE_URL: %s",
+    (appBaseUrl) => {
+      vi.stubEnv("APP_BASE_URL", appBaseUrl);
+      const request = new Request(
+        "https://academy.abrikosoff.com/api/admin/auth/telegram/start",
+        {
+          method: "POST",
+          headers: {
+            Origin: "https://academy.abrikosoff.com",
+          },
+        },
+      );
+
+      expect(() =>
+        requireAdministrationRequestOrigin(request),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "ADMIN_PERMISSION_DENIED",
+          httpStatus: 403,
+        }),
+      );
+    },
+  );
+
+  it("требует HTTPS для production APP_BASE_URL", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(
+      "APP_BASE_URL",
+      "http://academy.abrikosoff.com",
+    );
     const request = new Request(
-      "https://academy.abrikosoff.com/api/admin/auth/telegram/start",
+      "http://academy.abrikosoff.com/api/admin/auth/telegram/start",
       {
         method: "POST",
         headers: {
-          Origin: "https://academy.abrikosoff.com",
+          Origin: "http://academy.abrikosoff.com",
         },
       },
     );
