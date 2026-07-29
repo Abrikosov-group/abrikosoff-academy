@@ -150,7 +150,10 @@ Telegram-egress разрешает точный `api.telegram.org:443`, а OIDC 
 напрямую: операции с пользователем, доступом, платежом или курсом выполняет
 соответствующий модуль. Подробное ТЗ находится в
 [документе административной панели](admin-panel.md), а граница доверия — в
-[ADR-0005](decisions/0005-admin-authorization-and-audit.md).
+[ADR-0005](decisions/0005-admin-authorization-and-audit.md). Ограниченный
+предзапусковой просмотр production-фундамента владельцем отделён от
+операционного режима в
+[ADR-0007](decisions/0007-production-owner-preview.md).
 
 ## Неприкосновенные правила
 

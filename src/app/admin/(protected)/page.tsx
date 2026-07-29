@@ -1,7 +1,12 @@
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
+import { getAdministrationConfig } from "@/modules/administration/server/administration-config";
 
 export default async function AdminPage() {
-  await requireAdminContext("dashboard.read");
+  const { mode } = getAdministrationConfig();
+
+  await requireAdminContext(
+    mode === "owner_preview" ? "admin.preview" : "dashboard.read",
+  );
 
   return (
     <>

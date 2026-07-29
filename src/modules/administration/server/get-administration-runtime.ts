@@ -17,7 +17,7 @@ export function getAdministrationRuntime() {
     config,
     repository,
     service: new AdministrationService(repository, {
-      enabled: config.enabled,
+      mode: config.mode,
       sessionTtlDays: identityConfig.sessionTtlDays,
     }),
   };
