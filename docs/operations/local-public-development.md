@@ -42,12 +42,19 @@ https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 APP_BASE_URL=https://academy-dev.abrikosoff.com
 AUTH_DEMO_MODE=disabled
 EMAIL_AUTH_MODE=disabled
+ADMINISTRATION_ENABLED=true
+ADMINISTRATION_MODE=owner_preview
 TELEGRAM_OIDC_CLIENT_ID=8965978102
 TELEGRAM_OIDC_CLIENT_SECRET=<из защищённого хранилища>
 TELEGRAM_OIDC_REDIRECT_URI=https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 PAYMENTS_MODE=demo
 PAYMENT_DEFAULT_PROVIDER=demo
 ```
+
+`owner_preview` открывает на локальном приёмочном origin только текущий
+защитный фундамент Administration. Режим `operational` не используется как
+локальное значение по умолчанию до завершения обязательных зависимостей
+этапа 2 административного ТЗ.
 
 ## 2. Однократное создание туннеля
 
@@ -70,12 +77,25 @@ cloudflared tunnel route dns \
 
 ```yaml
 tunnel: <TUNNEL_ID>
-credentials-file: /Users/<USER>/.cloudflared/<TUNNEL_ID>.json
+credentials-file: <ABSOLUTE_PATH_TO_TUNNEL_CREDENTIALS>
 
 ingress:
   - hostname: academy-dev.abrikosoff.com
     service: http://127.0.0.1:3100
   - service: http_status:404
+```
+
+В `credentials-file` подставляется полный путь, который вывела команда
+`cloudflared tunnel create`, например
+`/Users/local-user/.cloudflared/<TUNNEL_ID>.json`. В YAML используется
+абсолютный путь, а не сокращение `~`.
+
+Перед первым запуском конфигурация проверяется локально:
+
+```bash
+cloudflared tunnel \
+  --config "$HOME/.cloudflared/abrikosoff-academy-local.yml" \
+  ingress validate
 ```
 
 Файл учётных данных и локальную конфигурацию не добавляют в Git.
@@ -101,7 +121,7 @@ npm start -- --hostname 127.0.0.1 --port 3100
 
 ```bash
 cloudflared tunnel \
-  --config ~/.cloudflared/abrikosoff-academy-local.yml \
+  --config "$HOME/.cloudflared/abrikosoff-academy-local.yml" \
   run abrikosoff-academy-local
 ```
 
@@ -113,7 +133,7 @@ screen -dmS academy-abrikosoff-local /bin/zsh -lc \
 
 screen -dmS academy-abrikosoff-tunnel \
   cloudflared tunnel \
-    --config ~/.cloudflared/abrikosoff-academy-local.yml \
+    --config "$HOME/.cloudflared/abrikosoff-academy-local.yml" \
     run abrikosoff-academy-local
 ```
 
