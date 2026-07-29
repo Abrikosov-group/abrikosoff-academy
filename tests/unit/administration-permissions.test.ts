@@ -1,20 +1,14 @@
+import { describe, expect, it } from "vitest";
+import {
+  configuredPermissionsForRole,
+  permissionsForRoles,
+} from "@/modules/administration/domain/permissions";
 import type {
   AdminPermission,
   AdminRole,
-} from "./types";
+} from "@/modules/administration/domain/types";
 
-export const adminRoles = [
-  "owner",
-  "support",
-  "content_editor",
-  "finance",
-] as const satisfies readonly AdminRole[];
-
-export const enabledAdminRoles = [
-  "owner",
-] as const satisfies readonly AdminRole[];
-
-const rolePermissions = {
+const expectedPermissions = {
   owner: [
     "admin.enter",
     "dashboard.read",
@@ -71,41 +65,27 @@ const rolePermissions = {
   readonly AdminPermission[]
 >;
 
-export function isAdminRole(value: unknown): value is AdminRole {
-  return (
-    typeof value === "string" &&
-    adminRoles.includes(value as AdminRole)
-  );
-}
+describe("матрица разрешений Administration", () => {
+  it.each(
+    Object.entries(expectedPermissions) as [
+      AdminRole,
+      readonly AdminPermission[],
+    ][],
+  )("точно соответствует спецификации для роли %s", (role, expected) => {
+    expect([...configuredPermissionsForRole(role)]).toEqual(expected);
+  });
 
-export function isEnabledAdminRole(
-  role: AdminRole,
-): role is (typeof enabledAdminRoles)[number] {
-  return enabledAdminRoles.includes(
-    role as (typeof enabledAdminRoles)[number],
-  );
-}
+  it("выдаёт права только включённой роли owner", () => {
+    expect([...permissionsForRoles(["owner"])]).toEqual(
+      expectedPermissions.owner,
+    );
 
-export function permissionsForRoles(
-  roles: readonly AdminRole[],
-): ReadonlySet<AdminPermission> {
-  const permissions = new Set<AdminPermission>();
-
-  for (const role of roles) {
-    if (!isEnabledAdminRole(role)) {
-      continue;
+    for (const role of [
+      "support",
+      "content_editor",
+      "finance",
+    ] as const) {
+      expect([...permissionsForRoles([role])]).toEqual([]);
     }
-
-    for (const permission of rolePermissions[role]) {
-      permissions.add(permission);
-    }
-  }
-
-  return permissions;
-}
-
-export function configuredPermissionsForRole(
-  role: AdminRole,
-): ReadonlySet<AdminPermission> {
-  return new Set(rolePermissions[role]);
-}
+  });
+});

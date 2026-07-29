@@ -16,12 +16,15 @@ export class AdminBootstrapError extends Error {
 }
 
 function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-    value,
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value,
+    )
   );
 }
 
-function validateInput(input) {
+function normalizeInput(input) {
   if (!isUuid(input.userId)) {
     throw new AdminBootstrapError(
       "INVALID_USER_ID",
@@ -63,6 +66,11 @@ function validateInput(input) {
       2,
     );
   }
+
+  return {
+    ...input,
+    userId: input.userId.toLowerCase(),
+  };
 }
 
 function requestHash(input) {
@@ -461,6 +469,36 @@ async function executeReservedCommand(client, input, reservation) {
       return result;
     }
 
+    const telegramMethod = await client.query(
+      `
+        SELECT id
+        FROM identity_methods
+        WHERE user_id = $1
+          AND method_type = 'telegram'
+          AND verified_at IS NOT NULL
+        ORDER BY verified_at DESC, id
+        LIMIT 1
+        FOR SHARE
+      `,
+      [input.userId],
+    );
+
+    if (!telegramMethod.rows[0]) {
+      const result = await rejectReservedCommand(
+        client,
+        input,
+        reservation,
+        {
+          errorCode: "ACTIVE_TELEGRAM_METHOD_REQUIRED",
+          resultStatus: 422,
+        },
+      );
+      await client.query("COMMIT");
+      transactionOpen = false;
+
+      return result;
+    }
+
     const activeOwners = await client.query(
       `
         SELECT id, user_id
@@ -649,7 +687,7 @@ async function recordFailedAttempt(
 }
 
 export async function bootstrapOwner(input, options = {}) {
-  validateInput(input);
+  const normalizedInput = normalizeInput(input);
   const administrationEnabled =
     process.env.ADMINISTRATION_ENABLED?.trim().toLowerCase();
 
@@ -683,7 +721,10 @@ export async function bootstrapOwner(input, options = {}) {
   await client.connect();
 
   try {
-    const reservation = await reserveCommand(client, input);
+    const reservation = await reserveCommand(
+      client,
+      normalizedInput,
+    );
 
     if (reservation.repeated) {
       return reservation;
@@ -694,13 +735,13 @@ export async function bootstrapOwner(input, options = {}) {
     try {
       result = await executeReservedCommand(
         client,
-        input,
+        normalizedInput,
         reservation,
       );
     } catch (error) {
       await recordFailedAttempt(
         client,
-        input,
+        normalizedInput,
         reservation,
         error,
       );
@@ -708,10 +749,17 @@ export async function bootstrapOwner(input, options = {}) {
     }
 
     if (result.rejectedCode) {
+      const rejectionMessages = {
+        ACTIVE_USER_NOT_FOUND:
+          "Активный пользователь с указанным UUID не найден.",
+        ACTIVE_TELEGRAM_METHOD_REQUIRED:
+          "Для первого владельца требуется подтверждённый вход через Telegram.",
+        BOOTSTRAP_OWNER_ALREADY_EXISTS:
+          "Первый владелец уже назначен другой учётной записи.",
+      };
       const message =
-        result.rejectedCode === "ACTIVE_USER_NOT_FOUND"
-          ? "Активный пользователь с указанным UUID не найден."
-          : "Первый владелец уже назначен другой учётной записи.";
+        rejectionMessages[result.rejectedCode] ??
+        "Команда назначения первого владельца отклонена.";
 
       throw new AdminBootstrapError(
         result.rejectedCode,

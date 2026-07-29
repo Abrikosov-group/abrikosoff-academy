@@ -273,6 +273,33 @@ CREATE INDEX admin_command_executions_actor_idx
   ON admin_command_executions (actor_user_id, created_at DESC)
   WHERE actor_user_id IS NOT NULL;
 
+CREATE FUNCTION protect_admin_command_execution_journal()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.status IN ('in_progress', 'waiting_external') THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+
+  RAISE EXCEPTION
+    'terminal admin command executions are immutable'
+    USING ERRCODE = '55000';
+END;
+$$;
+
+CREATE TRIGGER admin_command_executions_protect_journal
+BEFORE UPDATE OR DELETE ON admin_command_executions
+FOR EACH ROW
+EXECUTE FUNCTION protect_admin_command_execution_journal();
+
+CREATE TRIGGER admin_command_executions_no_truncate
+BEFORE TRUNCATE ON admin_command_executions
+FOR EACH STATEMENT
+EXECUTE FUNCTION protect_admin_command_execution_journal();
+
 CREATE TABLE admin_audit_events (
   id uuid PRIMARY KEY,
   request_id uuid NOT NULL,

@@ -18,7 +18,7 @@ export default async function ProtectedAdminLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const context = await requireAdminContext("admin:enter");
+  const context = await requireAdminContext("admin.enter");
 
   return (
     <main className="admin-page">

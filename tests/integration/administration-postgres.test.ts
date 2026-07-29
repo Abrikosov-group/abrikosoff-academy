@@ -72,6 +72,68 @@ describe("Administration с PostgreSQL", () => {
     await pool.end();
   });
 
+  it("не назначает первым owner пользователя без Telegram", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const emailOnlyUser = await identityRepository.upsertIdentity({
+      methodType: "email",
+      identifier: "email-only-owner@example.test",
+      displayName: "Пользователь только с email",
+      metadata: {},
+      consent,
+    });
+
+    await expect(
+      runBootstrap({
+        userId: emailOnlyUser.id,
+        reason:
+          "Проверка запрета назначения владельца без Telegram",
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining(
+        "ACTIVE_TELEGRAM_METHOD_REQUIRED",
+      ),
+    });
+
+    const persisted = await pool.query<{
+      assignments: string;
+      status: string;
+      error_code: string;
+      audit_events: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(*)::text
+            FROM admin_role_assignments
+            WHERE user_id = $1
+              AND role = 'owner'
+              AND status = 'active'
+          ) AS assignments,
+          execution.status,
+          execution.error_code,
+          (
+            SELECT count(*)::text
+            FROM admin_audit_events
+            WHERE command_execution_id = execution.id
+          ) AS audit_events
+        FROM admin_command_executions AS execution
+        WHERE execution.target_id = $1::text
+        ORDER BY execution.created_at DESC
+        LIMIT 1
+      `,
+      [emailOnlyUser.id],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      assignments: "0",
+      status: "rejected",
+      error_code: "ACTIVE_TELEGRAM_METHOD_REQUIRED",
+      audit_events: "1",
+    });
+  });
+
   it("назначает первого owner идемпотентно и пишет неизменяемый аудит", async () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(
@@ -96,7 +158,7 @@ describe("Administration с PostgreSQL", () => {
     const idempotencyKey = randomUUID();
     const reason = "Первичное назначение владельца в integration";
     const first = await runBootstrap({
-      userId: ordinarySession.user.id,
+      userId: ordinarySession.user.id.toUpperCase(),
       reason,
       idempotencyKey,
     });
@@ -165,7 +227,7 @@ describe("Administration с PostgreSQL", () => {
     await expect(
       administrationService.getContext({
         tokenSha256: ordinaryTokenSha256,
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: randomUUID(),
       }),
     ).rejects.toMatchObject({
@@ -206,7 +268,7 @@ describe("Administration с PostgreSQL", () => {
       });
     const context = await administrationService.getContext({
       tokenSha256: hashIdentityToken(adminSession.token),
-      permission: "dashboard:read",
+      permission: "dashboard.read",
       requestId: randomUUID(),
     });
 
@@ -217,7 +279,7 @@ describe("Administration с PostgreSQL", () => {
       roles: ["owner"],
       adminVerificationMethod: "telegram_oidc",
     });
-    expect(context.permissions.has("roles:write")).toBe(true);
+    expect(context.permissions.has("roles.write")).toBe(true);
     await expect(
       identityRepository.findUserBySessionTokenSha256(
         ordinaryTokenSha256,
@@ -277,11 +339,51 @@ describe("Administration с PostgreSQL", () => {
     await expect(
       administrationService.getContext({
         tokenSha256: hashIdentityToken(adminSession.token),
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: randomUUID(),
       }),
     ).rejects.toMatchObject({
       code: "ADMIN_AUTH_REQUIRED",
+    });
+  });
+
+  it("не позволяет изменить или удалить завершённую команду", async () => {
+    const terminalExecution = await pool.query<{ id: string }>(
+      `
+        SELECT id
+        FROM admin_command_executions
+        WHERE status IN ('succeeded', 'rejected', 'failed')
+        ORDER BY completed_at, id
+        LIMIT 1
+      `,
+    );
+    const executionId = terminalExecution.rows[0]?.id;
+
+    expect(executionId).toBeDefined();
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET result_status = 201
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          DELETE FROM admin_command_executions
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
     });
   });
 

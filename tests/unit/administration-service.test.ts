@@ -58,7 +58,7 @@ describe("AdministrationService", () => {
     await expect(
       service.getContext({
         tokenSha256: "a".repeat(64),
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: "request-1",
         now,
       }),
@@ -108,7 +108,7 @@ describe("AdministrationService", () => {
     await expect(
       withoutRole.getContext({
         tokenSha256: "c".repeat(64),
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: "request-2",
         now,
       }),
@@ -119,7 +119,7 @@ describe("AdministrationService", () => {
     await expect(
       withoutVerification.getContext({
         tokenSha256: "d".repeat(64),
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: "request-3",
         now,
       }),
@@ -140,7 +140,7 @@ describe("AdministrationService", () => {
     await expect(
       service.getContext({
         tokenSha256: "e".repeat(64),
-        permission: "admin:enter",
+        permission: "admin.enter",
         requestId: "request-4",
         now,
       }),
@@ -153,7 +153,7 @@ describe("AdministrationService", () => {
     const { service } = runtime(session());
     const context = await service.getContext({
       tokenSha256: "f".repeat(64),
-      permission: "dashboard:read",
+      permission: "dashboard.read",
       requestId: "request-5",
       now,
     });
@@ -164,7 +164,7 @@ describe("AdministrationService", () => {
       adminVerificationMethod: "telegram_oidc",
       requestId: "request-5",
     });
-    expect(context.permissions.has("roles:write")).toBe(true);
+    expect(context.permissions.has("roles.write")).toBe(true);
   });
 
   it("не включает отключённую роль support", async () => {
@@ -173,7 +173,7 @@ describe("AdministrationService", () => {
     await expect(
       service.getContext({
         tokenSha256: "1".repeat(64),
-        permission: "users:read",
+        permission: "users.read",
         requestId: "request-6",
         now,
       }),

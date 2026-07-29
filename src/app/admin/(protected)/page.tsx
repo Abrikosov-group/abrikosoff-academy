@@ -1,7 +1,7 @@
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 
 export default async function AdminPage() {
-  await requireAdminContext("dashboard:read");
+  await requireAdminContext("dashboard.read");
 
   return (
     <>
