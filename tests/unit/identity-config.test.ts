@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getIdentityConfig } from "@/modules/identity/server/identity-config";
+import {
+  getIdentityConfig,
+  resolveIdentityPublicBaseUrl,
+} from "@/modules/identity/server/identity-config";
 
 const callbackUrl =
   "https://academy.abrikosoff.com/api/auth/telegram/callback";
@@ -74,6 +77,39 @@ describe("getIdentityConfig", () => {
       vi.stubEnv("TELEGRAM_HTTPS_PROXY_URL", proxyUrl);
 
       expect(getIdentityConfig().telegram).toBeUndefined();
+    },
+  );
+
+  it("возвращает канонический публичный origin вместо внутреннего адреса", () => {
+    configureTelegram();
+
+    expect(
+      resolveIdentityPublicBaseUrl(
+        "http://127.0.0.1:3100/api/auth/logout",
+      ),
+    ).toBe("https://academy.abrikosoff.com");
+  });
+
+  it.each([
+    "http://academy.abrikosoff.com",
+    "https://user:password@academy.abrikosoff.com",
+    "https://academy.abrikosoff.com/nested",
+    "https://academy.abrikosoff.com/?source=test",
+  ])(
+    "отклоняет небезопасный production APP_BASE_URL: %s",
+    (publicBaseUrl) => {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("APP_BASE_URL", publicBaseUrl);
+
+      expect(() =>
+        resolveIdentityPublicBaseUrl(
+          "http://127.0.0.1:3100/api/auth/logout",
+        ),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "AUTH_NOT_CONFIGURED",
+        }),
+      );
     },
   );
 });

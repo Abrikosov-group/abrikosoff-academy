@@ -429,6 +429,11 @@ describe("Administration с PostgreSQL", () => {
 
     const administrationRepository =
       new PostgresAdministrationRepository(pool);
+    await expect(
+      administrationRepository.findActiveRolesByUserId(
+        ordinarySession.user.id,
+      ),
+    ).resolves.toEqual(["owner"]);
     const administrationService = new AdministrationService(
       administrationRepository,
       {

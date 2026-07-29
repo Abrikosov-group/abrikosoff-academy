@@ -157,6 +157,72 @@ test("защищённый /admin перечитывает роль на каж�
       page.getByText(/демонстрационные показатели/),
     ).toBeVisible();
 
+    const adminAccountMenu = page.getByRole("button", {
+      name: "Открыть меню аккаунта: E2E Владелец",
+      exact: true,
+    });
+
+    await expect(adminAccountMenu).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await adminAccountMenu.click();
+    await expect(adminAccountMenu).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    const adminAccountNavigation = page.getByRole("navigation", {
+      name: "Переходы аккаунта",
+      exact: true,
+    });
+    await expect(
+      adminAccountNavigation.getByRole("link", {
+        name: "Админка",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      adminAccountNavigation.getByRole("link", {
+        name: "Профиль и вход",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Выйти",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("navigation", {
+        name: "Переходы аккаунта",
+        exact: true,
+      })
+      .getByRole("link", {
+        name: "Личный кабинет",
+        exact: true,
+      })
+      .click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+
+    const cabinetAccountMenu = page.getByRole("button", {
+      name: "Открыть меню аккаунта: E2E Владелец",
+      exact: true,
+    });
+
+    await cabinetAccountMenu.click();
+    await page
+      .getByRole("navigation", {
+        name: "Переходы аккаунта",
+        exact: true,
+      })
+      .getByRole("link", {
+        name: "Админка",
+        exact: true,
+      })
+      .click();
+    await expect(page).toHaveURL(/\/admin$/);
+
     const crossOriginStart = await page.request.post(
       "/api/admin/auth/telegram/start",
       {

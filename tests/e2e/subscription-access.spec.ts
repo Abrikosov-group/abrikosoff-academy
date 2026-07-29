@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { Client } from "pg";
 
+const baseUrl = "http://127.0.0.1:3200";
 const lessonPath = "/courses/healthy-habits/lessons/1";
 const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
@@ -258,6 +259,46 @@ test("вход, оплата и доступ к уроку работают ка
   ).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 720 });
 
+  await page.goto("/dashboard");
+  const accountMenuButton = page.getByRole("button", {
+    name: /Открыть меню аккаунта:/,
+  });
+
+  await accountMenuButton.click();
+  const accountNavigation = page.getByRole("navigation", {
+    name: "Переходы аккаунта",
+    exact: true,
+  });
+  await expect(
+    accountNavigation.getByRole("link", {
+      name: "Личный кабинет",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    accountNavigation.getByRole("link", {
+      name: "Профиль и вход",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    accountNavigation.getByRole("link", {
+      name: "Админка",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Выйти",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(accountMenuButton).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+
   const database = new Client({
     connectionString: testDatabaseUrl,
     application_name: "academy-e2e-expiry-check",
@@ -289,4 +330,21 @@ test("вход, оплата и доступ к уроку работают ка
 
   await page.goto(lessonPath);
   await expect(page).toHaveURL(/\/pricing$/);
+
+  await page.goto("/dashboard");
+  await page
+    .getByRole("button", {
+      name: /Открыть меню аккаунта:/,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Выйти",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(`${baseUrl}/`);
+
+  await page.goto("/dashboard");
+  await expect(page).toHaveURL(/\/login$/);
 });

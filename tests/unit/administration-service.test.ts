@@ -38,6 +38,9 @@ function runtime(
   enabled = true,
 ) {
   const repository = {
+    findActiveRolesByUserId: vi.fn().mockResolvedValue(
+      record?.roles ?? [],
+    ),
     findAdminSessionByTokenSha256: vi
       .fn()
       .mockResolvedValue(record),
@@ -52,6 +55,38 @@ function runtime(
 }
 
 describe("AdministrationService", () => {
+  it("показывает вход в админку только для активной включённой роли", async () => {
+    const ownerRuntime = runtime(session());
+    const supportRuntime = runtime(
+      session({ roles: ["support"] }),
+    );
+
+    await expect(
+      ownerRuntime.service.canEnterAdministration(
+        session().actor.id,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      supportRuntime.service.canEnterAdministration(
+        session().actor.id,
+      ),
+    ).resolves.toBe(false);
+    expect(
+      ownerRuntime.repository.findActiveRolesByUserId,
+    ).toHaveBeenCalledWith(session().actor.id);
+  });
+
+  it("не обращается к ролям при выключенном контуре", async () => {
+    const { repository, service } = runtime(session(), false);
+
+    await expect(
+      service.canEnterAdministration(session().actor.id),
+    ).resolves.toBe(false);
+    expect(
+      repository.findActiveRolesByUserId,
+    ).not.toHaveBeenCalled();
+  });
+
   it("запрещает контур при выключенном release-гейте", async () => {
     const { service } = runtime(session(), false);
 

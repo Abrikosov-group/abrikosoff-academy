@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { AdministrationRepository } from "../application/administration-repository";
 import { isAdminRole } from "../domain/permissions";
 import type {
+  AdminRole,
   AdminSessionRecord,
   AdminVerificationMethod,
 } from "../domain/types";
@@ -75,6 +76,28 @@ export class PostgresAdministrationRepository
   implements AdministrationRepository
 {
   constructor(private readonly pool: Pool) {}
+
+  async findActiveRolesByUserId(
+    userId: string,
+  ): Promise<readonly AdminRole[]> {
+    const result = await this.pool.query<{ role: string }>(
+      `
+        SELECT DISTINCT assignments.role
+        FROM admin_role_assignments assignments
+        JOIN identity_users users
+          ON users.id = assignments.user_id
+        WHERE assignments.user_id = $1
+          AND assignments.status = 'active'
+          AND users.status = 'active'
+        ORDER BY assignments.role
+      `,
+      [userId],
+    );
+
+    return result.rows
+      .map((row) => row.role)
+      .filter(isAdminRole);
+  }
 
   async findAdminSessionByTokenSha256(tokenSha256: string) {
     const result = await this.pool.query<AdminSessionRow>(

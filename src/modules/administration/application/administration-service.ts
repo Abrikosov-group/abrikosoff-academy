@@ -80,6 +80,17 @@ export class AdministrationService {
     }
   }
 
+  async canEnterAdministration(userId: string) {
+    if (!this.options.enabled) {
+      return false;
+    }
+
+    const roles =
+      await this.repository.findActiveRolesByUserId(userId);
+
+    return permissionsForRoles(roles).has("admin.enter");
+  }
+
   private async requireBaseSession(
     tokenSha256: string | undefined,
   ) {

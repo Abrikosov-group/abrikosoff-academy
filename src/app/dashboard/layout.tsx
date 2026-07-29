@@ -1,7 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
+import { AccountMenu } from "@/components/academy/account-menu";
 import { CabinetNavigation } from "@/components/academy/cabinet-navigation";
 import { getCabinetContext } from "./_lib/cabinet-context";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function getInitials(displayName: string) {
   const initials = displayName
@@ -21,6 +25,7 @@ export default async function DashboardLayout({
 }>) {
   const {
     user,
+    canAccessAdministration,
     subscriptionActive,
     subscriptionEnded,
   } = await getCabinetContext();
@@ -49,13 +54,11 @@ export default async function DashboardLayout({
                 ? "Доступ завершён"
                 : "Нет подписки"}
           </span>
-          <Link
-            aria-label="Открыть профиль"
-            className="header-avatar"
-            href="/dashboard/profile"
-          >
-            {getInitials(user.displayName)}
-          </Link>
+          <AccountMenu
+            canAccessAdministration={canAccessAdministration}
+            displayName={user.displayName}
+            initials={getInitials(user.displayName)}
+          />
         </div>
       </header>
 

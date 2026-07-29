@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { AccountMenu } from "@/components/academy/account-menu";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 
 function getInitials(displayName: string) {
@@ -34,12 +35,11 @@ export default async function ProtectedAdminLayout({
         </Link>
         <div className="admin-header-actions">
           <span className="badge badge-warm">Администратор</span>
-          <span
-            aria-label={context.actor.displayName}
-            className="header-avatar"
-          >
-            {getInitials(context.actor.displayName)}
-          </span>
+          <AccountMenu
+            canAccessAdministration
+            displayName={context.actor.displayName}
+            initials={getInitials(context.actor.displayName)}
+          />
         </div>
       </header>
       <div className="admin-layout">
