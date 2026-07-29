@@ -1,0 +1,130 @@
+# Постоянный публичный адрес локальной разработки
+
+Для Telegram OIDC локальная Академия использует именованный Cloudflare Tunnel:
+
+- публичный адрес: `https://academy-dev.abrikosoff.com`;
+- локальный адрес приложения: `http://127.0.0.1:3100`;
+- имя туннеля: `abrikosoff-academy-local`.
+
+Адрес и DNS остаются постоянными. Сайт доступен по нему, пока на компьютере
+запущены приложение и `cloudflared`.
+
+## 1. Разделение локальной и боевой среды
+
+Для локальной среды используются:
+
+- отдельная база PostgreSQL без данных реальных учеников;
+- `PAYMENTS_MODE=demo`;
+- отдельный Telegram-бот или OIDC-клиент для разработки;
+- отдельные локальные секреты в `.env.local`.
+
+Боевые ключи Telegram, ЮKassa и production-базы в локальную среду не
+копируются.
+
+Для проверки Telegram в BotFather регистрируются точные значения:
+
+```text
+Origin:
+https://academy-dev.abrikosoff.com
+
+Redirect URI:
+https://academy-dev.abrikosoff.com/api/auth/telegram/callback
+```
+
+В `.env.local` задаются:
+
+```dotenv
+APP_BASE_URL=https://academy-dev.abrikosoff.com
+TELEGRAM_OIDC_REDIRECT_URI=https://academy-dev.abrikosoff.com/api/auth/telegram/callback
+PAYMENTS_MODE=demo
+PAYMENT_DEFAULT_PROVIDER=demo
+```
+
+## 2. Однократное создание туннеля
+
+`cloudflared` должен быть установлен, а зона `abrikosoff.com` — подключена к
+Cloudflare.
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create abrikosoff-academy-local
+cloudflared tunnel route dns \
+  abrikosoff-academy-local \
+  academy-dev.abrikosoff.com
+```
+
+Команда создания выводит идентификатор туннеля и создаёт файл учётных данных
+`~/.cloudflared/<TUNNEL_ID>.json`.
+
+Создать локальный файл
+`~/.cloudflared/abrikosoff-academy-local.yml` по образцу:
+
+```yaml
+tunnel: <TUNNEL_ID>
+credentials-file: /Users/<USER>/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: academy-dev.abrikosoff.com
+    service: http://127.0.0.1:3100
+  - service: http_status:404
+```
+
+Файл учётных данных и локальную конфигурацию не добавляют в Git.
+
+## 3. Запуск
+
+Сначала запустить Академию на фиксированном интерфейсе и порту:
+
+```bash
+npm run dev -- --hostname 127.0.0.1 --port 3100
+```
+
+Во втором терминале запустить туннель:
+
+```bash
+cloudflared tunnel \
+  --config ~/.cloudflared/abrikosoff-academy-local.yml \
+  run abrikosoff-academy-local
+```
+
+Для фонового запуска в macOS можно использовать отдельную сессию `screen`:
+
+```bash
+screen -dmS academy-abrikosoff-tunnel \
+  cloudflared tunnel \
+    --config ~/.cloudflared/abrikosoff-academy-local.yml \
+    run abrikosoff-academy-local
+```
+
+## 4. Проверка
+
+```bash
+curl --fail --silent --show-error \
+  https://academy-dev.abrikosoff.com/api/health
+```
+
+Ответ должен содержать `"status":"ok"`. После этого проверяются начало входа
+через Telegram и возврат на точный Redirect URI.
+
+Состояние фоновых процессов:
+
+```bash
+screen -ls
+```
+
+Остановка туннеля:
+
+```bash
+screen -S academy-abrikosoff-tunnel -X quit
+```
+
+## 5. Диагностика
+
+- `502 Bad Gateway` означает, что туннель работает, но приложение не слушает
+  `127.0.0.1:3100`.
+- Ошибка DNS означает, что маршрут
+  `academy-dev.abrikosoff.com` не создан или ещё не распространился.
+- Возврат Telegram на страницу входа означает, что `Origin`, Redirect URI и
+  переменные локального приложения нужно сравнить посимвольно.
+- Туннель не заменяет локальный сервер: после перезагрузки компьютера оба
+  процесса нужно запустить снова либо оформить как пользовательские службы.
