@@ -4,6 +4,7 @@ import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redi
 import { getIdentityRuntime } from "@/modules/identity/server/get-identity-service";
 import { setSessionCookie } from "@/modules/identity/server/session";
 import { logUnexpectedServerError } from "@/lib/safe-server-log";
+import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,11 @@ export async function GET(request: Request) {
 
   try {
     const { service } = getIdentityRuntime();
-    const result = await service.verifyEmailLogin(token);
+    const result = await service.verifyEmailLogin(token, {
+      userAgentFamily: normalizeUserAgentFamily(
+        request.headers.get("user-agent"),
+      ),
+    });
     const response = NextResponse.redirect(
       new URL(
         normalizeLoginRedirectPath(result.redirectPath),

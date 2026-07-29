@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -107,11 +108,13 @@ describe("Identity и Billing с PostgreSQL", () => {
     const repository = new PostgresIdentityRepository(pool);
     const service = new IdentityService(repository, 30);
     const session = await service.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-session",
       displayName: "Тестовая ученица",
       receiptEmail: "session@example.test",
       metadata: {
+        photoUrl: "https://cdn4.telesco.pe/file/avatar-v1.jpg",
         username: "integration_student",
       },
       consent,
@@ -122,8 +125,40 @@ describe("Identity и Billing с PostgreSQL", () => {
       repository.findUserBySessionTokenSha256(tokenHash),
     ).resolves.toMatchObject({
       id: session.user.id,
+      avatarUrl: "https://cdn4.telesco.pe/file/avatar-v1.jpg",
       displayName: "Тестовая ученица",
       receiptEmail: "session@example.test",
+    });
+
+    await pool.query(
+      `
+        INSERT INTO identity_methods (
+          id,
+          user_id,
+          method_type,
+          identifier,
+          verified_at,
+          metadata
+        )
+        VALUES (
+          $1,
+          $2,
+          'email',
+          'linked-session@example.test',
+          now() + interval '1 minute',
+          '{}'::jsonb
+        )
+      `,
+      [randomUUID(), session.user.id],
+    );
+
+    await expect(
+      repository.findUserBySessionTokenSha256(tokenHash),
+    ).resolves.toMatchObject({
+      avatarUrl: "https://cdn4.telesco.pe/file/avatar-v1.jpg",
+      primaryMethod: {
+        type: "email",
+      },
     });
 
     await repository.revokeSession(tokenHash);
@@ -221,6 +256,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-payment",
       displayName: "Плательщик",
@@ -473,6 +509,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-access-grants",
       displayName: "Два платежа",
@@ -623,6 +660,7 @@ describe("Identity и Billing с PostgreSQL", () => {
     const identityRepository = new PostgresIdentityRepository(pool);
     const identityService = new IdentityService(identityRepository, 30);
     const session = await identityService.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
       methodType: "telegram",
       identifier: "integration-telegram-late-webhook",
       displayName: "Раннее уведомление",

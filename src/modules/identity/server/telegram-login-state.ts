@@ -13,22 +13,33 @@ import { IdentityError } from "../domain/errors";
 const telegramLoginStateTtlMs = 10 * 60_000;
 
 type TelegramLoginStatePayload = {
-  version: 3;
+  version: 4;
   state: string;
   nonce: string;
   codeVerifier: string;
   redirectPath: string;
   consentVersion: string;
+  purpose: "login" | "admin";
+  requestedBySessionId?: string;
+  requestedByUserId?: string;
   issuedAt: number;
 };
 
-type TelegramLoginState = {
+export type TelegramLoginState = {
   state: string;
   nonce: string;
   codeChallenge: string;
   cookieValue: string;
   expiresAt: Date;
 };
+
+export type TelegramLoginIntent =
+  | { purpose: "login" }
+  | {
+      purpose: "admin";
+      requestedBySessionId: string;
+      requestedByUserId: string;
+    };
 
 function stateCookieName() {
   return process.env.NODE_ENV === "production"
@@ -50,6 +61,15 @@ function equalText(left: string, right: string) {
   );
 }
 
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value,
+    )
+  );
+}
+
 function invalidState() {
   return new IdentityError(
     "INVALID_LOGIN",
@@ -63,8 +83,19 @@ export function createTelegramLoginState(
   consentVersion: string,
   clientSecret: string,
   now: Date = new Date(),
+  intent: TelegramLoginIntent = { purpose: "login" },
 ): TelegramLoginState {
   if (!isSafeInternalRedirectPath(redirectPath)) {
+    throw invalidState();
+  }
+
+  if (
+    intent.purpose === "admin" &&
+    (
+      !isUuid(intent.requestedBySessionId) ||
+      !isUuid(intent.requestedByUserId)
+    )
+  ) {
     throw invalidState();
   }
 
@@ -72,12 +103,19 @@ export function createTelegramLoginState(
   const nonce = randomBytes(32).toString("base64url");
   const codeVerifier = randomBytes(32).toString("base64url");
   const payload: TelegramLoginStatePayload = {
-    version: 3,
+    version: 4,
     state,
     nonce,
     codeVerifier,
     redirectPath,
     consentVersion,
+    purpose: intent.purpose,
+    ...(intent.purpose === "admin"
+      ? {
+          requestedBySessionId: intent.requestedBySessionId,
+          requestedByUserId: intent.requestedByUserId,
+        }
+      : {}),
     issuedAt: now.getTime(),
   };
   const encodedPayload = Buffer.from(
@@ -145,7 +183,7 @@ export function verifyTelegramLoginState(
     typeof payload !== "object" ||
     payload === null ||
     !("version" in payload) ||
-    payload.version !== 3 ||
+    payload.version !== 4 ||
     !("state" in payload) ||
     typeof payload.state !== "string" ||
     !equalText(payload.state, state) ||
@@ -159,6 +197,9 @@ export function verifyTelegramLoginState(
     !isSafeInternalRedirectPath(payload.redirectPath) ||
     !("consentVersion" in payload) ||
     payload.consentVersion !== expectedConsentVersion ||
+    !("purpose" in payload) ||
+    typeof payload.purpose !== "string" ||
+    !["login", "admin"].includes(payload.purpose) ||
     !("issuedAt" in payload) ||
     typeof payload.issuedAt !== "number"
   ) {
@@ -175,11 +216,41 @@ export function verifyTelegramLoginState(
     );
   }
 
-  return {
+  const common = {
     redirectPath: payload.redirectPath,
     consentVersion: payload.consentVersion,
     nonce: payload.nonce,
     codeVerifier: payload.codeVerifier,
+  };
+
+  if (payload.purpose === "admin") {
+    if (
+      !("requestedBySessionId" in payload) ||
+      !isUuid(payload.requestedBySessionId) ||
+      !("requestedByUserId" in payload) ||
+      !isUuid(payload.requestedByUserId)
+    ) {
+      throw invalidState();
+    }
+
+    return {
+      ...common,
+      purpose: "admin" as const,
+      requestedBySessionId: payload.requestedBySessionId,
+      requestedByUserId: payload.requestedByUserId,
+    };
+  }
+
+  if (
+    "requestedBySessionId" in payload ||
+    "requestedByUserId" in payload
+  ) {
+    throw invalidState();
+  }
+
+  return {
+    ...common,
+    purpose: "login" as const,
   };
 }
 

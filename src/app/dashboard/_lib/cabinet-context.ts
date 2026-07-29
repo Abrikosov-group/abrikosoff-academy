@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getDatabasePool } from "@/lib/database";
 import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
+import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const getCabinetContext = cache(async () => {
@@ -14,15 +15,19 @@ export const getCabinetContext = cache(async () => {
     redirect("/login");
   }
 
-  const subscription = await getSubscriptionSummary(
-    getDatabasePool(),
-    user.id,
-  );
+  const [subscription, canAccessAdministration] =
+    await Promise.all([
+      getSubscriptionSummary(getDatabasePool(), user.id),
+      getAdministrationRuntime().service.canEnterAdministration(
+        user.id,
+      ),
+    ]);
   const subscriptionActive =
     hasCurrentSubscriptionAccess(subscription);
 
   return {
     user,
+    canAccessAdministration,
     subscription,
     subscriptionActive,
     subscriptionEnded: Boolean(

@@ -23,6 +23,17 @@ type SafeErrorDetails = {
 };
 
 const safeIdentifierPattern = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/;
+const safeRequestIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const safeUserAgentFamilies = new Set([
+  "Microsoft Edge",
+  "Opera",
+  "Google Chrome",
+  "Mozilla Firefox",
+  "Safari",
+  "Telegram",
+  "Другой браузер",
+]);
 
 function safeIdentifier(value: unknown) {
   return typeof value === "string" &&
@@ -36,6 +47,20 @@ function safeStatus(value: unknown) {
     Number.isInteger(value) &&
     value >= 100 &&
     value <= 599
+    ? value
+    : undefined;
+}
+
+function safeRequestId(value: unknown) {
+  return typeof value === "string" &&
+    safeRequestIdPattern.test(value)
+    ? value.toLowerCase()
+    : undefined;
+}
+
+function safeUserAgentFamily(value: unknown) {
+  return typeof value === "string" &&
+    safeUserAgentFamilies.has(value)
     ? value
     : undefined;
 }
@@ -110,6 +135,38 @@ export function logUnexpectedServerError(
       incidentId,
       errorType: classifyError(error),
       ...(errorDetails ? { errorDetails } : {}),
+    }),
+  );
+
+  return incidentId;
+}
+
+export function logSecurityEvent(
+  event: string,
+  details: {
+    code: string;
+    requestId?: string;
+    userAgentFamily?: string;
+  },
+) {
+  const incidentId = randomUUID();
+  const safeEvent =
+    safeIdentifier(event) ?? "security.invalid_event";
+  const code =
+    safeIdentifier(details.code) ?? "INVALID_SECURITY_CODE";
+  const requestId = safeRequestId(details.requestId);
+  const userAgentFamily = safeUserAgentFamily(
+    details.userAgentFamily,
+  );
+
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: safeEvent,
+      incidentId,
+      code,
+      ...(requestId ? { requestId } : {}),
+      ...(userAgentFamily ? { userAgentFamily } : {}),
     }),
   );
 

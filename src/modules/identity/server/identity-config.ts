@@ -1,5 +1,7 @@
 import "server-only";
 
+import { IdentityError } from "../domain/errors";
+
 export const privacyDocumentVersion = "2026-07-28";
 
 export type IdentityConfig = {
@@ -13,6 +15,49 @@ export type IdentityConfig = {
     redirectUri: string;
   };
 };
+
+export function resolveIdentityPublicBaseUrl(requestUrl: string) {
+  const configured = process.env.APP_BASE_URL?.trim();
+  const candidate =
+    configured ||
+    (process.env.NODE_ENV === "production"
+      ? undefined
+      : requestUrl);
+
+  if (!candidate) {
+    throw new IdentityError(
+      "AUTH_NOT_CONFIGURED",
+      "Публичный адрес Академии не настроен.",
+      503,
+    );
+  }
+
+  try {
+    const url = new URL(candidate);
+
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      (process.env.NODE_ENV === "production" &&
+        url.protocol !== "https:") ||
+      url.username ||
+      url.password ||
+      (configured && url.pathname !== "/") ||
+      url.search ||
+      url.hash
+    ) {
+      throw new TypeError("Некорректный публичный адрес Академии.");
+    }
+
+    return url.origin;
+  } catch (error) {
+    throw new IdentityError(
+      "AUTH_NOT_CONFIGURED",
+      "Публичный адрес Академии настроен некорректно.",
+      503,
+      { cause: error },
+    );
+  }
+}
 
 function readTelegramProxyUrl() {
   const configuredProxyUrl =
