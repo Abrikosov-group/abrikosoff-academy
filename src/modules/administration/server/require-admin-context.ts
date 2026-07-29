@@ -6,6 +6,7 @@ import {
   notFound,
   redirect,
 } from "next/navigation";
+import { logSecurityEvent } from "@/lib/safe-server-log";
 import { loginPathFor } from "@/modules/identity/domain/login-redirect";
 import { normalizeAdminRedirectPath } from "../domain/admin-redirect";
 import { getCurrentSessionTokenSha256 } from "@/modules/identity/server/session";
@@ -32,17 +33,26 @@ export async function requireAdminContext(
     notFound();
   }
 
+  const requestId = randomUUID();
+
   try {
     const { service } = getAdministrationRuntime();
 
     return await service.getContext({
       tokenSha256: await getCurrentSessionTokenSha256(),
       permission,
-      requestId: randomUUID(),
+      requestId,
     });
   } catch (error) {
     if (!(error instanceof AdministrationError)) {
       throw error;
+    }
+
+    if (error.code !== "ADMINISTRATION_DISABLED") {
+      logSecurityEvent("administration.access_rejected", {
+        code: error.code,
+        requestId,
+      });
     }
 
     switch (error.code) {
@@ -69,6 +79,8 @@ export async function requireAdminVerificationStart(
     notFound();
   }
 
+  const requestId = randomUUID();
+
   try {
     const { service } = getAdministrationRuntime();
 
@@ -78,6 +90,16 @@ export async function requireAdminVerificationStart(
   } catch (error) {
     if (!(error instanceof AdministrationError)) {
       throw error;
+    }
+
+    if (error.code !== "ADMINISTRATION_DISABLED") {
+      logSecurityEvent(
+        "administration.verification_start_rejected",
+        {
+          code: error.code,
+          requestId,
+        },
+      );
     }
 
     switch (error.code) {

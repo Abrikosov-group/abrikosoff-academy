@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { AdministrationError } from "@/modules/administration/domain/errors";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
@@ -17,7 +18,10 @@ import {
   verifyTelegramLoginState,
 } from "@/modules/identity/server/telegram-login-state";
 import { exchangeTelegramAuthorizationCode } from "@/modules/identity/server/telegram-oidc";
-import { logUnexpectedServerError } from "@/lib/safe-server-log";
+import {
+  logSecurityEvent,
+  logUnexpectedServerError,
+} from "@/lib/safe-server-log";
 import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +31,10 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const config = getIdentityConfig();
   const publicOrigin = config.telegram?.redirectUri || request.url;
+  const requestId = randomUUID();
+  const userAgentFamily = normalizeUserAgentFamily(
+    request.headers.get("user-agent"),
+  );
   let callbackPurpose: "login" | "admin" = "login";
 
   try {
@@ -62,9 +70,6 @@ export async function GET(request: NextRequest) {
         nonce: loginState.nonce,
         codeVerifier: loginState.codeVerifier,
       },
-    );
-    const userAgentFamily = normalizeUserAgentFamily(
-      request.headers.get("user-agent"),
     );
     const session =
       loginState.purpose === "admin"
@@ -122,6 +127,18 @@ export async function GET(request: NextRequest) {
         logUnexpectedServerError(
           "identity.telegram_transport_unavailable",
           error,
+        );
+      } else if (error.code !== "AUTH_NOT_CONFIGURED") {
+        logSecurityEvent(
+          callbackPurpose === "admin" ||
+            error instanceof AdministrationError
+            ? "administration.telegram_callback_rejected"
+            : "identity.telegram_callback_rejected",
+          {
+            code: error.code,
+            requestId,
+            userAgentFamily,
+          },
         );
       }
 

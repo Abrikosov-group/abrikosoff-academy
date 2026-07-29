@@ -1,9 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   readJsonBodyWithLimit,
   RequestBodyTooLargeError,
 } from "@/lib/read-request-body";
-import { logUnexpectedServerError } from "@/lib/safe-server-log";
+import {
+  logSecurityEvent,
+  logUnexpectedServerError,
+} from "@/lib/safe-server-log";
+import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 import { AdministrationError } from "@/modules/administration/domain/errors";
 import { normalizeAdminRedirectPath } from "@/modules/administration/domain/admin-redirect";
 import { getAdministrationConfig } from "@/modules/administration/server/administration-config";
@@ -29,6 +34,11 @@ export const runtime = "nodejs";
 const maximumBodyBytes = 4 * 1024;
 
 export async function POST(request: Request) {
+  const requestId = randomUUID();
+  const userAgentFamily = normalizeUserAgentFamily(
+    request.headers.get("user-agent"),
+  );
+
   try {
     if (!getAdministrationConfig().enabled) {
       throw new AdministrationError(
@@ -133,6 +143,25 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (error instanceof AdministrationError) {
+      if (
+        [
+          "ADMIN_AUTH_REQUIRED",
+          "ADMIN_LOGIN_REQUIRED",
+          "ADMIN_REAUTH_REQUIRED",
+          "ADMIN_ROLE_REQUIRED",
+          "ADMIN_PERMISSION_DENIED",
+        ].includes(error.code)
+      ) {
+        logSecurityEvent(
+          "administration.telegram_start_rejected",
+          {
+            code: error.code,
+            requestId,
+            userAgentFamily,
+          },
+        );
+      }
+
       return administrationErrorResponse(error);
     }
 

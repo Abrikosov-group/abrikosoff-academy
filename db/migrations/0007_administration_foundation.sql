@@ -141,7 +141,8 @@ CREATE TABLE admin_role_assignments (
     )
   ),
   CHECK (
-    char_length(grant_reason) BETWEEN 10 AND 500
+    grant_reason = btrim(grant_reason)
+    AND char_length(grant_reason) BETWEEN 10 AND 500
     AND grant_reason !~ '[[:cntrl:]]'
   ),
   CHECK (
@@ -160,7 +161,8 @@ CREATE TABLE admin_role_assignments (
   CHECK (
     revoke_reason IS NULL
     OR (
-      char_length(revoke_reason) BETWEEN 10 AND 500
+      revoke_reason = btrim(revoke_reason)
+      AND char_length(revoke_reason) BETWEEN 10 AND 500
       AND revoke_reason !~ '[[:cntrl:]]'
     )
   )
@@ -279,13 +281,36 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.status IN ('in_progress', 'waiting_external') THEN
-      RETURN NEW;
+    IF OLD.status NOT IN ('in_progress', 'waiting_external') THEN
+      RAISE EXCEPTION
+        'terminal admin command executions are immutable'
+        USING ERRCODE = '55000';
     END IF;
+
+    IF
+      NEW.id IS DISTINCT FROM OLD.id
+      OR NEW.principal_key IS DISTINCT FROM OLD.principal_key
+      OR NEW.actor_user_id IS DISTINCT FROM OLD.actor_user_id
+      OR NEW.action IS DISTINCT FROM OLD.action
+      OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+      OR NEW.request_sha256 IS DISTINCT FROM OLD.request_sha256
+      OR NEW.target_type IS DISTINCT FROM OLD.target_type
+      OR NEW.target_id IS DISTINCT FROM OLD.target_id
+      OR NEW.execution_kind IS DISTINCT FROM OLD.execution_kind
+      OR NEW.provider_operation_key
+        IS DISTINCT FROM OLD.provider_operation_key
+      OR NEW.created_at IS DISTINCT FROM OLD.created_at
+    THEN
+      RAISE EXCEPTION
+        'admin command execution identity is immutable'
+        USING ERRCODE = '55000';
+    END IF;
+
+    RETURN NEW;
   END IF;
 
   RAISE EXCEPTION
-    'terminal admin command executions are immutable'
+    'admin command executions cannot be deleted'
     USING ERRCODE = '55000';
 END;
 $$;
@@ -335,7 +360,8 @@ CREATE TABLE admin_audit_events (
   CHECK (
     reason IS NULL
     OR (
-      char_length(reason) BETWEEN 10 AND 500
+      reason = btrim(reason)
+      AND char_length(reason) BETWEEN 10 AND 500
       AND reason !~ '[[:cntrl:]]'
     )
   ),
@@ -408,25 +434,54 @@ BEFORE TRUNCATE ON admin_audit_events
 FOR EACH STATEMENT
 EXECUTE FUNCTION prevent_admin_audit_mutation();
 
-CREATE FUNCTION prevent_admin_role_assignment_delete()
+CREATE FUNCTION protect_admin_role_assignment_history()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF
+      NEW.id IS DISTINCT FROM OLD.id
+      OR NEW.user_id IS DISTINCT FROM OLD.user_id
+      OR NEW.role IS DISTINCT FROM OLD.role
+      OR NEW.granted_by_user_id
+        IS DISTINCT FROM OLD.granted_by_user_id
+      OR NEW.granted_by_kind IS DISTINCT FROM OLD.granted_by_kind
+      OR NEW.grant_reason IS DISTINCT FROM OLD.grant_reason
+      OR NEW.granted_at IS DISTINCT FROM OLD.granted_at
+    THEN
+      RAISE EXCEPTION
+        'admin role assignment grant is immutable'
+        USING ERRCODE = '55000';
+    END IF;
+
+    IF OLD.status = 'active' AND NEW.status = 'revoked' THEN
+      RETURN NEW;
+    END IF;
+
+    IF OLD.status = 'active' AND NEW IS NOT DISTINCT FROM OLD THEN
+      RETURN NEW;
+    END IF;
+
+    RAISE EXCEPTION
+      'revoked admin role assignments are immutable'
+      USING ERRCODE = '55000';
+  END IF;
+
   RAISE EXCEPTION 'admin_role_assignments cannot be deleted'
     USING ERRCODE = '55000';
 END;
 $$;
 
-CREATE TRIGGER admin_role_assignments_no_delete
-BEFORE DELETE ON admin_role_assignments
+CREATE TRIGGER admin_role_assignments_protect_history
+BEFORE UPDATE OR DELETE ON admin_role_assignments
 FOR EACH ROW
-EXECUTE FUNCTION prevent_admin_role_assignment_delete();
+EXECUTE FUNCTION protect_admin_role_assignment_history();
 
 CREATE TRIGGER admin_role_assignments_no_truncate
 BEFORE TRUNCATE ON admin_role_assignments
 FOR EACH STATEMENT
-EXECUTE FUNCTION prevent_admin_role_assignment_delete();
+EXECUTE FUNCTION protect_admin_role_assignment_history();
 
 COMMENT ON TABLE admin_role_assignments IS
   'История назначений фиксированных административных ролей.';

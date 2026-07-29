@@ -41,11 +41,13 @@ function normalizeInput(input) {
     );
   }
 
+  const reason =
+    typeof input.reason === "string" ? input.reason.trim() : "";
+
   if (
-    typeof input.reason !== "string" ||
-    input.reason.length < 10 ||
-    input.reason.length > 500 ||
-    /[\u0000-\u001f\u007f]/u.test(input.reason)
+    reason.length < 10 ||
+    reason.length > 500 ||
+    /[\u0000-\u001f\u007f]/u.test(reason)
   ) {
     throw new AdminBootstrapError(
       "INVALID_REASON",
@@ -69,6 +71,7 @@ function normalizeInput(input) {
 
   return {
     ...input,
+    reason,
     userId: input.userId.toLowerCase(),
   };
 }
@@ -84,6 +87,41 @@ function requestHash(input) {
       }),
     )
     .digest("hex");
+}
+
+function logFailedAttemptPersistenceFailure({
+  executionId,
+  commandErrorCode,
+  persistenceError,
+}) {
+  const safeCommandErrorCode =
+    typeof commandErrorCode === "string" &&
+    /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/u.test(commandErrorCode)
+      ? commandErrorCode
+      : "ADMIN_BOOTSTRAP_FAILED";
+  const persistenceErrorCode =
+    persistenceError &&
+    typeof persistenceError === "object" &&
+    typeof persistenceError.code === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/u.test(
+      persistenceError.code,
+    )
+      ? persistenceError.code
+      : "UNKNOWN_DATABASE_ERROR";
+
+  process.stderr.write(
+    `${JSON.stringify({
+      level: "error",
+      event: "administration.failed_attempt_persistence_failed",
+      occurredAt: new Date().toISOString(),
+      incidentId: randomUUID(),
+      executionId,
+      commandErrorCode: safeCommandErrorCode,
+      persistenceErrorCode,
+      metric: "admin_audit_write_failed_total",
+      increment: 1,
+    })}\n`,
+  );
 }
 
 async function reserveCommand(client, input) {
@@ -679,10 +717,16 @@ async function recordFailedAttempt(
 
     await client.query("COMMIT");
     transactionOpen = false;
-  } catch {
+  } catch (persistenceError) {
     if (transactionOpen) {
       await client.query("ROLLBACK").catch(() => undefined);
     }
+
+    logFailedAttemptPersistenceFailure({
+      executionId: reservation.executionId,
+      commandErrorCode: errorCode,
+      persistenceError,
+    });
   }
 }
 

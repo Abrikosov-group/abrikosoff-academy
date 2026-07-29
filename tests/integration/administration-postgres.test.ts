@@ -57,6 +57,49 @@ async function runBootstrap(input: {
   );
 }
 
+async function ensureActiveOwner(pool: Pool) {
+  const existing = await pool.query<{ user_id: string }>(
+    `
+      SELECT assignment.user_id
+      FROM admin_role_assignments AS assignment
+      INNER JOIN identity_users AS identity_user
+        ON identity_user.id = assignment.user_id
+      WHERE assignment.role = 'owner'
+        AND assignment.status = 'active'
+        AND identity_user.status = 'active'
+        AND EXISTS (
+          SELECT 1
+          FROM identity_methods AS identity_method
+          WHERE identity_method.user_id = assignment.user_id
+            AND identity_method.method_type = 'telegram'
+        )
+      ORDER BY assignment.granted_at, assignment.id
+      LIMIT 1
+    `,
+  );
+
+  if (existing.rows[0]) {
+    return existing.rows[0].user_id;
+  }
+
+  const identityRepository = new PostgresIdentityRepository(pool);
+  const identity = await identityRepository.upsertIdentity({
+    methodType: "telegram",
+    identifier: `admin-owner-helper-${randomUUID()}`,
+    displayName: "Владелец для независимого теста",
+    metadata: {},
+    consent,
+  });
+
+  await runBootstrap({
+    userId: identity.id,
+    reason: "Подготовка владельца для независимого теста",
+    idempotencyKey: randomUUID(),
+  });
+
+  return identity.id;
+}
+
 describe("Administration с PostgreSQL", () => {
   const pool = new Pool({
     connectionString: testDatabaseUrl,
@@ -131,6 +174,88 @@ describe("Administration с PostgreSQL", () => {
       status: "rejected",
       error_code: "ACTIVE_TELEGRAM_METHOD_REQUIRED",
       audit_events: "1",
+    });
+  });
+
+  it("отклоняет пустую после нормализации причину", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const identity = await identityRepository.upsertIdentity({
+      methodType: "email",
+      identifier: `blank-reason-${randomUUID()}@example.test`,
+      displayName: "Проверка пустой причины",
+      metadata: {},
+      consent,
+    });
+
+    await expect(
+      runBootstrap({
+        userId: identity.id,
+        reason: "              ",
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("INVALID_REASON"),
+    });
+
+    await expect(
+      pool.query(
+        `
+          INSERT INTO admin_role_assignments (
+            id,
+            user_id,
+            role,
+            status,
+            granted_by_user_id,
+            granted_by_kind,
+            grant_reason
+          )
+          VALUES (
+            $1,
+            $2,
+            'support',
+            'active',
+            NULL,
+            'system',
+            '              '
+          )
+        `,
+        [randomUUID(), identity.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+    });
+
+    await expect(
+      pool.query(
+        `
+          INSERT INTO admin_audit_events (
+            id,
+            request_id,
+            actor_kind,
+            actor_user_id,
+            action,
+            target_type,
+            target_id,
+            reason,
+            outcome
+          )
+          VALUES (
+            $1,
+            $2,
+            'system',
+            NULL,
+            'admin.blank_reason.test',
+            'identity_user',
+            $3,
+            '              ',
+            'succeeded'
+          )
+        `,
+        [randomUUID(), randomUUID(), identity.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
     });
   });
 
@@ -336,30 +461,67 @@ describe("Administration с PostgreSQL", () => {
       `,
       [ordinarySession.user.id],
     );
-    await expect(
-      administrationService.getContext({
-        tokenSha256: hashIdentityToken(adminSession.token),
-        permission: "admin.enter",
-        requestId: randomUUID(),
-      }),
-    ).rejects.toMatchObject({
-      code: "ADMIN_AUTH_REQUIRED",
-    });
+
+    try {
+      await expect(
+        administrationService.getContext({
+          tokenSha256: hashIdentityToken(adminSession.token),
+          permission: "admin.enter",
+          requestId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({
+        code: "ADMIN_AUTH_REQUIRED",
+      });
+    } finally {
+      await pool.query(
+        `
+          UPDATE identity_users
+          SET status = 'active'
+          WHERE id = $1
+        `,
+        [ordinarySession.user.id],
+      );
+    }
   });
 
   it("не позволяет изменить или удалить завершённую команду", async () => {
-    const terminalExecution = await pool.query<{ id: string }>(
-      `
-        SELECT id
-        FROM admin_command_executions
-        WHERE status IN ('succeeded', 'rejected', 'failed')
-        ORDER BY completed_at, id
-        LIMIT 1
-      `,
-    );
-    const executionId = terminalExecution.rows[0]?.id;
+    const executionId = randomUUID();
 
-    expect(executionId).toBeDefined();
+    await pool.query(
+      `
+        INSERT INTO admin_command_executions (
+          id,
+          principal_key,
+          actor_user_id,
+          action,
+          idempotency_key,
+          request_sha256,
+          target_type,
+          target_id,
+          execution_kind,
+          status,
+          result_status,
+          result,
+          completed_at
+        )
+        VALUES (
+          $1,
+          'system:terminal-test',
+          NULL,
+          'admin.terminal.test',
+          $2,
+          $3,
+          'identity_user',
+          'terminal-test',
+          'internal',
+          'succeeded',
+          200,
+          '{}'::jsonb,
+          now()
+        )
+      `,
+      [executionId, randomUUID(), "c".repeat(64)],
+    );
 
     await expect(
       pool.query(
@@ -381,6 +543,207 @@ describe("Administration с PostgreSQL", () => {
           WHERE id = $1
         `,
         [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+  });
+
+  it("фиксирует идентичность незавершённой команды", async () => {
+    const executionId = randomUUID();
+
+    await pool.query(
+      `
+        INSERT INTO admin_command_executions (
+          id,
+          principal_key,
+          actor_user_id,
+          action,
+          idempotency_key,
+          request_sha256,
+          target_type,
+          target_id,
+          execution_kind,
+          status,
+          lease_expires_at,
+          attempt_count
+        )
+        VALUES (
+          $1,
+          'system:mutable-test',
+          NULL,
+          'admin.mutable.test',
+          $2,
+          $3,
+          'identity_user',
+          'original-target',
+          'internal',
+          'in_progress',
+          now() + interval '5 minutes',
+          1
+        )
+      `,
+      [executionId, randomUUID(), "d".repeat(64)],
+    );
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET target_id = 'tampered-target'
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET request_sha256 = $2
+          WHERE id = $1
+        `,
+        [executionId, "e".repeat(64)],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await pool.query(
+      `
+        UPDATE admin_command_executions
+        SET
+          lease_expires_at = now() + interval '10 minutes',
+          attempt_count = attempt_count + 1,
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [executionId],
+    );
+
+    const active = await pool.query<{
+      target_id: string;
+      request_sha256: string;
+      attempt_count: number;
+    }>(
+      `
+        SELECT target_id, request_sha256, attempt_count
+        FROM admin_command_executions
+        WHERE id = $1
+      `,
+      [executionId],
+    );
+
+    expect(active.rows[0]).toEqual({
+      target_id: "original-target",
+      request_sha256: "d".repeat(64),
+      attempt_count: 2,
+    });
+
+    await pool.query(
+      `
+        UPDATE admin_command_executions
+        SET
+          status = 'failed',
+          result_status = 500,
+          result = '{}'::jsonb,
+          error_code = 'EXPECTED_TEST_FAILURE',
+          lease_expires_at = NULL,
+          completed_at = now(),
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [executionId],
+    );
+  });
+
+  it("сохраняет историю назначения и отзыва роли", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const identity = await identityRepository.upsertIdentity({
+      methodType: "email",
+      identifier: `role-history-${randomUUID()}@example.test`,
+      displayName: "Проверка истории роли",
+      metadata: {},
+      consent,
+    });
+    const assignmentId = randomUUID();
+
+    await pool.query(
+      `
+        INSERT INTO admin_role_assignments (
+          id,
+          user_id,
+          role,
+          status,
+          granted_by_user_id,
+          granted_by_kind,
+          grant_reason
+        )
+        VALUES (
+          $1,
+          $2,
+          'support',
+          'active',
+          NULL,
+          'system',
+          'Назначение для проверки неизменяемой истории'
+        )
+      `,
+      [assignmentId, identity.id],
+    );
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_role_assignments
+          SET role = 'finance'
+          WHERE id = $1
+        `,
+        [assignmentId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_role_assignments
+          SET grant_reason = 'Подменённая причина назначения роли'
+          WHERE id = $1
+        `,
+        [assignmentId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await pool.query(
+      `
+        UPDATE admin_role_assignments
+        SET
+          status = 'revoked',
+          revoke_reason = 'Штатный отзыв тестового назначения роли',
+          revoked_at = now()
+        WHERE id = $1
+      `,
+      [assignmentId],
+    );
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_role_assignments
+          SET
+            status = 'active',
+            revoke_reason = NULL,
+            revoked_at = NULL
+          WHERE id = $1
+        `,
+        [assignmentId],
       ),
     ).rejects.toMatchObject({
       code: "55000",
@@ -556,32 +919,46 @@ describe("Administration с PostgreSQL", () => {
   });
 
   it("связывает ключ идемпотентности с точным запросом", async () => {
-    const identityRepository = new PostgresIdentityRepository(pool);
-    const identity = await identityRepository.upsertIdentity({
-      methodType: "telegram",
-      identifier: "admin-integration-idempotency",
-      displayName: "Проверка идемпотентности",
-      metadata: {},
-      consent,
-    });
+    const ownerUserId = await ensureActiveOwner(pool);
     const idempotencyKey = randomUUID();
+    const reason = "Первое точное назначение для проверки ключа";
 
-    await expect(
-      runBootstrap({
-        userId: identity.id,
-        reason: "Первое точное назначение для проверки ключа",
-        idempotencyKey,
-      }),
-    ).rejects.toMatchObject({
-      code: 3,
-      stderr: expect.stringContaining(
-        "BOOTSTRAP_OWNER_ALREADY_EXISTS",
-      ),
+    const first = await runBootstrap({
+      userId: ownerUserId,
+      reason: `  ${reason}  `,
+      idempotencyKey,
+    });
+    const repeated = await runBootstrap({
+      userId: ownerUserId,
+      reason,
+      idempotencyKey,
     });
 
+    expect(first.stdout).toContain(
+      "Активная роль владельца уже существовала.",
+    );
+    expect(repeated.stdout).toContain(
+      "Команда уже была успешно выполнена.",
+    );
+
+    const persistedReason = await pool.query<{ reason: string }>(
+      `
+        SELECT audit_event.reason
+        FROM admin_audit_events AS audit_event
+        INNER JOIN admin_command_executions AS execution
+          ON execution.id = audit_event.command_execution_id
+        WHERE execution.principal_key = 'system:bootstrap'
+          AND execution.action = 'admin.role.bootstrap_grant'
+          AND execution.idempotency_key = $1
+      `,
+      [idempotencyKey],
+    );
+
+    expect(persistedReason.rows[0]?.reason).toBe(reason);
+
     await expect(
       runBootstrap({
-        userId: identity.id,
+        userId: ownerUserId,
         reason: "Изменённая причина с тем же ключом команды",
         idempotencyKey,
       }),
@@ -592,14 +969,7 @@ describe("Administration с PostgreSQL", () => {
   });
 
   it("безопасно продолжает команду после истечения lease", async () => {
-    const identityRepository = new PostgresIdentityRepository(pool);
-    const identity = await identityRepository.upsertIdentity({
-      methodType: "telegram",
-      identifier: "admin-integration-expired-lease",
-      displayName: "Проверка восстановления команды",
-      metadata: {},
-      consent,
-    });
+    const ownerUserId = await ensureActiveOwner(pool);
     const idempotencyKey = randomUUID();
     const reason =
       "Восстановление назначения владельца после истечения lease";
@@ -609,7 +979,7 @@ describe("Administration с PostgreSQL", () => {
           action: "admin.role.bootstrap_grant",
           reason,
           role: "owner",
-          userId: identity.id,
+          userId: ownerUserId,
         }),
       )
       .digest("hex");
@@ -650,22 +1020,19 @@ describe("Administration с PostgreSQL", () => {
         executionId,
         idempotencyKey,
         requestSha256,
-        identity.id,
+        ownerUserId,
       ],
     );
 
-    await expect(
-      runBootstrap({
-        userId: identity.id,
-        reason,
-        idempotencyKey,
-      }),
-    ).rejects.toMatchObject({
-      code: 3,
-      stderr: expect.stringContaining(
-        "BOOTSTRAP_OWNER_ALREADY_EXISTS",
-      ),
+    const recovered = await runBootstrap({
+      userId: ownerUserId,
+      reason,
+      idempotencyKey,
     });
+
+    expect(recovered.stdout).toContain(
+      "Активная роль владельца уже существовала.",
+    );
 
     const persisted = await pool.query<{
       status: string;
@@ -688,9 +1055,99 @@ describe("Administration с PostgreSQL", () => {
     );
 
     expect(persisted.rows[0]).toEqual({
-      status: "rejected",
+      status: "succeeded",
       attempt_count: 2,
       audit_events: "1",
+    });
+  });
+
+  it("сигнализирует о невозможности записать неудачную попытку", async () => {
+    const ownerUserId = await ensureActiveOwner(pool);
+    const idempotencyKey = randomUUID();
+    const reason =
+      "Проверка безопасного сигнала при недоступном аудите";
+
+    await pool.query(
+      `
+        DROP TRIGGER IF EXISTS
+          test_reject_admin_audit_insert
+          ON admin_audit_events
+      `,
+    );
+    await pool.query(
+      `
+        CREATE OR REPLACE FUNCTION
+          test_reject_admin_audit_insert()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced audit failure';
+        END;
+        $$
+      `,
+    );
+    await pool.query(
+      `
+        CREATE TRIGGER test_reject_admin_audit_insert
+        BEFORE INSERT ON admin_audit_events
+        FOR EACH ROW
+        EXECUTE FUNCTION test_reject_admin_audit_insert()
+      `,
+    );
+
+    try {
+      await expect(
+        runBootstrap({
+          userId: ownerUserId,
+          reason,
+          idempotencyKey,
+        }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringMatching(
+          /administration\.failed_attempt_persistence_failed[\s\S]*admin_audit_write_failed_total/u,
+        ),
+      });
+    } finally {
+      await pool.query(
+        `
+          DROP TRIGGER IF EXISTS
+            test_reject_admin_audit_insert
+            ON admin_audit_events
+        `,
+      );
+      await pool.query(
+        `
+          DROP FUNCTION IF EXISTS
+            test_reject_admin_audit_insert()
+        `,
+      );
+    }
+
+    const persisted = await pool.query<{
+      status: string;
+      audit_events: string;
+    }>(
+      `
+        SELECT
+          execution.status,
+          (
+            SELECT count(*)::text
+            FROM admin_audit_events
+            WHERE command_execution_id = execution.id
+          ) AS audit_events
+        FROM admin_command_executions AS execution
+        WHERE execution.principal_key = 'system:bootstrap'
+          AND execution.action = 'admin.role.bootstrap_grant'
+          AND execution.idempotency_key = $1
+      `,
+      [idempotencyKey],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      status: "in_progress",
+      audit_events: "0",
     });
   });
 
@@ -789,15 +1246,16 @@ describe("Administration с PostgreSQL", () => {
   });
 
   it("запрещает TRUNCATE неизменяемых административных таблиц", async () => {
-    const protectedTables = [
-      "admin_audit_events",
-      "admin_role_assignments",
-      "admin_invariant_locks",
+    const truncateStatements = [
+      "TRUNCATE TABLE admin_audit_events",
+      "TRUNCATE TABLE admin_command_executions CASCADE",
+      "TRUNCATE TABLE admin_role_assignments",
+      "TRUNCATE TABLE admin_invariant_locks",
     ];
 
-    for (const table of protectedTables) {
+    for (const statement of truncateStatements) {
       await expect(
-        pool.query(`TRUNCATE TABLE ${table}`),
+        pool.query(statement),
       ).rejects.toMatchObject({
         code: "55000",
       });
