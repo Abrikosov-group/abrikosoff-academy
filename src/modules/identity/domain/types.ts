@@ -16,6 +16,7 @@ export type AuthenticatedUser = {
   id: string;
   displayName: string;
   receiptEmail?: string;
+  avatarUrl?: string;
   primaryMethod: IdentityMethod;
 };
 

@@ -1,18 +1,10 @@
+import { connection } from "next/server";
+import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 import { getCurrentUser } from "@/modules/identity/server/session";
 import { SiteHeader } from "./site-header";
 
-function getInitials(displayName: string) {
-  return (
-    displayName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "А"
-  );
-}
-
 export async function AuthenticatedSiteHeader() {
+  await connection();
   const user = await getCurrentUser();
 
   return (
@@ -20,8 +12,9 @@ export async function AuthenticatedSiteHeader() {
       user={
         user
           ? {
+              avatarUrl: user.avatarUrl,
               displayName: user.displayName,
-              initials: getInitials(user.displayName),
+              initials: getUserInitials(user.displayName),
             }
           : undefined
       }

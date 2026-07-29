@@ -2,17 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { AccountMenu } from "@/components/academy/account-menu";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
-
-function getInitials(displayName: string) {
-  const initials = displayName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-
-  return initials || "А";
-}
+import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 
 export default async function ProtectedAdminLayout({
   children,
@@ -24,7 +14,10 @@ export default async function ProtectedAdminLayout({
   return (
     <main className="admin-page">
       <header className="admin-header">
-        <Link href="/" aria-label="На главную">
+        <Link
+          href="/admin"
+          aria-label="На главную административной панели"
+        >
           <Image
             src="/brand/logo-horizontal.svg"
             alt="Академия Абрикософф"
@@ -36,9 +29,10 @@ export default async function ProtectedAdminLayout({
         <div className="admin-header-actions">
           <span className="badge badge-warm">Администратор</span>
           <AccountMenu
+            avatarUrl={context.actor.avatarUrl}
             canAccessAdministration
             displayName={context.actor.displayName}
-            initials={getInitials(context.actor.displayName)}
+            initials={getUserInitials(context.actor.displayName)}
           />
         </div>
       </header>

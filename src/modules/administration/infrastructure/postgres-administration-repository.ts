@@ -13,12 +13,17 @@ import type {
   IdentityMethodType,
   SessionAuthenticationMethod,
 } from "@/modules/identity/domain/types";
+import {
+  getAvatarUrlFromMetadata,
+  normalizeUserAvatarUrl,
+} from "@/modules/identity/domain/user-presentation";
 
 type AdminSessionRow = {
   session_id: string;
   user_id: string;
   display_name: string;
   receipt_email: string | null;
+  avatar_url: string | null;
   primary_method_id: string;
   primary_method_type: IdentityMethodType;
   primary_identifier: string;
@@ -41,6 +46,7 @@ function mapAdminSessionRow(
       id: row.user_id,
       displayName: row.display_name,
       receiptEmail: row.receipt_email ?? undefined,
+      avatarUrl: normalizeUserAvatarUrl(row.avatar_url),
       primaryMethod: {
         id: row.primary_method_id,
         type: row.primary_method_type,
@@ -107,6 +113,17 @@ export class PostgresAdministrationRepository
           users.id AS user_id,
           users.display_name,
           users.receipt_email,
+          (
+            SELECT telegram_methods.metadata ->> 'photoUrl'
+            FROM identity_methods telegram_methods
+            WHERE telegram_methods.user_id = users.id
+              AND telegram_methods.method_type = 'telegram'
+            ORDER BY
+              telegram_methods.verified_at DESC NULLS LAST,
+              telegram_methods.created_at DESC,
+              telegram_methods.id DESC
+            LIMIT 1
+          ) AS avatar_url,
           primary_method.id AS primary_method_id,
           primary_method.method_type AS primary_method_type,
           primary_method.identifier AS primary_identifier,
@@ -346,6 +363,7 @@ export class PostgresAdministrationRepository
           id: method.user_id,
           displayName: method.display_name,
           receiptEmail: method.receipt_email ?? undefined,
+          avatarUrl: getAvatarUrlFromMetadata(method.metadata),
           primaryMethod: {
             id: method.method_id,
             type: method.method_type,

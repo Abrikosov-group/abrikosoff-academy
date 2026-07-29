@@ -8,8 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { UserAvatar } from "./user-avatar";
 
 type AccountMenuProps = {
+  avatarUrl?: string;
   canAccessAdministration: boolean;
   displayName: string;
   initials: string;
@@ -22,6 +24,7 @@ function isCurrentRoute(pathname: string, href: string) {
 }
 
 export function AccountMenu({
+  avatarUrl,
   canAccessAdministration,
   displayName,
   initials,
@@ -93,7 +96,10 @@ export function AccountMenu({
         ref={triggerRef}
         type="button"
       >
-        {initials}
+        <UserAvatar
+          avatarUrl={avatarUrl}
+          initials={initials}
+        />
       </button>
 
       {open ? (

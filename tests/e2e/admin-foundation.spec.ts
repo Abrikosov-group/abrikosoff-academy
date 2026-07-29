@@ -37,6 +37,10 @@ test("защищённый /admin перечитывает роль на каж�
   const sessionId = randomUUID();
   const assignmentId = randomUUID();
   const rawToken = randomUUID() + randomUUID();
+  const avatarUrl =
+    "https://cdn4.telesco.pe/file/e2e-owner-avatar.svg";
+  const missingAvatarUrl =
+    "https://cdn4.telesco.pe/file/e2e-owner-avatar-missing.svg";
   const tokenSha256 = createHash("sha256")
     .update(rawToken)
     .digest("hex");
@@ -72,10 +76,15 @@ test("защищённый /admin перечитывает роль на каж�
           'telegram',
           $3,
           now(),
-          '{}'::jsonb
+          $4::jsonb
         )
       `,
-      [methodId, userId, `e2e-owner-${userId}`],
+      [
+        methodId,
+        userId,
+        `e2e-owner-${userId}`,
+        JSON.stringify({ photoUrl: avatarUrl }),
+      ],
     );
     await database.query(
       `
@@ -140,6 +149,18 @@ test("защищённый /admin перечитывает роль на каж�
         sameSite: "Lax",
       },
     ]);
+    await page.route(avatarUrl, async (route) => {
+      await route.fulfill({
+        body: `
+          <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">
+            <rect width="80" height="80" fill="#14233C"/>
+            <circle cx="40" cy="32" r="16" fill="#F6F0E7"/>
+          </svg>
+        `,
+        contentType: "image/svg+xml",
+        status: 200,
+      });
+    });
 
     const adminResponse = await page.goto("/admin");
 
@@ -157,11 +178,31 @@ test("защищённый /admin перечитывает роль на каж�
       page.getByText(/демонстрационные показатели/),
     ).toBeVisible();
 
+    const adminHomeLink = page.getByRole("link", {
+      name: "На главную административной панели",
+      exact: true,
+    });
+
+    await expect(adminHomeLink).toHaveAttribute("href", "/admin");
+    await adminHomeLink.click();
+    await expect(page).toHaveURL(/\/admin$/);
+    await expect(
+      page.getByRole("heading", {
+        name: "Администрирование",
+        exact: true,
+      }),
+    ).toBeVisible();
+
     const adminAccountMenu = page.getByRole("button", {
       name: "Открыть меню аккаунта: E2E Владелец",
       exact: true,
     });
+    const adminAvatar = adminAccountMenu.locator(
+      "img.user-avatar-image",
+    );
 
+    await expect(adminAvatar).toBeVisible();
+    await expect(adminAvatar).toHaveAttribute("src", avatarUrl);
     await expect(adminAccountMenu).toHaveAttribute(
       "aria-expanded",
       "false",
@@ -210,6 +251,9 @@ test("защищённый /admin перечитывает роль на каж�
       exact: true,
     });
 
+    await expect(
+      cabinetAccountMenu.locator("img.user-avatar-image"),
+    ).toBeVisible();
     await cabinetAccountMenu.click();
     await page
       .getByRole("navigation", {
@@ -222,6 +266,29 @@ test("защищённый /admin перечитывает роль на каж�
       })
       .click();
     await expect(page).toHaveURL(/\/admin$/);
+
+    await page.route(missingAvatarUrl, async (route) => {
+      await route.abort("failed");
+    });
+    await database.query(
+      `
+        UPDATE identity_methods
+        SET
+          metadata = jsonb_build_object('photoUrl', $2::text),
+          verified_at = now()
+        WHERE id = $1
+      `,
+      [methodId, missingAvatarUrl],
+    );
+    await page.reload();
+    await expect(
+      page
+        .getByRole("button", {
+          name: "Открыть меню аккаунта: E2E Владелец",
+          exact: true,
+        })
+        .locator(".user-avatar-fallback"),
+    ).toHaveText("EВ");
 
     const crossOriginStart = await page.request.post(
       "/api/admin/auth/telegram/start",

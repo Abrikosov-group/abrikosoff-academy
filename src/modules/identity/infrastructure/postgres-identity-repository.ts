@@ -13,11 +13,16 @@ import type {
   IdentityMethodType,
   SessionAuthenticationMethod,
 } from "../domain/types";
+import {
+  getAvatarUrlFromMetadata,
+  normalizeUserAvatarUrl,
+} from "../domain/user-presentation";
 
 type IdentityRow = {
   user_id: string;
   display_name: string;
   receipt_email: string | null;
+  avatar_url: string | null;
   method_id: string;
   method_type: IdentityMethodType;
   identifier: string;
@@ -29,6 +34,7 @@ function mapIdentityRow(row: IdentityRow): AuthenticatedUser {
     id: row.user_id,
     displayName: row.display_name,
     receiptEmail: row.receipt_email ?? undefined,
+    avatarUrl: normalizeUserAvatarUrl(row.avatar_url),
     primaryMethod: {
       id: row.method_id,
       type: row.method_type,
@@ -49,6 +55,17 @@ async function findIdentity(
         users.id AS user_id,
         users.display_name,
         users.receipt_email,
+        (
+          SELECT telegram_methods.metadata ->> 'photoUrl'
+          FROM identity_methods telegram_methods
+          WHERE telegram_methods.user_id = users.id
+            AND telegram_methods.method_type = 'telegram'
+          ORDER BY
+            telegram_methods.verified_at DESC NULLS LAST,
+            telegram_methods.created_at DESC,
+            telegram_methods.id DESC
+          LIMIT 1
+        ) AS avatar_url,
         methods.id AS method_id,
         methods.method_type,
         methods.identifier,
@@ -129,6 +146,10 @@ async function updateExistingIdentity(
     ...existing,
     displayName: input.displayName,
     receiptEmail: input.receiptEmail ?? existing.receiptEmail,
+    avatarUrl:
+      input.methodType === "telegram"
+        ? getAvatarUrlFromMetadata(input.metadata)
+        : existing.avatarUrl,
     primaryMethod: {
       id: existing.primaryMethod.id,
       type: input.methodType,
@@ -215,6 +236,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
         id: userId,
         displayName: input.displayName,
         receiptEmail: input.receiptEmail,
+        avatarUrl: getAvatarUrlFromMetadata(input.metadata),
         primaryMethod: {
           id: methodId,
           type: input.methodType,
@@ -300,6 +322,17 @@ export class PostgresIdentityRepository implements IdentityRepository {
           users.id AS user_id,
           users.display_name,
           users.receipt_email,
+          (
+            SELECT telegram_methods.metadata ->> 'photoUrl'
+            FROM identity_methods telegram_methods
+            WHERE telegram_methods.user_id = users.id
+              AND telegram_methods.method_type = 'telegram'
+            ORDER BY
+              telegram_methods.verified_at DESC NULLS LAST,
+              telegram_methods.created_at DESC,
+              telegram_methods.id DESC
+            LIMIT 1
+          ) AS avatar_url,
           methods.id AS method_id,
           methods.method_type,
           methods.identifier,

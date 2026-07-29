@@ -99,11 +99,6 @@ test("вход, оплата и доступ к уроку работают ка
   expect(oversizedAuthorizedCheckout.status()).toBe(413);
 
   await page.goto("/login?plan=annual");
-  await page.getByRole("checkbox").check();
-  await page
-    .getByRole("button", { name: "Войти через Telegram" })
-    .click();
-
   await expect(page).toHaveURL(/\/checkout\?plan=annual$/, {
     timeout: 15_000,
   });
@@ -260,11 +255,23 @@ test("вход, оплата и доступ к уроку работают ка
   await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.goto("/dashboard");
+  const cabinetHomeLink = page.getByRole("link", {
+    name: "На главную личного кабинета",
+    exact: true,
+  });
   const accountMenuButton = page.getByRole("button", {
     name: /Открыть меню аккаунта:/,
   });
 
+  await expect(cabinetHomeLink).toHaveAttribute(
+    "href",
+    "/dashboard",
+  );
+  await cabinetHomeLink.click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+
   await accountMenuButton.click();
+  await expect(page).toHaveURL(/\/dashboard$/);
   const accountNavigation = page.getByRole("navigation", {
     name: "Переходы аккаунта",
     exact: true,
@@ -298,6 +305,22 @@ test("вход, оплата и доступ к уроку работают ка
     "aria-expanded",
     "false",
   );
+
+  await page.goto("/");
+  await expect(
+    page.getByRole("link", {
+      name: /Личный кабинет/,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", {
+      name: "Войти",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+
+  await page.goto("/login");
+  await expect(page).toHaveURL(/\/dashboard$/);
 
   const database = new Client({
     connectionString: testDatabaseUrl,

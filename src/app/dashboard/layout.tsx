@@ -2,21 +2,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { AccountMenu } from "@/components/academy/account-menu";
 import { CabinetNavigation } from "@/components/academy/cabinet-navigation";
+import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 import { getCabinetContext } from "./_lib/cabinet-context";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function getInitials(displayName: string) {
-  const initials = displayName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-
-  return initials || "А";
-}
 
 export default async function DashboardLayout({
   children,
@@ -33,7 +23,10 @@ export default async function DashboardLayout({
   return (
     <main className="cabinet-page">
       <header className="cabinet-header">
-        <Link href="/" aria-label="На главную">
+        <Link
+          href="/dashboard"
+          aria-label="На главную личного кабинета"
+        >
           <Image
             src="/brand/logo-horizontal.svg"
             alt="Академия Абрикософф"
@@ -55,9 +48,10 @@ export default async function DashboardLayout({
                 : "Нет подписки"}
           </span>
           <AccountMenu
+            avatarUrl={user.avatarUrl}
             canAccessAdministration={canAccessAdministration}
             displayName={user.displayName}
-            initials={getInitials(user.displayName)}
+            initials={getUserInitials(user.displayName)}
           />
         </div>
       </header>
