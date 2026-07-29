@@ -37,7 +37,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/db ./db
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=root:root --chmod=0555 \
   /app/deploy/server/academy-admin \
-  /usr/local/share/academy/academy-admin
+  /app/deploy/server/academy-release \
+  /usr/local/share/academy/
 
 USER nextjs
 

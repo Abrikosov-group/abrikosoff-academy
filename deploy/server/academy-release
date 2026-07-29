@@ -13,6 +13,7 @@ readonly legacy_compose_file="${academy_root}/compose.yaml"
 readonly project_name="academy-abrikosoff"
 readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
 readonly health_url="https://academy.abrikosoff.com/api/health"
+readonly operation_lock_timeout_seconds=600
 
 archive_path=""
 incoming_directory=""
@@ -227,6 +228,11 @@ deploy_release() {
   printf '%s\n' "${image_reference}" > "${current_image_file}"
   printf 'Релиз %s успешно развёрнут.\n' "${release_sha}"
 }
+
+exec 9<"${academy_root}" \
+  || fail "не удалось открыть каталог Академии для блокировки"
+flock --exclusive --wait "${operation_lock_timeout_seconds}" 9 \
+  || fail "не удалось дождаться завершения другой операции"
 
 read -r action argument_one argument_two argument_three extra_argument \
   <<< "${SSH_ORIGINAL_COMMAND:-}"

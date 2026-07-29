@@ -26,7 +26,22 @@ jobs:
       - name: Проверить allowlist-wrapper
         run: |
           bash -n deploy/server/academy-admin
+          bash -n deploy/server/academy-release
+          bash -n tests/server/academy-admin-wrapper.sh
           shellcheck deploy/server/academy-admin
+          shellcheck deploy/server/academy-release
+          shellcheck tests/server/academy-admin-wrapper.sh
+
+      - name: Проверить fail-closed согласованность production-релиза
+        run: |
+          docker run \
+            --rm \
+            --network none \
+            --read-only \
+            --tmpfs /opt:mode=0755 \
+            --volume "$PWD:/workspace:ro" \
+            ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90 \
+            bash /workspace/tests/server/academy-admin-wrapper.sh
 
       - name: Подготовить Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -42,39 +57,41 @@ jobs:
           cache-from: type=gha,scope=administration-wrapper
           cache-to: type=gha,mode=max,scope=administration-wrapper
 
-      - name: Проверить доставку wrapper-а в образе
+      - name: Проверить доставку wrapper-ов в образе
         run: |
-          expected_sha="$(
-            sha256sum deploy/server/academy-admin | awk '{print $1}'
-          )"
-          actual_sha="$(
-            docker run \
-              --rm \
-              --entrypoint sha256sum \
-              academy-app:admin-wrapper-ci \
-              /usr/local/share/academy/academy-admin \
-              | awk '{print $1}'
-          )"
-          actual_mode="$(
-            docker run \
-              --rm \
-              --entrypoint stat \
-              academy-app:admin-wrapper-ci \
-              -c '%a' \
-              /usr/local/share/academy/academy-admin
-          )"
-          actual_owner="$(
-            docker run \
-              --rm \
-              --entrypoint stat \
-              academy-app:admin-wrapper-ci \
-              -c '%u:%g' \
-              /usr/local/share/academy/academy-admin
-          )"
+          for wrapper_name in academy-admin academy-release; do
+            expected_sha="$(
+              sha256sum "deploy/server/${wrapper_name}" | awk '{print $1}'
+            )"
+            actual_sha="$(
+              docker run \
+                --rm \
+                --entrypoint sha256sum \
+                academy-app:admin-wrapper-ci \
+                "/usr/local/share/academy/${wrapper_name}" \
+                | awk '{print $1}'
+            )"
+            actual_mode="$(
+              docker run \
+                --rm \
+                --entrypoint stat \
+                academy-app:admin-wrapper-ci \
+                -c '%a' \
+                "/usr/local/share/academy/${wrapper_name}"
+            )"
+            actual_owner="$(
+              docker run \
+                --rm \
+                --entrypoint stat \
+                academy-app:admin-wrapper-ci \
+                -c '%u:%g' \
+                "/usr/local/share/academy/${wrapper_name}"
+            )"
 
-          test "$actual_sha" = "$expected_sha"
-          test "$actual_mode" = 555
-          test "$actual_owner" = 0:0
+            test "$actual_sha" = "$expected_sha"
+            test "$actual_mode" = 555
+            test "$actual_owner" = 0:0
+          done
 
       - name: Проверить CLI внутри собранного образа
         run: |
