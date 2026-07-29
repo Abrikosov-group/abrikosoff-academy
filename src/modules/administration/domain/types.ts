@@ -9,8 +9,14 @@ export type AdminRole =
   | "content_editor"
   | "finance";
 
+export type AdministrationMode =
+  | "disabled"
+  | "owner_preview"
+  | "operational";
+
 export type AdminPermission =
   | "admin.enter"
+  | "admin.preview"
   | "dashboard.read"
   | "users.read"
   | "users.read_payment_context"

@@ -1,12 +1,23 @@
 import "server-only";
 
-export type AdministrationConfig = {
-  enabled: boolean;
-};
+import type { AdministrationMode } from "../domain/types";
 
 const localAcceptanceOrigin = "https://academy-dev.abrikosoff.com";
+const productionOrigin = "https://academy.abrikosoff.com";
 
-function canEnableAdministration() {
+export type AdministrationConfig =
+  | {
+      enabled: false;
+      mode: "disabled";
+    }
+  | {
+      enabled: true;
+      mode: Exclude<AdministrationMode, "disabled">;
+    };
+
+function canEnableAdministration(
+  mode: Exclude<AdministrationMode, "disabled">,
+) {
   if (process.env.NODE_ENV !== "production") {
     return true;
   }
@@ -20,13 +31,24 @@ function canEnableAdministration() {
   try {
     const parsedAppBaseUrl = new URL(appBaseUrl);
 
-    return (
-      parsedAppBaseUrl.origin === localAcceptanceOrigin &&
+    const hasExactOriginShape =
       parsedAppBaseUrl.pathname === "/" &&
       !parsedAppBaseUrl.username &&
       !parsedAppBaseUrl.password &&
       !parsedAppBaseUrl.search &&
-      !parsedAppBaseUrl.hash
+      !parsedAppBaseUrl.hash;
+
+    if (!hasExactOriginShape) {
+      return false;
+    }
+
+    if (parsedAppBaseUrl.origin === localAcceptanceOrigin) {
+      return true;
+    }
+
+    return (
+      parsedAppBaseUrl.origin === productionOrigin &&
+      mode === "owner_preview"
     );
   } catch {
     return false;
@@ -44,13 +66,32 @@ export function getAdministrationConfig(): AdministrationConfig {
     );
   }
 
-  const enabled = rawEnabled === "true";
+  const rawMode =
+    process.env.ADMINISTRATION_MODE?.trim().toLowerCase() ||
+    "operational";
 
-  if (enabled && !canEnableAdministration()) {
+  if (!["owner_preview", "operational"].includes(rawMode)) {
     throw new TypeError(
-      "Production-доступ к Administration откроется после приёмки этапа 2.",
+      "ADMINISTRATION_MODE должен быть owner_preview или operational.",
     );
   }
 
-  return { enabled };
+  const enabled = rawEnabled === "true";
+
+  if (!enabled) {
+    return { enabled: false, mode: "disabled" };
+  }
+
+  const mode = rawMode as Exclude<
+    AdministrationMode,
+    "disabled"
+  >;
+
+  if (!canEnableAdministration(mode)) {
+    throw new TypeError(
+      "Режим Administration запрещён для заданного production-origin.",
+    );
+  }
+
+  return { enabled: true, mode };
 }

@@ -437,7 +437,7 @@ describe("Administration с PostgreSQL", () => {
     const administrationService = new AdministrationService(
       administrationRepository,
       {
-        enabled: true,
+        mode: "operational",
         sessionTtlDays: 30,
       },
     );
@@ -487,8 +487,9 @@ describe("Administration с PostgreSQL", () => {
         telegramIdentifier,
         userAgentFamily: "Google Chrome",
       });
+    const adminTokenSha256 = hashIdentityToken(adminSession.token);
     const context = await administrationService.getContext({
-      tokenSha256: hashIdentityToken(adminSession.token),
+      tokenSha256: adminTokenSha256,
       permission: "dashboard.read",
       requestId: randomUUID(),
     });
@@ -501,6 +502,34 @@ describe("Administration с PostgreSQL", () => {
       adminVerificationMethod: "telegram_oidc",
     });
     expect(context.permissions.has("roles.write")).toBe(true);
+
+    const ownerPreviewService = new AdministrationService(
+      administrationRepository,
+      {
+        mode: "owner_preview",
+        sessionTtlDays: 30,
+      },
+    );
+    await expect(
+      ownerPreviewService.getContext({
+        tokenSha256: adminTokenSha256,
+        permission: "admin.preview",
+        requestId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({
+      roles: ["owner"],
+    });
+    await expect(
+      ownerPreviewService.getContext({
+        tokenSha256: adminTokenSha256,
+        permission: "dashboard.read",
+        requestId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: "ADMIN_PERMISSION_DENIED",
+      httpStatus: 403,
+    });
+
     await expect(
       identityRepository.findUserBySessionTokenSha256(
         ordinaryTokenSha256,
@@ -1006,7 +1035,7 @@ describe("Administration с PostgreSQL", () => {
     const administrationService = new AdministrationService(
       new PostgresAdministrationRepository(pool),
       {
-        enabled: true,
+        mode: "operational",
         sessionTtlDays: 30,
       },
     );

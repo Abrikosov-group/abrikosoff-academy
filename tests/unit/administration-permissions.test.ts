@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   configuredPermissionsForRole,
+  effectivePermissionsForRoles,
   permissionsForRoles,
 } from "@/modules/administration/domain/permissions";
 import type {
@@ -11,6 +12,7 @@ import type {
 const expectedPermissions = {
   owner: [
     "admin.enter",
+    "admin.preview",
     "dashboard.read",
     "users.read",
     "users.read_payment_context",
@@ -87,5 +89,17 @@ describe("матрица разрешений Administration", () => {
     ] as const) {
       expect([...permissionsForRoles([role])]).toEqual([]);
     }
+  });
+
+  it("ограничивает owner-preview входом и чтением обзора", () => {
+    expect(
+      [...effectivePermissionsForRoles(["owner"], "owner_preview")],
+    ).toEqual(["admin.enter", "admin.preview"]);
+    expect(
+      [...effectivePermissionsForRoles(["owner"], "operational")],
+    ).toEqual(expectedPermissions.owner);
+    expect(
+      [...effectivePermissionsForRoles(["owner"], "disabled")],
+    ).toEqual([]);
   });
 });

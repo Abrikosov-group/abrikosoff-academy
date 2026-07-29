@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdministrationRepository } from "@/modules/administration/application/administration-repository";
 import { AdministrationService } from "@/modules/administration/application/administration-service";
-import type { AdminSessionRecord } from "@/modules/administration/domain/types";
+import type {
+  AdministrationMode,
+  AdminSessionRecord,
+} from "@/modules/administration/domain/types";
 
 const now = new Date("2026-07-29T10:00:00.000Z");
 
@@ -35,7 +38,7 @@ function session(
 
 function runtime(
   record: AdminSessionRecord | null,
-  enabled = true,
+  mode: AdministrationMode = "operational",
 ) {
   const repository = {
     findActiveRolesByUserId: vi.fn().mockResolvedValue(
@@ -47,7 +50,7 @@ function runtime(
     rotateSessionForTelegramAdmin: vi.fn(),
   } satisfies AdministrationRepository;
   const service = new AdministrationService(repository, {
-    enabled,
+    mode,
     sessionTtlDays: 30,
   });
 
@@ -77,7 +80,10 @@ describe("AdministrationService", () => {
   });
 
   it("не обращается к ролям при выключенном контуре", async () => {
-    const { repository, service } = runtime(session(), false);
+    const { repository, service } = runtime(
+      session(),
+      "disabled",
+    );
 
     await expect(
       service.canEnterAdministration(session().actor.id),
@@ -88,7 +94,7 @@ describe("AdministrationService", () => {
   });
 
   it("запрещает контур при выключенном release-гейте", async () => {
-    const { service } = runtime(session(), false);
+    const { service } = runtime(session(), "disabled");
 
     await expect(
       service.getContext({
@@ -200,6 +206,32 @@ describe("AdministrationService", () => {
       requestId: "request-5",
     });
     expect(context.permissions.has("roles.write")).toBe(true);
+  });
+
+  it("ограничивает owner-preview чтением обзорной страницы", async () => {
+    const { service } = runtime(session(), "owner_preview");
+    const context = await service.getContext({
+      tokenSha256: "9".repeat(64),
+      permission: "admin.preview",
+      requestId: "request-preview",
+      now,
+    });
+
+    expect([...context.permissions]).toEqual([
+      "admin.enter",
+      "admin.preview",
+    ]);
+    await expect(
+      service.getContext({
+        tokenSha256: "9".repeat(64),
+        permission: "dashboard.read",
+        requestId: "request-preview-write",
+        now,
+      }),
+    ).rejects.toMatchObject({
+      code: "ADMIN_PERMISSION_DENIED",
+      httpStatus: 403,
+    });
   });
 
   it("не включает отключённую роль support", async () => {

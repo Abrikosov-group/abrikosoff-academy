@@ -1,6 +1,7 @@
 import type {
   AdminPermission,
   AdminRole,
+  AdministrationMode,
 } from "./types";
 
 export const adminRoles = [
@@ -17,6 +18,7 @@ export const enabledAdminRoles = [
 const rolePermissions = {
   owner: [
     "admin.enter",
+    "admin.preview",
     "dashboard.read",
     "users.read",
     "users.read_payment_context",
@@ -71,6 +73,11 @@ const rolePermissions = {
   readonly AdminPermission[]
 >;
 
+const ownerPreviewPermissions = new Set<AdminPermission>([
+  "admin.enter",
+  "admin.preview",
+]);
+
 export function isAdminRole(value: unknown): value is AdminRole {
   return (
     typeof value === "string" &&
@@ -102,6 +109,27 @@ export function permissionsForRoles(
   }
 
   return permissions;
+}
+
+export function effectivePermissionsForRoles(
+  roles: readonly AdminRole[],
+  mode: AdministrationMode,
+): ReadonlySet<AdminPermission> {
+  if (mode === "disabled") {
+    return new Set<AdminPermission>();
+  }
+
+  const configuredPermissions = permissionsForRoles(roles);
+
+  if (mode === "operational") {
+    return configuredPermissions;
+  }
+
+  return new Set(
+    [...configuredPermissions].filter((permission) =>
+      ownerPreviewPermissions.has(permission),
+    ),
+  );
 }
 
 export function configuredPermissionsForRole(

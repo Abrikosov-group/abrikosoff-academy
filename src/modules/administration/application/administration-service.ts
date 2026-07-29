@@ -6,14 +6,15 @@ import type { LoginSession } from "@/modules/identity/domain/types";
 import type { AdministrationRepository } from "./administration-repository";
 import { AdministrationError } from "../domain/errors";
 import {
+  effectivePermissionsForRoles,
   isEnabledAdminRole,
-  permissionsForRoles,
 } from "../domain/permissions";
 import type {
   AdminContext,
   AdminPermission,
   AdminSessionRecord,
   AdminVerificationStart,
+  AdministrationMode,
 } from "../domain/types";
 
 const adminVerificationTtlMs = 12 * 60 * 60 * 1_000;
@@ -65,13 +66,13 @@ export class AdministrationService {
   constructor(
     private readonly repository: AdministrationRepository,
     private readonly options: {
-      enabled: boolean;
+      mode: AdministrationMode;
       sessionTtlDays: number;
     },
   ) {}
 
   private requireEnabled() {
-    if (!this.options.enabled) {
+    if (this.options.mode === "disabled") {
       throw new AdministrationError(
         "ADMINISTRATION_DISABLED",
         "Административная панель пока не включена.",
@@ -81,14 +82,17 @@ export class AdministrationService {
   }
 
   async canEnterAdministration(userId: string) {
-    if (!this.options.enabled) {
+    if (this.options.mode === "disabled") {
       return false;
     }
 
     const roles =
       await this.repository.findActiveRolesByUserId(userId);
 
-    return permissionsForRoles(roles).has("admin.enter");
+    return effectivePermissionsForRoles(
+      roles,
+      this.options.mode,
+    ).has("admin.enter");
   }
 
   private async requireBaseSession(
@@ -157,7 +161,10 @@ export class AdministrationService {
       );
     }
 
-    const permissions = permissionsForRoles(roles);
+    const permissions = effectivePermissionsForRoles(
+      roles,
+      this.options.mode,
+    );
 
     if (!permissions.has(input.permission)) {
       throw new AdministrationError(
