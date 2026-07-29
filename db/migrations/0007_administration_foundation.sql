@@ -165,6 +165,10 @@ CREATE TABLE admin_role_assignments (
       AND char_length(revoke_reason) BETWEEN 10 AND 500
       AND revoke_reason !~ '[[:cntrl:]]'
     )
+  ),
+  CHECK (
+    revoked_at IS NULL
+    OR revoked_at >= granted_at
   )
 );
 
@@ -226,6 +230,11 @@ CREATE TABLE admin_command_executions (
   ),
   CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
   CHECK (attempt_count >= 1),
+  CHECK (updated_at >= created_at),
+  CHECK (
+    completed_at IS NULL
+    OR completed_at >= created_at
+  ),
   CHECK (
     (
       status IN ('in_progress', 'waiting_external')
@@ -303,6 +312,30 @@ BEGIN
     THEN
       RAISE EXCEPTION
         'admin command execution identity is immutable'
+        USING ERRCODE = '55000';
+    END IF;
+
+    IF
+      NEW.attempt_count < OLD.attempt_count
+      OR NEW.attempt_count > OLD.attempt_count + 1
+    THEN
+      RAISE EXCEPTION
+        'admin command fencing attempt must advance monotonically by one'
+        USING ERRCODE = '55000';
+    END IF;
+
+    IF
+      NEW.attempt_count = OLD.attempt_count + 1
+      AND NEW.status NOT IN ('in_progress', 'waiting_external')
+    THEN
+      RAISE EXCEPTION
+        'admin command fencing attempt can advance only while active'
+        USING ERRCODE = '55000';
+    END IF;
+
+    IF NEW.updated_at < OLD.updated_at THEN
+      RAISE EXCEPTION
+        'admin command updated_at cannot move backwards'
         USING ERRCODE = '55000';
     END IF;
 

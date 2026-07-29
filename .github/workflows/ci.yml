@@ -42,6 +42,40 @@ jobs:
           cache-from: type=gha,scope=administration-wrapper
           cache-to: type=gha,mode=max,scope=administration-wrapper
 
+      - name: Проверить доставку wrapper-а в образе
+        run: |
+          expected_sha="$(
+            sha256sum deploy/server/academy-admin | awk '{print $1}'
+          )"
+          actual_sha="$(
+            docker run \
+              --rm \
+              --entrypoint sha256sum \
+              academy-app:admin-wrapper-ci \
+              /usr/local/share/academy/academy-admin \
+              | awk '{print $1}'
+          )"
+          actual_mode="$(
+            docker run \
+              --rm \
+              --entrypoint stat \
+              academy-app:admin-wrapper-ci \
+              -c '%a' \
+              /usr/local/share/academy/academy-admin
+          )"
+          actual_owner="$(
+            docker run \
+              --rm \
+              --entrypoint stat \
+              academy-app:admin-wrapper-ci \
+              -c '%u:%g' \
+              /usr/local/share/academy/academy-admin
+          )"
+
+          test "$actual_sha" = "$expected_sha"
+          test "$actual_mode" = 555
+          test "$actual_owner" = 0:0
+
       - name: Проверить CLI внутри собранного образа
         run: |
           help_output="$(

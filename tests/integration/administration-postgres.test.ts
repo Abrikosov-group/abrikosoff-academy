@@ -72,6 +72,9 @@ async function ensureActiveOwner(pool: Pool) {
           FROM identity_methods AS identity_method
           WHERE identity_method.user_id = assignment.user_id
             AND identity_method.method_type = 'telegram'
+            AND NOT (
+              identity_method.metadata @> '{"demo": true}'::jsonb
+            )
         )
       ORDER BY assignment.granted_at, assignment.id
       LIMIT 1
@@ -167,6 +170,78 @@ describe("Administration с PostgreSQL", () => {
         LIMIT 1
       `,
       [emailOnlyUser.id],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      assignments: "0",
+      status: "rejected",
+      error_code: "ACTIVE_TELEGRAM_METHOD_REQUIRED",
+      audit_events: "1",
+    });
+  });
+
+  it("не назначает первым owner пользователя с demo-входом", async () => {
+    const identityRepository = new PostgresIdentityRepository(pool);
+    const identityService = new IdentityService(
+      identityRepository,
+      30,
+    );
+    const demoSession = await identityService.authenticateIdentity({
+      authenticationMethod: "demo",
+      methodType: "telegram",
+      identifier: `demo-owner-${randomUUID()}`,
+      displayName: "Демо-владелец",
+      metadata: {
+        demo: true,
+        username: "demo_owner",
+      },
+      consent,
+      userAgentFamily: "Google Chrome",
+    });
+    const idempotencyKey = randomUUID();
+
+    await expect(
+      runBootstrap({
+        userId: demoSession.user.id,
+        reason:
+          "Проверка запрета назначения владельца с демо-входом",
+        idempotencyKey,
+      }),
+    ).rejects.toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining(
+        "ACTIVE_TELEGRAM_METHOD_REQUIRED",
+      ),
+    });
+
+    const persisted = await pool.query<{
+      assignments: string;
+      status: string;
+      error_code: string;
+      audit_events: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(*)::text
+            FROM admin_role_assignments
+            WHERE user_id = $1
+              AND role = 'owner'
+              AND status = 'active'
+          ) AS assignments,
+          execution.status,
+          execution.error_code,
+          (
+            SELECT count(*)::text
+            FROM admin_audit_events
+            WHERE command_execution_id = execution.id
+          ) AS audit_events
+        FROM admin_command_executions AS execution
+        WHERE execution.principal_key = 'system:bootstrap'
+          AND execution.action = 'admin.role.bootstrap_grant'
+          AND execution.idempotency_key = $2
+      `,
+      [demoSession.user.id, idempotencyKey],
     );
 
     expect(persisted.rows[0]).toEqual({
@@ -643,6 +718,45 @@ describe("Administration с PostgreSQL", () => {
       attempt_count: 2,
     });
 
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET attempt_count = attempt_count - 1
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET attempt_count = attempt_count + 2
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET updated_at = created_at - interval '1 second'
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
     await pool.query(
       `
         UPDATE admin_command_executions
@@ -719,6 +833,22 @@ describe("Administration с PostgreSQL", () => {
       ),
     ).rejects.toMatchObject({
       code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_role_assignments
+          SET
+            status = 'revoked',
+            revoke_reason = 'Некорректный отзыв раньше назначения роли',
+            revoked_at = granted_at - interval '1 second'
+          WHERE id = $1
+        `,
+        [assignmentId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
     });
 
     await pool.query(

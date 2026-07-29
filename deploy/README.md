@@ -53,10 +53,50 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 получают её как дополнительную. Wrapper-ы остаются принадлежащими `root` и не
 становятся группово изменяемыми.
 
-Административный wrapper `server/academy-admin` устанавливается как
-`/usr/local/sbin/academy-admin`, принадлежит `root:root` и имеет режим `0755`.
-Он принимает только команду назначения первого `owner`, проверяет аргументы и
-запускает CLI из текущего production-образа в закрытой Compose-сети:
+Кандидат административного wrapper-а доставляется внутри неизменяемого
+production-образа как `/usr/local/share/academy/academy-admin`. Обычный
+release-процесс не устанавливает и не обновляет root-owned файлы
+автоматически.
+
+После первого релиза и после каждого изменения `server/academy-admin` оператор
+извлекает кандидат из текущего production-образа, проверяет и явно
+устанавливает его:
+
+```bash
+(
+  set -Eeuo pipefail
+  image_reference="$(
+    sudo cat /opt/academy/shared/current-image
+  )"
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  candidate="$(mktemp)"
+  trap 'rm -f -- "$candidate"' EXIT
+  sudo docker run \
+    --rm \
+    --entrypoint cat \
+    "$image_reference" \
+    /usr/local/share/academy/academy-admin \
+    > "$candidate"
+  test -s "$candidate"
+  bash -n "$candidate"
+  sudo install \
+    --owner=root \
+    --group=root \
+    --mode=0755 \
+    "$candidate" \
+    /usr/local/sbin/academy-admin
+  test "$(
+    sudo stat -c '%U:%G %a' /usr/local/sbin/academy-admin
+  )" = "root:root 755"
+  sudo cmp --silent \
+    "$candidate" \
+    /usr/local/sbin/academy-admin
+)
+```
+
+Установленный `/usr/local/sbin/academy-admin` принимает только команду
+назначения первого `owner`, проверяет аргументы и запускает CLI из текущего
+production-образа в закрытой Compose-сети:
 
 ```bash
 sudo /usr/local/sbin/academy-admin grant \

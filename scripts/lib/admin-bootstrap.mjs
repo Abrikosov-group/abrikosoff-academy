@@ -514,6 +514,7 @@ async function executeReservedCommand(client, input, reservation) {
         WHERE user_id = $1
           AND method_type = 'telegram'
           AND verified_at IS NOT NULL
+          AND NOT (metadata @> '{"demo": true}'::jsonb)
         ORDER BY verified_at DESC, id
         LIMIT 1
         FOR SHARE
