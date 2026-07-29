@@ -3,7 +3,8 @@
 Для Telegram OIDC локальная Академия использует именованный Cloudflare Tunnel:
 
 - публичный адрес: `https://academy-dev.abrikosoff.com`;
-- локальный адрес приложения: `http://127.0.0.1:3100`;
+- локальный адрес production-подобной сборки для туннеля:
+  `http://127.0.0.1:3100`;
 - имя туннеля: `abrikosoff-academy-local`.
 
 Адрес и DNS остаются постоянными. Сайт доступен по нему, пока на компьютере
@@ -42,7 +43,7 @@ https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 APP_BASE_URL=https://academy-dev.abrikosoff.com
 AUTH_DEMO_MODE=disabled
 EMAIL_AUTH_MODE=disabled
-ADMINISTRATION_ENABLED=true
+ADMINISTRATION_ENABLED=false
 ADMINISTRATION_MODE=owner_preview
 TELEGRAM_OIDC_CLIENT_ID=8965978102
 TELEGRAM_OIDC_CLIENT_SECRET=<из защищённого хранилища>
@@ -51,10 +52,12 @@ PAYMENTS_MODE=demo
 PAYMENT_DEFAULT_PROVIDER=demo
 ```
 
-`owner_preview` открывает на локальном приёмочном origin только текущий
-защитный фундамент Administration. Режим `operational` не используется как
-локальное значение по умолчанию до завершения обязательных зависимостей
-этапа 2 административного ТЗ.
+Для отдельной проверки `/admin` на время приёмочной сессии устанавливается
+`ADMINISTRATION_ENABLED=true`. Режим `owner_preview` открывает на локальном
+приёмочном origin только текущий защитный фундамент Administration. После
+проверки гейт возвращается в `false`; режим `operational` не используется как
+локальное значение по умолчанию до завершения обязательных зависимостей этапа
+2 административного ТЗ.
 
 ## 2. Однократное создание туннеля
 
