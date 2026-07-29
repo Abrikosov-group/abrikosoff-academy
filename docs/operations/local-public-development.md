@@ -15,7 +15,8 @@
 
 - отдельная база PostgreSQL без данных реальных учеников;
 - `PAYMENTS_MODE=demo`;
-- отдельный Telegram-бот или OIDC-клиент для разработки;
+- отдельный Telegram-бот `@local_AbrikosoffBot`;
+- отдельный OIDC-клиент этого бота с Client ID `8965978102`;
 - отдельные локальные секреты в `.env.local`.
 
 Боевые ключи Telegram, ЮKassa и production-базы в локальную среду не
@@ -35,6 +36,10 @@ https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 
 ```dotenv
 APP_BASE_URL=https://academy-dev.abrikosoff.com
+AUTH_DEMO_MODE=disabled
+EMAIL_AUTH_MODE=disabled
+TELEGRAM_OIDC_CLIENT_ID=8965978102
+TELEGRAM_OIDC_CLIENT_SECRET=<из защищённого хранилища>
 TELEGRAM_OIDC_REDIRECT_URI=https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 PAYMENTS_MODE=demo
 PAYMENT_DEFAULT_PROVIDER=demo
@@ -71,15 +76,24 @@ ingress:
 
 Файл учётных данных и локальную конфигурацию не добавляют в Git.
 
-## 3. Запуск
+## 3. Локальная разработка и приёмка
 
-Сначала запустить Академию на фиксированном интерфейсе и порту:
+Во время написания кода Next.js запускается только на localhost:
 
 ```bash
-npm run dev -- --hostname 127.0.0.1 --port 3100
+npm run dev
 ```
 
-Во втором терминале запустить туннель:
+Полная проверка Telegram OIDC через публичный HTTPS-адрес выполняется на
+production-подобной локальной сборке. Так проверяются те же защищённые cookies,
+что и в production:
+
+```bash
+npm run build
+npm start -- --hostname 127.0.0.1 --port 3100
+```
+
+Во втором терминале запускается туннель:
 
 ```bash
 cloudflared tunnel \
@@ -90,6 +104,9 @@ cloudflared tunnel \
 Для фонового запуска в macOS можно использовать отдельную сессию `screen`:
 
 ```bash
+screen -dmS academy-abrikosoff-local /bin/zsh -lc \
+  'cd <PROJECT_DIR> && exec npm start -- --hostname 127.0.0.1 --port 3100'
+
 screen -dmS academy-abrikosoff-tunnel \
   cloudflared tunnel \
     --config ~/.cloudflared/abrikosoff-academy-local.yml \
@@ -115,6 +132,7 @@ screen -ls
 Остановка туннеля:
 
 ```bash
+screen -S academy-abrikosoff-local -X quit
 screen -S academy-abrikosoff-tunnel -X quit
 ```
 
@@ -126,5 +144,7 @@ screen -S academy-abrikosoff-tunnel -X quit
   `academy-dev.abrikosoff.com` не создан или ещё не распространился.
 - Возврат Telegram на страницу входа означает, что `Origin`, Redirect URI и
   переменные локального приложения нужно сравнить посимвольно.
+- Сообщение «Вход через Telegram ещё не настроен» означает, что Client ID,
+  Client Secret или Redirect URI отсутствует либо не прошёл проверку формата.
 - Туннель не заменяет локальный сервер: после перезагрузки компьютера оба
   процесса нужно запустить снова либо оформить как пользовательские службы.
