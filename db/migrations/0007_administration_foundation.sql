@@ -233,7 +233,7 @@ CREATE TABLE admin_command_executions (
   CHECK (updated_at >= created_at),
   CHECK (
     completed_at IS NULL
-    OR completed_at >= created_at
+    OR completed_at >= updated_at
   ),
   CHECK (
     (
@@ -330,6 +330,15 @@ BEGIN
     THEN
       RAISE EXCEPTION
         'admin command fencing attempt can advance only while active'
+        USING ERRCODE = '55000';
+    END IF;
+
+    IF
+      NEW.attempt_count = OLD.attempt_count + 1
+      AND OLD.lease_expires_at > statement_timestamp()
+    THEN
+      RAISE EXCEPTION
+        'admin command fencing attempt cannot capture a live lease'
         USING ERRCODE = '55000';
     END IF;
 

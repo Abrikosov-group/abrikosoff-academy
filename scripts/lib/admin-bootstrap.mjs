@@ -139,7 +139,7 @@ async function reserveCommand(client, input) {
           status,
           result,
           error_code,
-          lease_expires_at,
+          lease_expires_at > statement_timestamp() AS lease_is_live,
           attempt_count
         FROM admin_command_executions
         WHERE principal_key = $1
@@ -215,7 +215,7 @@ async function reserveCommand(client, input) {
             status,
             result,
             error_code,
-            lease_expires_at,
+            lease_expires_at > statement_timestamp() AS lease_is_live,
             attempt_count
           FROM admin_command_executions
           WHERE principal_key = $1
@@ -264,10 +264,7 @@ async function reserveCommand(client, input) {
       );
     }
 
-    if (
-      previous.lease_expires_at &&
-      previous.lease_expires_at.getTime() > Date.now()
-    ) {
+    if (previous.lease_is_live) {
       throw new AdminBootstrapError(
         "COMMAND_IN_PROGRESS",
         "Команда с этим ключом уже выполняется.",
@@ -285,6 +282,7 @@ async function reserveCommand(client, input) {
           updated_at = now()
         WHERE id = $1
           AND status IN ('in_progress', 'waiting_external')
+          AND lease_expires_at <= statement_timestamp()
         RETURNING id, attempt_count
       `,
       [previous.id],

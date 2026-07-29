@@ -57,6 +57,22 @@ async function runBootstrap(input: {
   );
 }
 
+function bootstrapRequestSha256(input: {
+  userId: string;
+  reason: string;
+}) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        action: "admin.role.bootstrap_grant",
+        reason: input.reason,
+        role: "owner",
+        userId: input.userId,
+      }),
+    )
+    .digest("hex");
+}
+
 async function ensureActiveOwner(pool: Pool) {
   const existing = await pool.query<{ user_id: string }>(
     `
@@ -687,6 +703,33 @@ describe("Administration с PostgreSQL", () => {
       code: "55000",
     });
 
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET
+            lease_expires_at = now() + interval '10 minutes',
+            attempt_count = attempt_count + 1,
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    await pool.query(
+      `
+        UPDATE admin_command_executions
+        SET
+          lease_expires_at = now() - interval '1 second',
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [executionId],
+    );
+
     await pool.query(
       `
         UPDATE admin_command_executions
@@ -755,6 +798,26 @@ describe("Administration с PostgreSQL", () => {
       ),
     ).rejects.toMatchObject({
       code: "55000",
+    });
+
+    await expect(
+      pool.query(
+        `
+          UPDATE admin_command_executions
+          SET
+            status = 'failed',
+            result_status = 500,
+            result = '{}'::jsonb,
+            error_code = 'INVALID_TEST_CHRONOLOGY',
+            lease_expires_at = NULL,
+            completed_at = updated_at,
+            updated_at = updated_at + interval '1 second'
+          WHERE id = $1
+        `,
+        [executionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
     });
 
     await pool.query(
@@ -1098,21 +1161,98 @@ describe("Administration с PostgreSQL", () => {
     });
   });
 
+  it("не захватывает команду с действующим lease", async () => {
+    const ownerUserId = await ensureActiveOwner(pool);
+    const idempotencyKey = randomUUID();
+    const reason = "Проверка запрета захвата действующего lease";
+    const requestSha256 = bootstrapRequestSha256({
+      userId: ownerUserId,
+      reason,
+    });
+    const executionId = randomUUID();
+
+    await pool.query(
+      `
+        INSERT INTO admin_command_executions (
+          id,
+          principal_key,
+          actor_user_id,
+          action,
+          idempotency_key,
+          request_sha256,
+          target_type,
+          target_id,
+          execution_kind,
+          status,
+          lease_expires_at,
+          attempt_count
+        )
+        VALUES (
+          $1,
+          'system:bootstrap',
+          NULL,
+          'admin.role.bootstrap_grant',
+          $2,
+          $3,
+          'identity_user',
+          $4,
+          'internal',
+          'in_progress',
+          now() + interval '5 minutes',
+          1
+        )
+      `,
+      [
+        executionId,
+        idempotencyKey,
+        requestSha256,
+        ownerUserId,
+      ],
+    );
+
+    await expect(
+      runBootstrap({
+        userId: ownerUserId,
+        reason,
+        idempotencyKey,
+      }),
+    ).rejects.toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining("COMMAND_IN_PROGRESS"),
+    });
+
+    const persisted = await pool.query<{
+      status: string;
+      attempt_count: number;
+      lease_is_live: boolean;
+    }>(
+      `
+        SELECT
+          status,
+          attempt_count,
+          lease_expires_at > statement_timestamp() AS lease_is_live
+        FROM admin_command_executions
+        WHERE id = $1
+      `,
+      [executionId],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      status: "in_progress",
+      attempt_count: 1,
+      lease_is_live: true,
+    });
+  });
+
   it("безопасно продолжает команду после истечения lease", async () => {
     const ownerUserId = await ensureActiveOwner(pool);
     const idempotencyKey = randomUUID();
     const reason =
       "Восстановление назначения владельца после истечения lease";
-    const requestSha256 = createHash("sha256")
-      .update(
-        JSON.stringify({
-          action: "admin.role.bootstrap_grant",
-          reason,
-          role: "owner",
-          userId: ownerUserId,
-        }),
-      )
-      .digest("hex");
+    const requestSha256 = bootstrapRequestSha256({
+      userId: ownerUserId,
+      reason,
+    });
     const executionId = randomUUID();
 
     await pool.query(
