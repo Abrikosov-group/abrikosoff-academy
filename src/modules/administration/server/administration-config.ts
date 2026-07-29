@@ -4,24 +4,32 @@ export type AdministrationConfig = {
   enabled: boolean;
 };
 
-function isProductionDeployment() {
+const localAcceptanceOrigin = "https://academy-dev.abrikosoff.com";
+
+function canEnableAdministration() {
   if (process.env.NODE_ENV !== "production") {
-    return false;
+    return true;
   }
 
   const appBaseUrl = process.env.APP_BASE_URL?.trim();
 
   if (!appBaseUrl) {
-    return true;
+    return false;
   }
 
   try {
+    const parsedAppBaseUrl = new URL(appBaseUrl);
+
     return (
-      new URL(appBaseUrl).hostname.replace(/\.$/u, "") ===
-      "academy.abrikosoff.com"
+      parsedAppBaseUrl.origin === localAcceptanceOrigin &&
+      parsedAppBaseUrl.pathname === "/" &&
+      !parsedAppBaseUrl.username &&
+      !parsedAppBaseUrl.password &&
+      !parsedAppBaseUrl.search &&
+      !parsedAppBaseUrl.hash
     );
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -38,7 +46,7 @@ export function getAdministrationConfig(): AdministrationConfig {
 
   const enabled = rawEnabled === "true";
 
-  if (enabled && isProductionDeployment()) {
+  if (enabled && !canEnableAdministration()) {
     throw new TypeError(
       "Production-доступ к Administration откроется после приёмки этапа 2.",
     );
