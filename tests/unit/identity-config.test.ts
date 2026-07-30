@@ -33,6 +33,16 @@ describe("getIdentityConfig", () => {
     });
   });
 
+  it("доверяет Cloudflare-заголовкам только при явной настройке", () => {
+    vi.stubEnv("SESSION_TRUSTED_PROXY", "cloudflare");
+
+    expect(getIdentityConfig().trustedProxy).toBe("cloudflare");
+
+    vi.stubEnv("SESSION_TRUSTED_PROXY", "other");
+
+    expect(getIdentityConfig().trustedProxy).toBe("none");
+  });
+
   it("отключает Telegram при callback другого домена", () => {
     configureTelegram();
     vi.stubEnv(

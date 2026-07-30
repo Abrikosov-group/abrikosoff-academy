@@ -175,8 +175,17 @@ test("защищённый /admin перечитывает роль на каж�
       page.getByText("Контур защищён", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText(/демонстрационные показатели/),
+      page.getByRole("heading", {
+        name: "Первый рабочий раздел подключён",
+        exact: true,
+      }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: "Открыть учеников",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", "/admin/students");
 
     const adminHomeLink = page.getByRole("link", {
       name: "На главную административной панели",

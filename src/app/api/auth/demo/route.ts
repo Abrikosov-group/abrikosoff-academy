@@ -6,13 +6,13 @@ import {
 } from "@/modules/identity/server/identity-config";
 import { getIdentityRuntime } from "@/modules/identity/server/get-identity-service";
 import { identityErrorResponse } from "@/modules/identity/server/http";
+import { collectSessionClientContext } from "@/modules/identity/server/session-client-context";
 import { setSessionCookie } from "@/modules/identity/server/session";
 import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redirect";
 import {
   readJsonBodyWithLimit,
   RequestBodyTooLargeError,
 } from "@/lib/read-request-body";
-import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -82,8 +82,9 @@ export async function POST(request: Request) {
         documentVersion: privacyDocumentVersion,
         source: "local-demo-login",
       },
-      userAgentFamily: normalizeUserAgentFamily(
-        request.headers.get("user-agent"),
+      clientContext: collectSessionClientContext(
+        request.headers,
+        config.trustedProxy,
       ),
     });
     const response = NextResponse.json(

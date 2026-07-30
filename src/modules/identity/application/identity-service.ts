@@ -3,6 +3,7 @@ import { IdentityError } from "../domain/errors";
 import type {
   LoginSession,
   PrivacyConsent,
+  SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
 import type {
@@ -22,7 +23,7 @@ export function createOpaqueIdentityToken() {
 
 export type AuthenticateIdentityInput = UpsertIdentityInput & {
   authenticationMethod: SessionAuthenticationMethod;
-  userAgentFamily?: string;
+  clientContext?: SessionClientContext;
 };
 
 export class IdentityService {
@@ -49,7 +50,7 @@ export class IdentityService {
       authenticatedAt,
       authenticationMethod: input.authenticationMethod,
       authenticationMethodId: user.primaryMethod.id,
-      userAgentFamily: input.userAgentFamily,
+      clientContext: input.clientContext,
     });
 
     return {
@@ -85,7 +86,7 @@ export class IdentityService {
 
   async verifyEmailLogin(
     token: string,
-    input: { userAgentFamily?: string } = {},
+    input: { clientContext?: SessionClientContext } = {},
   ) {
     const challenge = await this.repository.consumeLoginChallenge(
       hashIdentityToken(token),
@@ -107,7 +108,7 @@ export class IdentityService {
       receiptEmail: challenge.identifier,
       metadata: {},
       consent: challenge.consent,
-      userAgentFamily: input.userAgentFamily,
+      clientContext: input.clientContext,
     });
 
     return {

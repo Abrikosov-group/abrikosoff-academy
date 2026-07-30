@@ -2,12 +2,13 @@ import "server-only";
 
 import { IdentityError } from "../domain/errors";
 
-export const privacyDocumentVersion = "2026-07-28";
+export const privacyDocumentVersion = "2026-07-30";
 
 export type IdentityConfig = {
   demoAuthEnabled: boolean;
   emailAuthMode: "demo" | "disabled";
   sessionTtlDays: number;
+  trustedProxy: "none" | "cloudflare";
   telegram?: {
     clientId: string;
     clientSecret: string;
@@ -149,6 +150,10 @@ export function getIdentityConfig(): IdentityConfig {
         ? "demo"
         : "disabled",
     sessionTtlDays,
+    trustedProxy:
+      process.env.SESSION_TRUSTED_PROXY === "cloudflare"
+        ? "cloudflare"
+        : "none",
     telegram: readTelegramConfig(production),
   };
 }

@@ -1,0 +1,43 @@
+[Unit]
+Description=Анонимизация технических данных сессий Академии
+Documentation=https://github.com/Abrikosov-group/abrikosoff-academy
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/academy/shared/.env
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+SupplementaryGroups=docker academy-runtime
+RuntimeDirectory=academy-identity-session-retention
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/academy-identity-session-retention/docker
+ExecStartPre=/usr/bin/install -d -m 0700 /run/academy-identity-session-retention/docker
+ExecStart=/usr/local/sbin/academy-task run purge-identity-session-technical-data
+UMask=0077
+Nice=10
+TimeoutStartSec=15m
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateNetwork=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

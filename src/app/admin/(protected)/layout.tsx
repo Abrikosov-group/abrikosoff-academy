@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { AccountMenu } from "@/components/academy/account-menu";
+import { AdminNavigation } from "@/components/academy/admin-navigation";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 
@@ -39,11 +40,12 @@ export default async function ProtectedAdminLayout({
       <div className="admin-layout">
         <aside className="admin-sidebar">
           <p className="admin-sidebar-label">Панель управления</p>
-          <nav aria-label="Административная навигация">
-            <Link className="active" href="/admin">
-              Обзор
-            </Link>
-          </nav>
+          <AdminNavigation
+            showStudents={
+              context.permissions.has("users.read") &&
+              context.permissions.has("access.read")
+            }
+          />
           <Link className="admin-back-link" href="/dashboard">
             Личный кабинет
           </Link>

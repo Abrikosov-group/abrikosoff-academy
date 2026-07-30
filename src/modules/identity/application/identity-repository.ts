@@ -2,6 +2,7 @@ import type {
   AuthenticatedUser,
   IdentityMethodType,
   PrivacyConsent,
+  SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
 
@@ -42,7 +43,7 @@ export interface IdentityRepository {
     authenticatedAt: Date;
     authenticationMethod: SessionAuthenticationMethod;
     authenticationMethodId: string;
-    userAgentFamily?: string;
+    clientContext?: SessionClientContext;
   }): Promise<void>;
 
   findUserBySessionTokenSha256(

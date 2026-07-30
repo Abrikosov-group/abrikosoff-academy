@@ -25,9 +25,20 @@ describe("telegramIdentityFromClaims", () => {
       subject: "123456789",
       displayName: "Анна Иванова",
       metadata: {
+        profileMetadataVersion: 1,
         username: "anna",
         photoUrl: "https://t.me/i/userpic/example.jpg",
         telegramUserId: "987654321",
+        profileName: "Анна Иванова",
+        firstName: "Анна",
+        lastName: "Иванова",
+        requestedScopes: ["openid", "profile"],
+        tokenIssuedAt: new Date(
+          1_775_000_000 * 1_000,
+        ).toISOString(),
+        tokenExpiresAt: new Date(
+          1_775_000_600 * 1_000,
+        ).toISOString(),
       },
     });
   });
@@ -45,9 +56,20 @@ describe("telegramIdentityFromClaims", () => {
       subject: "123456789",
       displayName: "Анна Иванова",
       metadata: {
+        profileMetadataVersion: 1,
         username: undefined,
         photoUrl: undefined,
         telegramUserId: "987654321",
+        profileName: undefined,
+        firstName: "Анна",
+        lastName: "Иванова",
+        requestedScopes: ["openid", "profile"],
+        tokenIssuedAt: new Date(
+          1_775_000_000 * 1_000,
+        ).toISOString(),
+        tokenExpiresAt: new Date(
+          1_775_000_600 * 1_000,
+        ).toISOString(),
       },
     });
   });

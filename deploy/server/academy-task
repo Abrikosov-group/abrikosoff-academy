@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly academy_root="/opt/academy"
+readonly shared_root="${academy_root}/shared"
+readonly environment_file="${shared_root}/.env"
+readonly current_link="${academy_root}/current"
+readonly current_image_file="${shared_root}/current-image"
+readonly project_name="academy-abrikosoff"
+readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+readonly operation_lock_timeout_seconds=600
+readonly allowed_task="purge-identity-session-technical-data"
+
+fail() {
+  printf 'Ошибка фоновой задачи: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ "$#" -eq 2 ]] || fail "ожидалось ровно два аргумента"
+[[ "$1" == "run" ]] || fail "разрешена только команда run"
+[[ "$2" == "${allowed_task}" ]] || fail "имя задачи не разрешено"
+
+exec 9<"${academy_root}" \
+  || fail "не удалось открыть каталог Академии для блокировки"
+flock --shared --wait "${operation_lock_timeout_seconds}" 9 \
+  || fail "не удалось дождаться завершения релиза"
+
+[[ -L "${current_link}" ]] || fail "текущий релиз не найден"
+release_directory="$(readlink -f "${current_link}")"
+readonly release_directory
+[[ -f "${environment_file}" ]] || fail "файл окружения не найден"
+[[ -f "${current_image_file}" ]] || fail "текущий образ не найден"
+image_reference="$(<"${current_image_file}")"
+readonly image_reference
+readonly app_version="${image_reference##*:}"
+readonly expected_release_directory="${academy_root}/releases/${app_version}"
+
+[[ "${app_version}" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "тег текущего образа не является SHA релиза"
+[[ "${image_reference}" == "${image_prefix}${app_version}" ]] \
+  || fail "текущий образ не принадлежит Академии"
+[[ "${release_directory}" == "${expected_release_directory}" ]] \
+  || fail "метаданные текущего релиза и образа не совпадают"
+[[ -f "${release_directory}/compose.production.yaml" ]] \
+  || fail "Compose-конфигурация текущего релиза не найдена"
+
+run_compose() {
+  ACADEMY_IMAGE="${image_reference}" \
+  ACADEMY_ENV_FILE="${environment_file}" \
+  APP_VERSION="${app_version}" \
+    docker compose \
+      --project-name "${project_name}" \
+      --env-file "${environment_file}" \
+      --file "${release_directory}/compose.production.yaml" \
+      "$@"
+}
+
+running_app_container="$(
+  run_compose ps --quiet --status running app
+)" || fail "не удалось определить production-приложение"
+readonly running_app_container
+[[ "${running_app_container}" =~ ^[0-9a-f]{12,64}$ ]] \
+  || fail "production-приложение запущено не ровно в одном экземпляре"
+active_image="$(
+  docker inspect \
+    --format '{{.Config.Image}}' \
+    "${running_app_container}"
+)" || fail "не удалось определить образ production-приложения"
+readonly active_image
+[[ "${active_image}" == "${image_reference}" ]] \
+  || fail "запущенный образ не совпадает с текущим релизом"
+
+run_compose \
+  run \
+    --rm \
+    --no-deps \
+    -T \
+    app \
+    node scripts/background-task.mjs "${allowed_task}"

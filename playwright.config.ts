@@ -24,7 +24,9 @@ export default defineConfig({
     env: {
       ...process.env,
       APP_BASE_URL: baseURL,
+      ADMIN_DISPLAY_TIME_ZONE: "Europe/Moscow",
       ADMINISTRATION_ENABLED: "true",
+      ADMINISTRATION_MODE: "operational",
       AUTH_DEMO_MODE: "enabled",
       DATABASE_URL: testDatabaseUrl,
       DEMO_WEBHOOK_SECRET: "e2e-demo-webhook-secret",

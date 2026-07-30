@@ -8,6 +8,7 @@ import {
   privacyDocumentVersion,
 } from "@/modules/identity/server/identity-config";
 import { getIdentityRuntime } from "@/modules/identity/server/get-identity-service";
+import { collectSessionClientContext } from "@/modules/identity/server/session-client-context";
 import {
   getCurrentSessionTokenSha256,
   setSessionCookie,
@@ -22,7 +23,6 @@ import {
   logSecurityEvent,
   logUnexpectedServerError,
 } from "@/lib/safe-server-log";
-import { normalizeUserAgentFamily } from "@/lib/user-agent-family";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,9 +32,11 @@ export async function GET(request: NextRequest) {
   const config = getIdentityConfig();
   const publicOrigin = config.telegram?.redirectUri || request.url;
   const requestId = randomUUID();
-  const userAgentFamily = normalizeUserAgentFamily(
-    request.headers.get("user-agent"),
+  const clientContext = collectSessionClientContext(
+    request.headers,
+    config.trustedProxy,
   );
+  const userAgentFamily = clientContext.userAgentFamily;
   let callbackPurpose: "login" | "admin" = "login";
 
   try {
@@ -94,7 +96,7 @@ export async function GET(request: NextRequest) {
               documentVersion: privacyDocumentVersion,
               source: "telegram-openid-connect",
             },
-            userAgentFamily,
+            clientContext,
           });
     const response = NextResponse.redirect(
       new URL(loginState.redirectPath, publicOrigin),

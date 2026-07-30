@@ -1,12 +1,16 @@
+import Link from "next/link";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 import { getAdministrationConfig } from "@/modules/administration/server/administration-config";
 
 export default async function AdminPage() {
   const { mode } = getAdministrationConfig();
 
-  await requireAdminContext(
+  const context = await requireAdminContext(
     mode === "owner_preview" ? "admin.preview" : "dashboard.read",
   );
+  const studentsAvailable =
+    context.permissions.has("users.read") &&
+    context.permissions.has("access.read");
 
   return (
     <>
@@ -20,12 +24,24 @@ export default async function AdminPage() {
       </header>
       <section className="admin-foundation-card">
         <span className="badge badge-success">Контур защищён</span>
-        <h2>Основа готова к следующим разделам</h2>
+        <h2>
+          {studentsAvailable
+            ? "Первый рабочий раздел подключён"
+            : "Основа готова к следующим разделам"}
+        </h2>
         <p>
-          Здесь появятся достоверная статистика, ученики, доступы и
-          платежная диагностика. Сейчас экран намеренно не показывает
-          демонстрационные показатели.
+          {studentsAvailable
+            ? "В локальном операционном режиме уже доступны поиск, карточка ученика и просмотр оплаченного доступа. Достоверная статистика и изменяющие команды будут добавлены отдельными пакетами."
+            : "Здесь появятся достоверная статистика, ученики, доступы и платежная диагностика. Сейчас экран намеренно не показывает демонстрационные показатели."}
         </p>
+        {studentsAvailable ? (
+          <Link
+            className="button button-primary button-inline"
+            href="/admin/students"
+          >
+            Открыть учеников
+          </Link>
+        ) : null}
       </section>
     </>
   );

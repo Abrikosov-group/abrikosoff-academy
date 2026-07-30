@@ -11,6 +11,7 @@ import type {
 import type {
   AuthenticatedUser,
   IdentityMethodType,
+  SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
 import {
@@ -286,8 +287,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
     authenticatedAt: Date;
     authenticationMethod: SessionAuthenticationMethod;
     authenticationMethodId: string;
-    userAgentFamily?: string;
+    clientContext?: SessionClientContext;
   }) {
+    const clientContext = input.clientContext;
+
     await this.pool.query(
       `
         INSERT INTO identity_sessions (
@@ -298,9 +301,30 @@ export class PostgresIdentityRepository implements IdentityRepository {
           authenticated_at,
           authentication_method,
           authentication_method_id,
-          user_agent_family
+          user_agent_family,
+          client_ip,
+          country_code,
+          region,
+          region_code,
+          city,
+          client_timezone,
+          browser_version,
+          operating_system,
+          operating_system_version,
+          device_type,
+          device_vendor,
+          device_model,
+          client_architecture,
+          client_bitness,
+          preferred_language,
+          raw_user_agent,
+          cloudflare_ray_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17, $18, $19,
+          $20, $21, $22, $23, $24, $25
+        )
       `,
       [
         randomUUID(),
@@ -310,7 +334,24 @@ export class PostgresIdentityRepository implements IdentityRepository {
         input.authenticatedAt,
         input.authenticationMethod,
         input.authenticationMethodId,
-        input.userAgentFamily ?? null,
+        clientContext?.userAgentFamily ?? null,
+        clientContext?.ipAddress ?? null,
+        clientContext?.countryCode ?? null,
+        clientContext?.region ?? null,
+        clientContext?.regionCode ?? null,
+        clientContext?.city ?? null,
+        clientContext?.timezone ?? null,
+        clientContext?.browserVersion ?? null,
+        clientContext?.operatingSystem ?? null,
+        clientContext?.operatingSystemVersion ?? null,
+        clientContext?.deviceType ?? null,
+        clientContext?.deviceVendor ?? null,
+        clientContext?.deviceModel ?? null,
+        clientContext?.architecture ?? null,
+        clientContext?.bitness ?? null,
+        clientContext?.preferredLanguage ?? null,
+        clientContext?.rawUserAgent ?? null,
+        clientContext?.cloudflareRayId ?? null,
       ],
     );
   }

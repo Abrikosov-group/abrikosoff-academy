@@ -8,6 +8,11 @@ deploy/*
 deploy/server/*
 !deploy/server/academy-admin
 !deploy/server/academy-release
+!deploy/server/academy-task
+!deploy/systemd/
+deploy/systemd/*
+!deploy/systemd/academy-identity-session-retention.service
+!deploy/systemd/academy-identity-session-retention.timer
 docs
 node_modules
 npm-debug.log*

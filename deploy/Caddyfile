@@ -5,6 +5,23 @@ academy.abrikosoff.com {
 		max_size 1MB
 	}
 
+	# Приложение доверяет техническим CF-заголовкам только тогда, когда
+	# непосредственный сетевой источник входит в опубликованные Cloudflare
+	# диапазоны. Для прямого обращения к origin одноимённые заголовки
+	# удаляются до передачи приложению.
+	# Актуальность диапазонов проверена 30 июля 2026 года:
+	# https://www.cloudflare.com/ips/
+	@not_cloudflare {
+		not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	}
+	request_header @not_cloudflare -CF-Connecting-IP
+	request_header @not_cloudflare -CF-IPCountry
+	request_header @not_cloudflare -CF-Region
+	request_header @not_cloudflare -CF-Region-Code
+	request_header @not_cloudflare -CF-IPCity
+	request_header @not_cloudflare -CF-Timezone
+	request_header @not_cloudflare -CF-Ray
+
 	# ЮKassa публикует этот список источников для HTTP-уведомлений.
 	# Актуальность диапазонов проверена 28 июля 2026 года.
 	@untrusted_yookassa_webhook {

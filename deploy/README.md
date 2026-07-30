@@ -7,6 +7,13 @@
 - `database` — PostgreSQL только во внутренней сети Docker;
 - `migrate` — одноразово применяет новые SQL-миграции до запуска приложения.
 
+Production использует `SESSION_TRUSTED_PROXY=cloudflare`. Поэтому Caddy перед
+передачей запроса приложению проверяет непосредственный `remote_ip`: CF-заголовки
+географии и адреса сохраняются только для опубликованных диапазонов Cloudflare,
+а при прямом обращении к origin удаляются. После изменения официального списка
+[Cloudflare IP Ranges](https://www.cloudflare.com/ips/) диапазоны в
+`Caddyfile` обновляются и конфигурация повторно валидируется.
+
 ## Автоматический релиз
 
 Workflow `.github/workflows/release.yml` после изменения `main`:
@@ -53,14 +60,15 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 получают её как дополнительную. Wrapper-ы остаются принадлежащими `root` и не
 становятся группово изменяемыми.
 
-Кандидаты release- и административного wrapper-ов доставляются внутри
+Кандидаты release-, административного и task-wrapper-ов доставляются внутри
 неизменяемого production-образа как
 `/usr/local/share/academy/academy-release` и
-`/usr/local/share/academy/academy-admin`. Обычный release-процесс не
-устанавливает и не обновляет root-owned файлы автоматически.
+`/usr/local/share/academy/academy-admin` и
+`/usr/local/share/academy/academy-task`. Обычный release-процесс не
+устанавливает и не обновляет root-owned файлы или systemd-unit-ы автоматически.
 
 После первого релиза и после каждого изменения любого из этих wrapper-ов
-оператор извлекает оба кандидата из текущего production-образа, проверяет и
+оператор извлекает три кандидата из текущего production-образа, проверяет и
 явно устанавливает их как одну согласованную версию. Обновление начинается
 только после завершения текущего release-workflow; на первом переходе оператор
 отдельно подтверждает отсутствие активного релиза, а последующие обновления
@@ -79,11 +87,12 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   trap '
     rm -f -- \
       "$candidate_directory/academy-admin" \
-      "$candidate_directory/academy-release"
+      "$candidate_directory/academy-release" \
+      "$candidate_directory/academy-task"
     rmdir -- "$candidate_directory"
   ' EXIT
 
-  for wrapper_name in academy-admin academy-release; do
+  for wrapper_name in academy-admin academy-release academy-task; do
     candidate="$candidate_directory/$wrapper_name"
     sudo docker run \
       --rm \
@@ -106,6 +115,55 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
       "$candidate" \
       "/usr/local/sbin/$wrapper_name"
   done
+)
+```
+
+После установки `academy-task` оператор извлекает согласованные unit-файлы
+обезличивания из того же образа и включает timer:
+
+```bash
+(
+  set -Eeuo pipefail
+  exec 9< /opt/academy
+  flock --exclusive --wait 600 9
+  image_reference="$(sudo cat /opt/academy/shared/current-image)"
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  candidate_directory="$(mktemp -d)"
+  trap '
+    rm -f -- \
+      "$candidate_directory/academy-identity-session-retention.service" \
+      "$candidate_directory/academy-identity-session-retention.timer"
+    rmdir -- "$candidate_directory"
+  ' EXIT
+
+  for unit_name in \
+    academy-identity-session-retention.service \
+    academy-identity-session-retention.timer
+  do
+    candidate="$candidate_directory/$unit_name"
+    sudo docker run \
+      --rm \
+      --entrypoint cat \
+      "$image_reference" \
+      "/usr/local/share/academy/systemd/$unit_name" \
+      > "$candidate"
+    test -s "$candidate"
+    sudo install \
+      --owner=root \
+      --group=root \
+      --mode=0644 \
+      "$candidate" \
+      "/etc/systemd/system/$unit_name"
+  done
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now \
+    academy-identity-session-retention.timer
+  sudo systemctl start \
+    academy-identity-session-retention.service
+  sudo systemctl --no-pager status \
+    academy-identity-session-retention.service \
+    academy-identity-session-retention.timer
 )
 ```
 
@@ -205,6 +263,11 @@ allowlist-wrapper `/usr/local/sbin/academy-task`. Wrapper запускает р�
 Actions и процесс Next.js не являются планировщиками. Общий контракт,
 взаимная блокировка и проверка состояния описаны в
 [эксплуатационной инструкции](../docs/operations/background-jobs.md).
+
+Первый включённый timer ежедневно обезличивает технический контекст сессий
+старше 12 месяцев. Он сохраняет запись сессии, но удаляет из неё IP-адрес,
+географию, сведения об устройстве и браузере, сырой User-Agent и Cloudflare
+Ray ID.
 
 `ADMINISTRATION_ENABLED=false` остаётся безопасным значением по умолчанию.
 До полной приёмки двух каналов и уведомлений разрешён только явно заданный
