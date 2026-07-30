@@ -7,6 +7,260 @@ const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
   "postgresql://academy:academy-local-only@127.0.0.1:5432/academy_test";
 
+type DashboardExpectations = {
+  activeStudents: number;
+  newStudentsLast7Days: number;
+  newStudentsLast30Days: number;
+  activePaidAccessStudents: number;
+  stalePendingPayments: number;
+  failedWebhookEvents: number;
+  last7DaysFrom: string;
+  last30DaysFrom: string;
+  through: string;
+};
+
+async function insertDashboardFixtures(
+  database: Client,
+  userId: string,
+): Promise<DashboardExpectations> {
+  const paidOrderId = randomUUID();
+  const pendingOrderId = randomUUID();
+
+  await database.query(
+    `
+      INSERT INTO billing_orders (
+        id,
+        customer_id,
+        plan_id,
+        legal_entity_id,
+        country_code,
+        amount_minor,
+        currency,
+        status,
+        idempotency_key,
+        selected_provider,
+        merchant_account_id,
+        offer_accepted_at,
+        offer_version
+      )
+      VALUES
+        (
+          $1,
+          $3,
+          'annual',
+          'ip-fedotova',
+          'RU',
+          1400000,
+          'RUB',
+          'paid',
+          $4,
+          'demo',
+          'admin-dashboard-e2e',
+          now(),
+          'dashboard-e2e'
+        ),
+        (
+          $2,
+          $3,
+          'monthly',
+          'ip-fedotova',
+          'RU',
+          150000,
+          'RUB',
+          'pending',
+          $5,
+          'demo',
+          'admin-dashboard-e2e',
+          now(),
+          'dashboard-e2e'
+        )
+    `,
+    [
+      paidOrderId,
+      pendingOrderId,
+      userId,
+      randomUUID(),
+      randomUUID(),
+    ],
+  );
+  await database.query(
+    `
+      INSERT INTO billing_access_grants (
+        order_id,
+        customer_id,
+        plan_id,
+        status,
+        period_start,
+        period_end,
+        granted_at
+      )
+      VALUES (
+        $1,
+        $2,
+        'annual',
+        'granted',
+        now() - interval '1 day',
+        now() + interval '1 year',
+        now()
+      )
+    `,
+    [paidOrderId, userId],
+  );
+  await database.query(
+    `
+      INSERT INTO billing_payments (
+        id,
+        order_id,
+        provider,
+        merchant_account_id,
+        external_payment_id,
+        provider_operation_key,
+        status,
+        amount_minor,
+        currency,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1,
+        $2,
+        'demo',
+        'admin-dashboard-e2e',
+        $3,
+        $4,
+        'pending',
+        150000,
+        'RUB',
+        now() - interval '20 minutes',
+        now() - interval '20 minutes'
+      )
+    `,
+    [
+      randomUUID(),
+      pendingOrderId,
+      randomUUID(),
+      randomUUID(),
+    ],
+  );
+  await database.query(
+    `
+      INSERT INTO billing_webhook_events (
+        id,
+        provider,
+        merchant_account_id,
+        external_event_id,
+        event_type,
+        payload_sha256,
+        payload,
+        processing_status,
+        error_code
+      )
+      VALUES (
+        $1,
+        'demo',
+        'admin-dashboard-e2e',
+        $2,
+        'payment.updated',
+        $3,
+        '{}'::jsonb,
+        'failed',
+        'E2E_EXPECTED_FAILURE'
+      )
+    `,
+    [randomUUID(), randomUUID(), "a".repeat(64)],
+  );
+
+  const result = await database.query<DashboardExpectations>(
+    `
+      WITH local_clock AS (
+        SELECT
+          now() AS generated_at,
+          (now() AT TIME ZONE 'Europe/Moscow')::date
+            AS local_today
+      ),
+      boundaries AS (
+        SELECT
+          generated_at,
+          local_today,
+          local_today - 6 AS last_7_days_from,
+          local_today - 29 AS last_30_days_from,
+          (local_today - 6) AT TIME ZONE 'Europe/Moscow'
+            AS last_7_days_started_at,
+          (local_today - 29) AT TIME ZONE 'Europe/Moscow'
+            AS last_30_days_started_at
+        FROM local_clock
+      )
+      SELECT
+        (
+          SELECT count(*)::integer
+          FROM identity_users users
+          CROSS JOIN boundaries
+          WHERE users.status = 'active'
+            AND users.created_at <= boundaries.generated_at
+        ) AS "activeStudents",
+        (
+          SELECT count(*)::integer
+          FROM identity_users users
+          CROSS JOIN boundaries
+          WHERE users.status <> 'deleted'
+            AND users.created_at >=
+              boundaries.last_7_days_started_at
+            AND users.created_at <= boundaries.generated_at
+        ) AS "newStudentsLast7Days",
+        (
+          SELECT count(*)::integer
+          FROM identity_users users
+          CROSS JOIN boundaries
+          WHERE users.status <> 'deleted'
+            AND users.created_at >=
+              boundaries.last_30_days_started_at
+            AND users.created_at <= boundaries.generated_at
+        ) AS "newStudentsLast30Days",
+        (
+          SELECT count(DISTINCT grants.customer_id)::integer
+          FROM billing_access_grants grants
+          CROSS JOIN boundaries
+          WHERE grants.status = 'granted'
+            AND grants.created_at <= boundaries.generated_at
+            AND grants.period_start <= boundaries.generated_at
+            AND grants.period_end > boundaries.generated_at
+        ) AS "activePaidAccessStudents",
+        (
+          SELECT count(*)::integer
+          FROM billing_payments payments
+          CROSS JOIN boundaries
+          WHERE payments.status IN (
+            'created',
+            'pending',
+            'requires_action'
+          )
+            AND payments.updated_at <=
+              boundaries.generated_at - interval '15 minutes'
+        ) AS "stalePendingPayments",
+        (
+          SELECT count(*)::integer
+          FROM billing_webhook_events webhook_events
+          CROSS JOIN boundaries
+          WHERE webhook_events.processing_status = 'failed'
+            AND webhook_events.received_at <=
+              boundaries.generated_at
+        ) AS "failedWebhookEvents",
+        boundaries.last_7_days_from::text AS "last7DaysFrom",
+        boundaries.last_30_days_from::text AS "last30DaysFrom",
+        boundaries.local_today::text AS "through"
+      FROM boundaries
+    `,
+  );
+
+  const expectations = result.rows[0];
+
+  if (!expectations) {
+    throw new Error("Не удалось подготовить ожидания дашборда E2E.");
+  }
+
+  return expectations;
+}
+
 test("защищённый /admin перечитывает роль на каждом запросе", async ({
   context,
   page,
@@ -138,6 +392,10 @@ test("защищённый /admin перечитывает роль на каж�
       `,
       [assignmentId, userId],
     );
+    const dashboardExpectations = await insertDashboardFixtures(
+      database,
+      userId,
+    );
     await database.query("COMMIT");
 
     await context.addCookies([
@@ -167,25 +425,142 @@ test("защищённый /admin перечитывает роль на каж�
     expect(adminResponse?.status()).toBe(200);
     await expect(
       page.getByRole("heading", {
-        name: "Администрирование",
+        name: "Обзор Академии",
         exact: true,
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("Контур защищён", { exact: true }),
+      page.getByText(
+        "Фактические показатели из PostgreSQL без демонстрационных значений и изменяющих команд.",
+        { exact: true },
+      ),
     ).toBeVisible();
+    const activeStudentsCard = page.getByRole("article", {
+      name: "Активные ученики",
+      exact: true,
+    });
+
     await expect(
-      page.getByRole("heading", {
-        name: "Первый рабочий раздел подключён",
+      activeStudentsCard.locator(
+        ".admin-dashboard-metric-value",
+      ),
+    ).toHaveText(
+      dashboardExpectations.activeStudents.toLocaleString("ru-RU"),
+    );
+    await expect(
+      activeStudentsCard.getByRole("link", {
+        name: "Открыть список активных учеников",
         exact: true,
       }),
-    ).toBeVisible();
+    ).toHaveAttribute("href", "/admin/students?status=active");
+
+    const newStudentsCard = page.getByRole("article", {
+      name: "Новые ученики",
+      exact: true,
+    });
+    const periodValues = newStudentsCard.locator(
+      ".admin-dashboard-period-values > div",
+    );
+
+    await expect(periodValues.nth(0).locator("strong")).toHaveText(
+      dashboardExpectations.newStudentsLast7Days.toLocaleString(
+        "ru-RU",
+      ),
+    );
+    await expect(periodValues.nth(1).locator("strong")).toHaveText(
+      dashboardExpectations.newStudentsLast30Days.toLocaleString(
+        "ru-RU",
+      ),
+    );
     await expect(
-      page.getByRole("link", {
-        name: "Открыть учеников",
+      newStudentsCard.getByRole("link", {
+        name: "Открыть новых учеников за 7 дней",
         exact: true,
       }),
-    ).toHaveAttribute("href", "/admin/students");
+    ).toHaveAttribute(
+      "href",
+      `/admin/students?from=${dashboardExpectations.last7DaysFrom}&to=${dashboardExpectations.through}`,
+    );
+    await expect(
+      newStudentsCard.getByRole("link", {
+        name: "Открыть новых учеников за 30 дней",
+        exact: true,
+      }),
+    ).toHaveAttribute(
+      "href",
+      `/admin/students?from=${dashboardExpectations.last30DaysFrom}&to=${dashboardExpectations.through}`,
+    );
+
+    const activeAccessCard = page.getByRole("article", {
+      name: "Действующий оплаченный доступ",
+      exact: true,
+    });
+
+    await expect(
+      activeAccessCard.locator(
+        ".admin-dashboard-metric-value",
+      ),
+    ).toHaveText(
+      dashboardExpectations.activePaidAccessStudents.toLocaleString(
+        "ru-RU",
+      ),
+    );
+    await expect(
+      activeAccessCard.getByRole("link", {
+        name: "Открыть учеников с действующим оплаченным доступом",
+        exact: true,
+      }),
+    ).toHaveAttribute(
+      "href",
+      "/admin/students?access=active&source=paid",
+    );
+
+    const pendingPaymentsCard = page.getByRole("article", {
+      name: "Ожидают не менее 15 минут",
+      exact: true,
+    });
+
+    await expect(
+      pendingPaymentsCard.locator(
+        ".admin-dashboard-signal-value",
+      ),
+    ).toHaveText(
+      dashboardExpectations.stalePendingPayments.toLocaleString(
+        "ru-RU",
+      ),
+    );
+
+    const failedWebhooksCard = page.getByRole("article", {
+      name: "Ошибки обработки webhook-событий",
+      exact: true,
+    });
+
+    await expect(
+      failedWebhooksCard.locator(
+        ".admin-dashboard-signal-value",
+      ),
+    ).toHaveText(
+      dashboardExpectations.failedWebhookEvents.toLocaleString(
+        "ru-RU",
+      ),
+    );
+    await expect(
+      page.getByText("Часовой пояс: Europe/Moscow.", {
+        exact: false,
+      }),
+    ).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            window.innerWidth,
+        ),
+      )
+      .toBe(true);
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     const adminHomeLink = page.getByRole("link", {
       name: "На главную административной панели",
@@ -197,7 +572,7 @@ test("защищённый /admin перечитывает роль на каж�
     await expect(page).toHaveURL(/\/admin$/);
     await expect(
       page.getByRole("heading", {
-        name: "Администрирование",
+        name: "Обзор Академии",
         exact: true,
       }),
     ).toBeVisible();
