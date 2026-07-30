@@ -971,6 +971,121 @@
   gap: 12px;
 }
 
+.admin-session-command {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.admin-command-success {
+  margin: 0;
+  color: var(--status-success);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.button-danger {
+  background: var(--status-error);
+  color: #fff;
+}
+
+.button-danger:hover {
+  background: #8f1c13;
+}
+
+.admin-command-dialog {
+  width: min(560px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-large);
+  overflow: auto;
+  background: var(--background-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-medium);
+}
+
+.admin-command-dialog::backdrop {
+  background: rgb(20 35 60 / 58%);
+  backdrop-filter: blur(2px);
+}
+
+.admin-command-form {
+  padding: clamp(24px, 5vw, 36px);
+  display: grid;
+  gap: 16px;
+}
+
+.admin-command-form h2 {
+  margin: 5px 0 0;
+  font-size: clamp(1.55rem, 4vw, 2rem);
+}
+
+.admin-command-form > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.admin-command-form label {
+  margin-bottom: -8px;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.admin-command-form select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  background: #fff;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.admin-command-form select:focus {
+  border-color: var(--action-primary);
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.admin-command-form select[aria-invalid="true"] {
+  border-color: var(--status-error);
+}
+
+.admin-command-form > small {
+  margin-top: -9px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.admin-command-error {
+  padding: 12px 14px;
+  border-radius: var(--radius-small);
+  background: var(--status-error-tint);
+  color: var(--status-error);
+}
+
+.admin-command-error p {
+  margin: 0;
+  font-weight: 700;
+}
+
+.admin-command-error small {
+  margin-top: 5px;
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-command-dialog-actions {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .admin-session-card {
   overflow: hidden;
   border: 1px solid var(--border-default);
@@ -1424,6 +1539,19 @@
   .admin-section-title {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .admin-session-command {
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .admin-session-command .button {
+    width: 100%;
+  }
+
+  .admin-command-success {
+    text-align: left;
   }
 
   .admin-query-summary {

@@ -281,7 +281,7 @@ async function insertPaidAccess(
   );
 }
 
-test("владелец ищет ученика, открывает карточку и листает курсором", async ({
+test("владелец ищет ученика, отзывает сессии и листает курсором", async ({
   context,
   page,
 }) => {
@@ -389,6 +389,34 @@ test("владелец ищет ученика, открывает карточ�
         name: "Нет доступа к панели",
       }),
     ).toBeVisible();
+    const revokeSessionsEndpoint =
+      `/api/admin/students/${target.userId}/sessions/revoke`;
+
+    for (const probedUserId of [
+      target.userId,
+      randomUUID(),
+    ]) {
+      const deniedCommand = await page.request.post(
+        `/api/admin/students/${probedUserId}/sessions/revoke`,
+        {
+          data: {
+            reason: "support_security_measure",
+          },
+          headers: {
+            "Idempotency-Key": randomUUID(),
+            Origin: baseUrl,
+          },
+        },
+      );
+
+      expect(deniedCommand.status()).toBe(403);
+      await expect(deniedCommand.json()).resolves.toMatchObject({
+        error: {
+          code: "ADMIN_ROLE_REQUIRED",
+        },
+        requestId: expect.any(String),
+      });
+    }
 
     await context.addCookies([
       {
@@ -709,6 +737,441 @@ test("владелец ищет ученика, открывает карточ�
     expect(mobileCopyButtonBox?.width).toBeGreaterThanOrEqual(44);
     expect(mobileCopyButtonBox?.height).toBeGreaterThanOrEqual(44);
 
+    const activeBeforeCommand = await database.query<{
+      count: number;
+    }>(
+      `
+        SELECT count(*)::integer AS count
+        FROM identity_sessions
+        WHERE user_id = $1
+          AND revoked_at IS NULL
+          AND expires_at > now()
+      `,
+      [target.userId],
+    );
+
+    expect(activeBeforeCommand.rows[0]?.count).toBe(6);
+
+    const getCommandResponse = await page.request.get(
+      revokeSessionsEndpoint,
+    );
+
+    expect(getCommandResponse.status()).toBe(405);
+
+    const foreignOriginResponse = await page.request.post(
+      revokeSessionsEndpoint,
+      {
+        data: {
+          reason: "support_security_measure",
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: "https://evil.example",
+        },
+      },
+    );
+
+    expect(foreignOriginResponse.status()).toBe(403);
+    await expect(
+      foreignOriginResponse.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_PERMISSION_DENIED",
+      },
+      requestId: expect.any(String),
+    });
+
+    const unknownFieldResponse = await page.request.post(
+      revokeSessionsEndpoint,
+      {
+        data: {
+          reason: "support_security_measure",
+          unexpected: true,
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(unknownFieldResponse.status()).toBe(400);
+    await expect(
+      unknownFieldResponse.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+      },
+      requestId: expect.any(String),
+    });
+
+    const arbitraryReasonResponse = await page.request.post(
+      revokeSessionsEndpoint,
+      {
+        data: {
+          reason:
+            "Ученик student@example.com прислал секретный токен",
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(arbitraryReasonResponse.status()).toBe(400);
+    await expect(
+      arbitraryReasonResponse.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+      },
+      requestId: expect.any(String),
+    });
+
+    const stillActiveBeforeUi = await database.query<{
+      count: number;
+    }>(
+      `
+        SELECT count(*)::integer AS count
+        FROM identity_sessions
+        WHERE user_id = $1
+          AND revoked_at IS NULL
+          AND expires_at > now()
+      `,
+      [target.userId],
+    );
+
+    expect(stillActiveBeforeUi.rows[0]?.count).toBe(6);
+
+    const revokeButton = page.getByRole("button", {
+      name: "Отозвать все активные сессии",
+      exact: true,
+    });
+
+    await expect(revokeButton).toBeVisible();
+    await revokeButton.click();
+    const commandDialog = page.getByRole("dialog", {
+      name: "Отозвать все сессии?",
+    });
+    const reasonField = commandDialog.getByLabel(
+      "Причина отзыва",
+    );
+
+    await expect(commandDialog).toBeVisible();
+    await expect(
+      commandDialog.getByText(
+        "6 сессий. На всех устройствах потребуется войти заново.",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await expect(reasonField).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(commandDialog).not.toBeVisible();
+
+    await revokeButton.click();
+    await expect(reasonField).toHaveValue("");
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(reasonField).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(
+      commandDialog.getByText("Выберите причину отзыва.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await reasonField.selectOption(
+      "suspected_unauthorized_access",
+    );
+    await expect(reasonField).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    let abortedIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${revokeSessionsEndpoint}`,
+      async (route) => {
+        abortedIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(commandDialog).toBeVisible();
+    await expect(
+      commandDialog.getByRole("alert"),
+    ).toBeVisible();
+    await expect(reasonField).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    let supersededIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${revokeSessionsEndpoint}`,
+      async (route) => {
+        supersededIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "COMMAND_ATTEMPT_SUPERSEDED",
+              message:
+                "Операция уже продолжена другой попыткой.",
+            },
+            requestId: randomUUID(),
+          }),
+        });
+      },
+      { times: 1 },
+    );
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(commandDialog.getByRole("alert")).toContainText(
+      "Операция уже продолжена",
+    );
+    expect(supersededIdempotencyKey).toBe(
+      abortedIdempotencyKey,
+    );
+    let recoveryIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${revokeSessionsEndpoint}`,
+      async (route) => {
+        recoveryIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "COMMAND_RECOVERY_REQUIRED",
+              message:
+                "Не удалось подтвердить итог операции. Повторите этот же запрос позже.",
+            },
+            requestId: randomUUID(),
+          }),
+        });
+      },
+      { times: 1 },
+    );
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(commandDialog.getByRole("alert")).toContainText(
+      "Не удалось подтвердить итог операции",
+    );
+    expect(recoveryIdempotencyKey).toBe(
+      supersededIdempotencyKey,
+    );
+    let failedIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${revokeSessionsEndpoint}`,
+      async (route) => {
+        failedIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "REVOKE_USER_SESSIONS_FAILED",
+              message:
+                "Не удалось отозвать сессии. Повторите попытку позже.",
+            },
+            requestId: randomUUID(),
+          }),
+        });
+      },
+      { times: 1 },
+    );
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(commandDialog.getByRole("alert")).toContainText(
+      "Не удалось отозвать сессии",
+    );
+    expect(failedIdempotencyKey).toBe(
+      recoveryIdempotencyKey,
+    );
+
+    const commandResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(revokeSessionsEndpoint) &&
+        response.request().method() === "POST",
+    );
+
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    const commandResponse = await commandResponsePromise;
+    const commandPayload = (await commandResponse.json()) as {
+      activeSessionCount: number;
+      currentSessionRevoked: boolean;
+      requestId: string;
+      revokedSessionCount: number;
+    };
+    const commandIdempotencyKey =
+      commandResponse.request().headers()[
+        "idempotency-key"
+      ];
+
+    expect(commandResponse.status()).toBe(200);
+    expect(commandPayload).toMatchObject({
+      activeSessionCount: 0,
+      currentSessionRevoked: false,
+      requestId: expect.any(String),
+      revokedSessionCount: 6,
+    });
+    expect(commandIdempotencyKey).toEqual(
+      expect.any(String),
+    );
+    expect(commandIdempotencyKey).not.toBe(
+      failedIdempotencyKey,
+    );
+    await expect(commandDialog).not.toBeVisible();
+    await expect(
+      page.getByText("6 сессий отозвано.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(revokeButton).toHaveCount(0);
+    await expect(
+      page
+        .locator(".admin-session-card")
+        .locator(
+          ".admin-session-compact-heading .badge",
+        )
+        .filter({ hasText: /^Отозвана$/u }),
+    ).toHaveCount(6);
+
+    const repeatedResponse = await page.request.post(
+      revokeSessionsEndpoint,
+      {
+        data: {
+          reason: "suspected_unauthorized_access",
+        },
+        headers: {
+          "Idempotency-Key": commandIdempotencyKey!,
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(repeatedResponse.status()).toBe(200);
+    await expect(repeatedResponse.json()).resolves.toMatchObject({
+      activeSessionCount: 0,
+      currentSessionRevoked: false,
+      requestId: expect.any(String),
+      revokedSessionCount: 6,
+    });
+
+    const conflictResponse = await page.request.post(
+      revokeSessionsEndpoint,
+      {
+        data: {
+          reason: "student_requested_sign_out",
+        },
+        headers: {
+          "Idempotency-Key": commandIdempotencyKey!,
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(conflictResponse.status()).toBe(409);
+    await expect(conflictResponse.json()).resolves.toMatchObject({
+      error: {
+        code: "IDEMPOTENCY_CONFLICT",
+      },
+      requestId: expect.any(String),
+    });
+
+    const persistedCommand = await database.query<{
+      execution_count: number;
+      audit_count: number;
+      revoked_count: number;
+      active_count: number;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(*)::integer
+            FROM admin_command_executions execution
+            WHERE execution.principal_key = $1
+              AND execution.action =
+                'identity.sessions.revoke_all'
+              AND execution.idempotency_key = $2
+              AND execution.status = 'succeeded'
+          ) AS execution_count,
+          (
+            SELECT count(*)::integer
+            FROM admin_audit_events audit
+            JOIN admin_command_executions execution
+              ON execution.id = audit.command_execution_id
+            WHERE execution.principal_key = $1
+              AND execution.action =
+                'identity.sessions.revoke_all'
+              AND execution.idempotency_key = $2
+              AND audit.outcome = 'succeeded'
+          ) AS audit_count,
+          (
+            SELECT count(*)::integer
+            FROM identity_sessions
+            WHERE user_id = $3
+              AND revoked_at IS NOT NULL
+          ) AS revoked_count,
+          (
+            SELECT count(*)::integer
+            FROM identity_sessions
+            WHERE user_id = $3
+              AND revoked_at IS NULL
+              AND expires_at > now()
+          ) AS active_count
+      `,
+      [
+        `user:${owner.userId}`,
+        commandIdempotencyKey,
+        target.userId,
+      ],
+    );
+
+    expect(persistedCommand.rows[0]).toEqual({
+      execution_count: 1,
+      audit_count: 1,
+      revoked_count: 6,
+      active_count: 0,
+    });
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/admin/students?q=E2E+Курсор&limit=25");
     await expect(page.locator("tbody tr")).toHaveCount(25);
@@ -741,6 +1204,133 @@ test("владелец ищет ученика, открывает карточ�
     );
 
     expect(horizontalOverflow).toBe(false);
+
+    await page.goto(
+      `/admin/students/${owner.userId}`,
+    );
+    const selfRevokeButton = page.getByRole("button", {
+      name: "Отозвать все активные сессии",
+      exact: true,
+    });
+
+    await expect(selfRevokeButton).toBeVisible();
+    await selfRevokeButton.click();
+    const selfRevokeDialog = page.getByRole("dialog", {
+      name: "Отозвать все сессии?",
+    });
+
+    await expect(
+      selfRevokeDialog.getByText(
+        "Текущая административная сессия тоже завершится.",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await selfRevokeDialog
+      .getByLabel("Причина отзыва")
+      .selectOption("support_security_measure");
+    const selfRevokeEndpoint =
+      `/api/admin/students/${owner.userId}/sessions/revoke`;
+    let lostSelfResponse:
+      | {
+          activeSessionCount: number;
+          currentSessionRevoked: boolean;
+          revokedSessionCount: number;
+        }
+      | undefined;
+    let lostSelfIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${selfRevokeEndpoint}`,
+      async (route) => {
+        lostSelfIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        const committedResponse = await route.fetch();
+
+        expect(committedResponse.status()).toBe(200);
+        lostSelfResponse =
+          (await committedResponse.json()) as typeof lostSelfResponse;
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+    await selfRevokeDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(
+      selfRevokeDialog.getByRole("alert"),
+    ).toBeVisible();
+    expect(lostSelfResponse).toMatchObject({
+      activeSessionCount: 0,
+      currentSessionRevoked: true,
+      revokedSessionCount: expect.any(Number),
+    });
+
+    let repeatedSelfResponseStatus: number | undefined;
+    let repeatedSelfResponsePayload:
+      | {
+          error: {
+            code: string;
+          };
+          requestId: string;
+        }
+      | undefined;
+    let repeatedSelfIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${selfRevokeEndpoint}`,
+      async (route) => {
+        repeatedSelfIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        const response = await route.fetch();
+
+        repeatedSelfResponseStatus = response.status();
+        repeatedSelfResponsePayload =
+          (await response.json()) as typeof repeatedSelfResponsePayload;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+
+    await selfRevokeDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+
+    await expect(page).toHaveURL(/\/login\?next=/u);
+    expect(repeatedSelfResponseStatus).toBe(401);
+    expect(repeatedSelfResponsePayload).toMatchObject({
+      error: {
+        code: "ADMIN_AUTH_REQUIRED",
+      },
+      requestId: expect.any(String),
+    });
+    expect(repeatedSelfIdempotencyKey).toBe(
+      lostSelfIdempotencyKey,
+    );
+
+    const remainingSessionCookie = (
+      await context.cookies(baseUrl)
+    ).find((cookie) => cookie.name === "academy_session");
+    const ownerSession = await database.query<{
+      revoked_at: Date | null;
+    }>(
+      `
+        SELECT revoked_at
+        FROM identity_sessions
+        WHERE token_sha256 = $1
+      `,
+      [tokenSha256(adminRawToken)],
+    );
+
+    expect(remainingSessionCookie).toBeUndefined();
+    expect(ownerSession.rows[0]?.revoked_at).toBeInstanceOf(
+      Date,
+    );
   } finally {
     await database.end();
   }

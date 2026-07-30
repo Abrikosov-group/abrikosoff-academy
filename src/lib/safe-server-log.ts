@@ -141,6 +141,59 @@ export function logUnexpectedServerError(
   return incidentId;
 }
 
+export function logAdministrationAuditWriteFailure(
+  error: unknown,
+) {
+  const incidentId = randomUUID();
+  const errorDetails = getSafeErrorDetails(error);
+
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event: "administration.audit_write_failed",
+      incidentId,
+      metric: "admin_audit_write_failed_total",
+      increment: 1,
+      errorType: classifyError(error),
+      ...(errorDetails ? { errorDetails } : {}),
+    }),
+  );
+
+  return incidentId;
+}
+
+export function logTechnicalEvent(
+  event: string,
+  details: {
+    code: string;
+    requestId?: string;
+    userAgentFamily?: string;
+  },
+) {
+  const incidentId = randomUUID();
+  const safeEvent =
+    safeIdentifier(event) ?? "technical.invalid_event";
+  const code =
+    safeIdentifier(details.code) ?? "INVALID_TECHNICAL_CODE";
+  const requestId = safeRequestId(details.requestId);
+  const userAgentFamily = safeUserAgentFamily(
+    details.userAgentFamily,
+  );
+
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event: safeEvent,
+      incidentId,
+      code,
+      ...(requestId ? { requestId } : {}),
+      ...(userAgentFamily ? { userAgentFamily } : {}),
+    }),
+  );
+
+  return incidentId;
+}
+
 export function logSecurityEvent(
   event: string,
   details: {

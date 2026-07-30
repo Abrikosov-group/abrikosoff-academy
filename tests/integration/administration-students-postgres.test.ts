@@ -821,6 +821,7 @@ describe("read-only Administration учеников с PostgreSQL", () => {
         }),
       ]),
       sessionCount: 102,
+      activeSessionCount: 102,
       sessionsTruncated: true,
       effectiveAccess: {
         state: "active",
