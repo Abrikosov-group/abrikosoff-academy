@@ -352,7 +352,6 @@ export function hasNoSessionTechnicalContext(
   session: AdminStudentSession,
 ) {
   return ![
-    session.authenticationMethod,
     session.userAgentFamily,
     session.browserVersion,
     session.operatingSystem,

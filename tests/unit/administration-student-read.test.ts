@@ -300,6 +300,12 @@ describe("безопасное представление ученика", () =>
     expect(
       hasNoSessionTechnicalContext({
         ...base,
+        authenticationMethod: "telegram_oidc",
+      }),
+    ).toBe(true);
+    expect(
+      hasNoSessionTechnicalContext({
+        ...base,
         userAgentFamily: "Google Chrome",
       }),
     ).toBe(false);
