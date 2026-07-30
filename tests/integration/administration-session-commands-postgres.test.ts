@@ -819,8 +819,6 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
         const secondUserId = await insertUser(
           "Второй администратор взаимного отзыва",
         );
-        await insertOwnerRole(firstUserId);
-        await insertOwnerRole(secondUserId);
         const firstSessionId =
           await insertSession(firstUserId);
         const secondSessionId =
