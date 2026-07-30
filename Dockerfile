@@ -38,7 +38,19 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=root:root --chmod=0555 \
   /app/deploy/server/academy-admin \
   /app/deploy/server/academy-release \
+  /app/deploy/server/academy-task \
   /usr/local/share/academy/
+RUN install -d \
+  --owner=root \
+  --group=root \
+  --mode=0555 \
+  /usr/local/share/academy/systemd
+COPY --from=builder --chown=root:root --chmod=0444 \
+  /app/deploy/systemd/academy-identity-session-retention.service \
+  /usr/local/share/academy/systemd/academy-identity-session-retention.service
+COPY --from=builder --chown=root:root --chmod=0444 \
+  /app/deploy/systemd/academy-identity-session-retention.timer \
+  /usr/local/share/academy/systemd/academy-identity-session-retention.timer
 
 USER nextjs
 

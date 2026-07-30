@@ -11,6 +11,7 @@ import { fetch as undiciFetch, ProxyAgent } from "undici";
 import type { IdentityConfig } from "./identity-config";
 import {
   telegramIdentityFromClaims,
+  telegramRequestedScopes,
   type VerifiedTelegramIdentity,
 } from "./telegram-auth";
 import { IdentityError } from "../domain/errors";
@@ -301,7 +302,7 @@ export function buildTelegramAuthorizationUrl(
   return oidc.buildAuthorizationUrl(runtimeFor(config).configuration, {
     redirect_uri: config.redirectUri,
     response_type: "code",
-    scope: "openid profile",
+    scope: telegramRequestedScopes.join(" "),
     state: input.state,
     nonce: input.nonce,
     code_challenge: input.codeChallenge,

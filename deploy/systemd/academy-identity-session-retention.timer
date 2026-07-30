@@ -1,0 +1,12 @@
+[Unit]
+Description=Ежедневная анонимизация технических данных сессий Академии
+
+[Timer]
+OnCalendar=*-*-* 04:05:00 Europe/Moscow
+RandomizedDelaySec=15m
+AccuracySec=1m
+Persistent=true
+Unit=academy-identity-session-retention.service
+
+[Install]
+WantedBy=timers.target

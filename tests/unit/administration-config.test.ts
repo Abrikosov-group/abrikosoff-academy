@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getAdministrationConfig } from "@/modules/administration/server/administration-config";
+import {
+  getAdminDisplayTimeZone,
+  getAdministrationConfig,
+} from "@/modules/administration/server/administration-config";
 
 describe("getAdministrationConfig", () => {
   afterEach(() => {
@@ -153,6 +156,41 @@ describe("getAdministrationConfig", () => {
 
     expect(() => getAdministrationConfig()).toThrowError(
       "ADMINISTRATION_MODE должен быть owner_preview или operational.",
+    );
+  });
+
+  it("проверяет временную зону при чтении runtime-конфигурации", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "Mars/Olympus");
+
+    expect(() => getAdministrationConfig()).toThrowError(
+      "ADMIN_DISPLAY_TIME_ZONE должен содержать корректную IANA-зону.",
+    );
+  });
+});
+
+describe("getAdminDisplayTimeZone", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("использует московскую зону по умолчанию", () => {
+    vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "");
+
+    expect(getAdminDisplayTimeZone()).toBe("Europe/Moscow");
+  });
+
+  it("принимает корректную IANA-зону", () => {
+    vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "Europe/Berlin");
+
+    expect(getAdminDisplayTimeZone()).toBe("Europe/Berlin");
+  });
+
+  it("отклоняет неизвестную временную зону", () => {
+    vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "Mars/Olympus");
+
+    expect(() => getAdminDisplayTimeZone()).toThrowError(
+      "ADMIN_DISPLAY_TIME_ZONE должен содержать корректную IANA-зону.",
     );
   });
 });

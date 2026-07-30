@@ -2,14 +2,27 @@ import "server-only";
 
 import type { IDToken } from "openid-client";
 import { IdentityError } from "../domain/errors";
+import { telegramProfileMetadataVersion } from "../domain/telegram-profile";
+
+export const telegramRequestedScopes = [
+  "openid",
+  "profile",
+] as const;
 
 export type VerifiedTelegramIdentity = {
   subject: string;
   displayName: string;
   metadata: {
+    profileMetadataVersion: number;
     username?: string;
     photoUrl?: string;
     telegramUserId?: string;
+    profileName?: string;
+    firstName?: string;
+    lastName?: string;
+    requestedScopes: readonly string[];
+    tokenIssuedAt?: string;
+    tokenExpiresAt?: string;
   };
 };
 
@@ -39,6 +52,21 @@ function optionalTelegramUserId(value: IDToken[string]) {
   }
 
   return undefined;
+}
+
+function optionalNumericDate(value: IDToken[string]) {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value <= 0
+  ) {
+    return undefined;
+  }
+
+  const date = new Date(value * 1_000);
+  return Number.isNaN(date.getTime())
+    ? undefined
+    : date.toISOString();
 }
 
 export function telegramIdentityFromClaims(
@@ -74,9 +102,16 @@ export function telegramIdentityFromClaims(
     subject,
     displayName,
     metadata: {
+      profileMetadataVersion: telegramProfileMetadataVersion,
       username: username || undefined,
       photoUrl: picture?.startsWith("https://") ? picture : undefined,
       telegramUserId,
+      profileName: name,
+      firstName,
+      lastName,
+      requestedScopes: [...telegramRequestedScopes],
+      tokenIssuedAt: optionalNumericDate(claims.iat),
+      tokenExpiresAt: optionalNumericDate(claims.exp),
     },
   };
 }

@@ -118,8 +118,94 @@ describe("Identity и Billing с PostgreSQL", () => {
         username: "integration_student",
       },
       consent,
+      clientContext: {
+        ipAddress: "203.0.113.42",
+        countryCode: "RU",
+        region: "Москва",
+        regionCode: "MOW",
+        city: "Москва",
+        timezone: "Europe/Moscow",
+        userAgentFamily: "Google Chrome",
+        browserVersion: "138.0.0.0",
+        operatingSystem: "macOS",
+        operatingSystemVersion: "15.5",
+        deviceType: "desktop",
+        deviceVendor: "Apple",
+        deviceModel: "Mac",
+        architecture: "arm",
+        bitness: "64",
+        preferredLanguage: "ru-RU",
+        rawUserAgent: "Integration Chrome on macOS",
+        cloudflareRayId: "9abcdef012345678-DME",
+      },
     });
     const tokenHash = hashIdentityToken(session.token);
+    const storedContext = await pool.query<{
+      client_ip: string;
+      country_code: string;
+      region: string;
+      region_code: string;
+      city: string;
+      client_timezone: string;
+      user_agent_family: string;
+      browser_version: string;
+      operating_system: string;
+      operating_system_version: string;
+      device_type: string;
+      device_vendor: string;
+      device_model: string;
+      client_architecture: string;
+      client_bitness: string;
+      preferred_language: string;
+      raw_user_agent: string;
+      cloudflare_ray_id: string;
+    }>(
+      `
+        SELECT
+          host(client_ip) AS client_ip,
+          country_code,
+          region,
+          region_code,
+          city,
+          client_timezone,
+          user_agent_family,
+          browser_version,
+          operating_system,
+          operating_system_version,
+          device_type,
+          device_vendor,
+          device_model,
+          client_architecture,
+          client_bitness,
+          preferred_language,
+          raw_user_agent,
+          cloudflare_ray_id
+        FROM identity_sessions
+        WHERE token_sha256 = $1
+      `,
+      [tokenHash],
+    );
+
+    expect(storedContext.rows[0]).toEqual({
+      client_ip: "203.0.113.42",
+      country_code: "RU",
+      region: "Москва",
+      region_code: "MOW",
+      city: "Москва",
+      client_timezone: "Europe/Moscow",
+      user_agent_family: "Google Chrome",
+      browser_version: "138.0.0.0",
+      operating_system: "macOS",
+      operating_system_version: "15.5",
+      device_type: "desktop",
+      device_vendor: "Apple",
+      device_model: "Mac",
+      client_architecture: "arm",
+      client_bitness: "64",
+      preferred_language: "ru-RU",
+      raw_user_agent: "Integration Chrome on macOS",
+      cloudflare_ray_id: "9abcdef012345678-DME",
+    });
 
     await expect(
       repository.findUserBySessionTokenSha256(tokenHash),
@@ -166,6 +252,67 @@ describe("Identity и Billing с PostgreSQL", () => {
     await expect(
       repository.findUserBySessionTokenSha256(tokenHash),
     ).resolves.toBeNull();
+  });
+
+  it("обогащает Telegram metadata существующего способа входа", async () => {
+    const repository = new PostgresIdentityRepository(pool);
+    const service = new IdentityService(repository, 30);
+    const identifier = `telegram-profile-${randomUUID()}`;
+
+    await service.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
+      methodType: "telegram",
+      identifier,
+      displayName: "Первый Telegram-вход",
+      metadata: {
+        telegramUserId: "7739870613",
+        username: "profile_before",
+      },
+      consent,
+    });
+    await service.authenticateIdentity({
+      authenticationMethod: "telegram_oidc",
+      methodType: "telegram",
+      identifier,
+      displayName: "German Abrikosov",
+      metadata: {
+        profileMetadataVersion: 1,
+        telegramUserId: "7739870613",
+        username: "german_abrikosov",
+        profileName: "German Abrikosov",
+        firstName: "German",
+        lastName: "Abrikosov",
+        photoUrl:
+          "https://cdn4.telesco.pe/file/profile-after.jpg",
+        requestedScopes: ["openid", "profile"],
+        tokenIssuedAt: "2026-07-29T22:15:00.000Z",
+        tokenExpiresAt: "2026-07-29T22:25:00.000Z",
+      },
+      consent,
+    });
+    const stored = await pool.query<{ metadata: unknown }>(
+      `
+        SELECT metadata
+        FROM identity_methods
+        WHERE method_type = 'telegram'
+          AND identifier = $1
+      `,
+      [identifier],
+    );
+
+    expect(stored.rows[0]?.metadata).toEqual({
+      profileMetadataVersion: 1,
+      telegramUserId: "7739870613",
+      username: "german_abrikosov",
+      profileName: "German Abrikosov",
+      firstName: "German",
+      lastName: "Abrikosov",
+      photoUrl:
+        "https://cdn4.telesco.pe/file/profile-after.jpg",
+      requestedScopes: ["openid", "profile"],
+      tokenIssuedAt: "2026-07-29T22:15:00.000Z",
+      tokenExpiresAt: "2026-07-29T22:25:00.000Z",
+    });
   });
 
   it("разрешает использовать ссылку входа по почте только один раз", async () => {

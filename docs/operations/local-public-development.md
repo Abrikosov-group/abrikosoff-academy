@@ -43,8 +43,10 @@ https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 APP_BASE_URL=https://academy-dev.abrikosoff.com
 AUTH_DEMO_MODE=disabled
 EMAIL_AUTH_MODE=disabled
+SESSION_TRUSTED_PROXY=cloudflare
 ADMINISTRATION_ENABLED=false
 ADMINISTRATION_MODE=owner_preview
+ADMIN_DISPLAY_TIME_ZONE=Europe/Moscow
 TELEGRAM_OIDC_CLIENT_ID=8965978102
 TELEGRAM_OIDC_CLIENT_SECRET=<из защищённого хранилища>
 TELEGRAM_OIDC_REDIRECT_URI=https://academy-dev.abrikosoff.com/api/auth/telegram/callback
@@ -52,12 +54,32 @@ PAYMENTS_MODE=demo
 PAYMENT_DEFAULT_PROVIDER=demo
 ```
 
+`SESSION_TRUSTED_PROXY=cloudflare` допустим здесь, потому что публичный запрос
+приходит через именованный Cloudflare Tunnel, а локальный порт слушает только
+`127.0.0.1`. Приложение не использует произвольный `X-Forwarded-For`.
+
+Cloudflare всегда может передать IP и страну. Для региона, города и часового
+пояса в зоне отдельно включается Managed Transform
+`Add visitor location headers`. Без него карточка сессии честно показывает,
+что детальная география не передана.
+
+Страница входа и маршруты авторизации объявляют стандартный `Accept-CH` для
+более точных сведений о версии браузера и платформы, модели поддерживаемого
+устройства, архитектуре и разрядности. На остальных страницах Академия эти
+расширенные подсказки у браузера не запрашивает. Все поля необязательны:
+браузер вправе их не передавать.
+
 Для отдельной проверки `/admin` на время приёмочной сессии устанавливается
 `ADMINISTRATION_ENABLED=true`. Режим `owner_preview` открывает на локальном
-приёмочном origin только текущий защитный фундамент Administration. После
-проверки гейт возвращается в `false`; режим `operational` не используется как
-локальное значение по умолчанию до завершения обязательных зависимостей этапа
-2 административного ТЗ.
+приёмочном origin только защитный фундамент Administration.
+
+Для явной локальной приёмки реализованных read-only разделов владелец на время
+сессии может установить `ADMINISTRATION_MODE=operational`. Это исключение
+действует только для точного origin `academy-dev.abrikosoff.com`, пока в
+принимаемом пакете нет изменяющих административных маршрутов. После проверки
+гейт возвращается в `false`, а режим — в `owner_preview`. Production-origin
+остаётся в `owner_preview` до завершения обязательных зависимостей этапа 2
+административного ТЗ.
 
 ## 2. Однократное создание туннеля
 

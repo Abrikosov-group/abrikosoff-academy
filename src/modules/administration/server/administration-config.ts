@@ -4,6 +4,7 @@ import type { AdministrationMode } from "../domain/types";
 
 const localAcceptanceOrigin = "https://academy-dev.abrikosoff.com";
 const productionOrigin = "https://academy.abrikosoff.com";
+const defaultDisplayTimeZone = "Europe/Moscow";
 
 export type AdministrationConfig =
   | {
@@ -56,6 +57,8 @@ function canEnableAdministration(
 }
 
 export function getAdministrationConfig(): AdministrationConfig {
+  getAdminDisplayTimeZone();
+
   const rawEnabled =
     process.env.ADMINISTRATION_ENABLED?.trim().toLowerCase() ||
     "false";
@@ -94,4 +97,22 @@ export function getAdministrationConfig(): AdministrationConfig {
   }
 
   return { enabled: true, mode };
+}
+
+export function getAdminDisplayTimeZone() {
+  const timeZone =
+    process.env.ADMIN_DISPLAY_TIME_ZONE?.trim() ||
+    defaultDisplayTimeZone;
+
+  try {
+    new Intl.DateTimeFormat("ru-RU", { timeZone }).format(
+      new Date(0),
+    );
+  } catch {
+    throw new TypeError(
+      "ADMIN_DISPLAY_TIME_ZONE должен содержать корректную IANA-зону.",
+    );
+  }
+
+  return timeZone;
 }

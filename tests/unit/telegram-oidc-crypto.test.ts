@@ -109,24 +109,35 @@ describe("Telegram ID-токен", () => {
   });
 
   it("проверяет реальную RS256-подпись и числовой audience", async () => {
-    await expect(
-      exchangeTelegramAuthorizationCode(
-        config,
-        callbackUrl,
-        {
-          codeVerifier: "pkce-code-verifier",
-          nonce,
-        },
-      ),
-    ).resolves.toEqual({
+    const identity = await exchangeTelegramAuthorizationCode(
+      config,
+      callbackUrl,
+      {
+        codeVerifier: "pkce-code-verifier",
+        nonce,
+      },
+    );
+
+    expect(identity).toMatchObject({
       subject: "123456789",
       displayName: "Светлана Федотова",
       metadata: {
+        profileMetadataVersion: 1,
         username: "svetlana",
         photoUrl: undefined,
         telegramUserId: "987654321",
+        profileName: "Светлана Федотова",
+        firstName: undefined,
+        lastName: undefined,
+        requestedScopes: ["openid", "profile"],
       },
     });
+    expect(identity.metadata.tokenIssuedAt).toEqual(
+      expect.any(String),
+    );
+    expect(identity.metadata.tokenExpiresAt).toEqual(
+      expect.any(String),
+    );
 
     expect(undiciFetchMock).toHaveBeenCalledTimes(2);
   });

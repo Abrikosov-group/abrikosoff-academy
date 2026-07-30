@@ -173,9 +173,20 @@ describe("exchangeTelegramAuthorizationCode", () => {
       subject: "123456789",
       displayName: "Светлана Федотова",
       metadata: {
+        profileMetadataVersion: 1,
         username: "svetlana",
         photoUrl: undefined,
         telegramUserId: "987654321",
+        profileName: "Светлана Федотова",
+        firstName: undefined,
+        lastName: undefined,
+        requestedScopes: ["openid", "profile"],
+        tokenIssuedAt: new Date(
+          1_799_996_400 * 1_000,
+        ).toISOString(),
+        tokenExpiresAt: new Date(
+          1_800_000_000 * 1_000,
+        ).toISOString(),
       },
     });
   });

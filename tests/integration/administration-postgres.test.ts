@@ -212,7 +212,9 @@ describe("Administration с PostgreSQL", () => {
         username: "demo_owner",
       },
       consent,
-      userAgentFamily: "Google Chrome",
+      clientContext: {
+        userAgentFamily: "Google Chrome",
+      },
     });
     const idempotencyKey = randomUUID();
 
@@ -369,7 +371,9 @@ describe("Administration с PostgreSQL", () => {
           username: "owner_admin_integration",
         },
         consent,
-        userAgentFamily: "Google Chrome",
+        clientContext: {
+          userAgentFamily: "Google Chrome",
+        },
       });
     const idempotencyKey = randomUUID();
     const reason = "Первичное назначение владельца в integration";
