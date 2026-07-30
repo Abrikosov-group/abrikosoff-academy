@@ -94,7 +94,7 @@ export function normalizeRevokeUserSessionsInput(
       .update(
         JSON.stringify({
           action: revokeUserSessionsAction,
-          reason,
+          reasonCode,
           targetType: identityUserTargetType,
           targetUserId,
         }),

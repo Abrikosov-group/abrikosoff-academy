@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AdminCommandReservation,
@@ -6,7 +7,9 @@ import type {
   RevokeUserSessionsExecution,
 } from "@/modules/administration/application/administration-command-repository";
 import {
+  identityUserTargetType,
   normalizeRevokeUserSessionsInput,
+  revokeUserSessionsAction,
   RevokeUserSessionsService,
 } from "@/modules/administration/application/revoke-user-sessions-service";
 import { AdministrationError } from "@/modules/administration/domain/errors";
@@ -135,6 +138,18 @@ describe("RevokeUserSessionsService", () => {
     );
     expect(first.principalKey).toBe(`user:${actorId}`);
     expect(first.requestSha256).toBe(second.requestSha256);
+    expect(first.requestSha256).toBe(
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            action: revokeUserSessionsAction,
+            reasonCode: "suspected_unauthorized_access",
+            targetType: identityUserTargetType,
+            targetUserId,
+          }),
+        )
+        .digest("hex"),
+    );
     expect(changedTarget.requestSha256).not.toBe(
       first.requestSha256,
     );
