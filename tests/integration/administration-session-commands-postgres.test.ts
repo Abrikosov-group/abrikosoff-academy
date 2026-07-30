@@ -790,6 +790,201 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
     15_000,
   );
 
+  it(
+    "сериализует взаимный отзыв сессий двух администраторов",
+    async () => {
+      const marker = randomUUID().slice(0, 8);
+      const firstApplicationName = `academy-mutual-a-${marker}`;
+      const secondApplicationName = `academy-mutual-b-${marker}`;
+      const firstCommandPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: firstApplicationName,
+        max: 2,
+      });
+      const secondCommandPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: secondApplicationName,
+        max: 2,
+      });
+      const firstSessionBlocker = await pool.connect();
+      const secondSessionBlocker = await pool.connect();
+      const inFlight: Promise<unknown>[] = [];
+      let firstBlockerTransactionOpen = false;
+      let secondBlockerTransactionOpen = false;
+
+      try {
+        const firstUserId = await insertUser(
+          "Первый администратор взаимного отзыва",
+        );
+        const secondUserId = await insertUser(
+          "Второй администратор взаимного отзыва",
+        );
+        await insertOwnerRole(firstUserId);
+        await insertOwnerRole(secondUserId);
+        const firstSessionId =
+          await insertSession(firstUserId);
+        const secondSessionId =
+          await insertSession(secondUserId);
+        const completionOrder: string[] = [];
+        const firstCommandRepository =
+          new PostgresAdministrationCommandRepository(
+            firstCommandPool,
+            new PostgresIdentityAdministrationRepository(),
+          );
+        const secondCommandRepository =
+          new PostgresAdministrationCommandRepository(
+            secondCommandPool,
+            new PostgresIdentityAdministrationRepository(),
+          );
+        const firstCommand =
+          normalizeRevokeUserSessionsInput({
+            context: context(firstUserId),
+            targetUserId: secondUserId,
+            reason: supportMeasureReason,
+            idempotencyKey: randomUUID(),
+          });
+        const secondCommand =
+          normalizeRevokeUserSessionsInput({
+            context: context(secondUserId),
+            targetUserId: firstUserId,
+            reason: supportMeasureReason,
+            idempotencyKey: randomUUID(),
+          });
+        const firstReservation =
+          await firstCommandRepository.reserveInternalCommand(
+            firstCommand,
+          );
+        const secondReservation =
+          await secondCommandRepository.reserveInternalCommand(
+            secondCommand,
+          );
+
+        expect(firstReservation.state).toBe("reserved");
+        expect(secondReservation.state).toBe("reserved");
+
+        if (
+          firstReservation.state !== "reserved" ||
+          secondReservation.state !== "reserved"
+        ) {
+          throw new Error(
+            "Команды взаимного отзыва не были зарезервированы.",
+          );
+        }
+
+        await firstSessionBlocker.query("BEGIN");
+        firstBlockerTransactionOpen = true;
+        await firstSessionBlocker.query(
+          `
+            SELECT id
+            FROM identity_sessions
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [firstSessionId],
+        );
+        await secondSessionBlocker.query("BEGIN");
+        secondBlockerTransactionOpen = true;
+        await secondSessionBlocker.query(
+          `
+            SELECT id
+            FROM identity_sessions
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [secondSessionId],
+        );
+
+        const firstCommandPromise = firstCommandRepository
+          .executeRevokeUserSessions(
+            firstCommand,
+            firstReservation,
+          )
+          .then((result) => {
+            completionOrder.push("first");
+            return result;
+          });
+        inFlight.push(firstCommandPromise);
+
+        await waitForBlockedQuery(
+          pool,
+          firstApplicationName,
+          "UPDATE identity_sessions",
+        );
+
+        const secondCommandPromise = secondCommandRepository
+          .executeRevokeUserSessions(
+            secondCommand,
+            secondReservation,
+          )
+          .then((result) => {
+            completionOrder.push("second");
+            return result;
+          });
+        inFlight.push(secondCommandPromise);
+
+        await waitForBlockedQuery(
+          pool,
+          secondApplicationName,
+          "FROM identity_users",
+        );
+        expect(completionOrder).toEqual([]);
+
+        await secondSessionBlocker.query("COMMIT");
+        secondBlockerTransactionOpen = false;
+
+        await expect(firstCommandPromise).resolves.toMatchObject({
+          state: "succeeded",
+          revokedSessionCount: 1,
+        });
+        expect(completionOrder).toEqual(["first"]);
+
+        await waitForBlockedQuery(
+          pool,
+          secondApplicationName,
+          "UPDATE identity_sessions",
+        );
+        await firstSessionBlocker.query("COMMIT");
+        firstBlockerTransactionOpen = false;
+
+        await expect(secondCommandPromise).resolves.toMatchObject({
+          state: "succeeded",
+          revokedSessionCount: 1,
+        });
+        expect(completionOrder).toEqual(["first", "second"]);
+
+        const activeSessions = await pool.query<{
+          count: number;
+        }>(
+          `
+            SELECT count(*)::integer AS count
+            FROM identity_sessions
+            WHERE user_id = ANY($1::uuid[])
+              AND revoked_at IS NULL
+              AND expires_at > now()
+          `,
+          [[firstUserId, secondUserId]],
+        );
+
+        expect(activeSessions.rows[0]?.count).toBe(0);
+      } finally {
+        if (firstBlockerTransactionOpen) {
+          await firstSessionBlocker.query("ROLLBACK");
+        }
+        if (secondBlockerTransactionOpen) {
+          await secondSessionBlocker.query("ROLLBACK");
+        }
+        firstSessionBlocker.release();
+        secondSessionBlocker.release();
+        await Promise.allSettled(inFlight);
+        await Promise.all([
+          firstCommandPool.end(),
+          secondCommandPool.end(),
+        ]);
+      }
+    },
+    15_000,
+  );
+
   it("не переисполняет ключ с изменённой причиной", async () => {
     const actorUserId = await insertUser(
       "Владелец конфликта",

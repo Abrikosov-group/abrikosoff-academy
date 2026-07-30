@@ -350,6 +350,7 @@ export class PostgresAdministrationCommandRepository
         await this.identityRepository.revokeActiveSessions(
           client,
           {
+            actorUserId: command.actorUserId,
             userId: command.targetId,
             revokedAt: activeExecution.executed_at,
             ...(command.actorUserId === command.targetId

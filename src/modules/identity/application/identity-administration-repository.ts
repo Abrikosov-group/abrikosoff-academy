@@ -14,6 +14,7 @@ export interface IdentityAdministrationRepository {
   revokeActiveSessions(
     client: PoolClient,
     input: {
+      actorUserId: string;
       userId: string;
       revokedAt: Date;
       trackedSessionId?: string;

@@ -12,22 +12,40 @@ export class PostgresIdentityAdministrationRepository
   async revokeActiveSessions(
     client: PoolClient,
     input: {
+      actorUserId: string;
       userId: string;
       revokedAt: Date;
       trackedSessionId?: string;
     },
   ): Promise<RevokeActiveIdentitySessionsResult> {
-    const user = await client.query<{ id: string }>(
-      `
-        SELECT id
-        FROM identity_users
-        WHERE id = $1
-        FOR UPDATE
-      `,
-      [input.userId],
-    );
+    const targetUserId = input.userId.toLowerCase();
+    // Взаимные команды A→B и B→A блокируют актёра и цель одинаково.
+    const userIds = [
+      ...new Set(
+        [input.actorUserId, targetUserId].map((userId) =>
+          userId.toLowerCase(),
+        ),
+      ),
+    ].sort();
+    let targetUserExists = false;
 
-    if (!user.rows[0]) {
+    for (const userId of userIds) {
+      const user = await client.query<{ id: string }>(
+        `
+          SELECT id
+          FROM identity_users
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [userId],
+      );
+
+      if (userId === targetUserId && user.rows[0]) {
+        targetUserExists = true;
+      }
+    }
+
+    if (!targetUserExists) {
       return { userExists: false };
     }
 
@@ -40,7 +58,7 @@ export class PostgresIdentityAdministrationRepository
           AND expires_at > $2
         RETURNING id
       `,
-      [input.userId, input.revokedAt],
+      [targetUserId, input.revokedAt],
     );
     const trackedSessionWasRevoked =
       input.trackedSessionId !== undefined &&
@@ -60,7 +78,7 @@ export class PostgresIdentityAdministrationRepository
               AND revoked_at IS NOT NULL
             LIMIT 1
           `,
-          [input.trackedSessionId, input.userId],
+          [input.trackedSessionId, targetUserId],
         );
     const revokedTrackedSessionId =
       input.trackedSessionId !== undefined &&
