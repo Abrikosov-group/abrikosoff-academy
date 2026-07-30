@@ -110,6 +110,7 @@ type StudentSessionRow = {
   raw_user_agent: string | null;
   cloudflare_ray_id: string | null;
   total_count: number;
+  active_count: number;
 };
 
 type StudentPaidGrantRow = {
@@ -531,7 +532,11 @@ export class PostgresAdministrationStudentReadRepository
             preferred_language,
             raw_user_agent,
             cloudflare_ray_id,
-            count(*) OVER ()::integer AS total_count
+            count(*) OVER ()::integer AS total_count,
+            count(*) FILTER (
+              WHERE revoked_at IS NULL
+                AND expires_at > $2::timestamptz
+            ) OVER ()::integer AS active_count
           FROM identity_sessions
           WHERE user_id = $1
           ORDER BY created_at DESC, id DESC
@@ -697,6 +702,8 @@ export class PostgresAdministrationStudentReadRepository
             session.cloudflare_ray_id ?? undefined,
         })),
         sessionCount: sessions.rows[0]?.total_count ?? 0,
+        activeSessionCount:
+          sessions.rows[0]?.active_count ?? 0,
         sessionsTruncated:
           (sessions.rows[0]?.total_count ?? 0) >
           sessions.rows.length,

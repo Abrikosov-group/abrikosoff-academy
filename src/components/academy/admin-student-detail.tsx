@@ -1,4 +1,5 @@
 import { CopyableIpAddress } from "@/components/academy/copyable-ip-address";
+import { AdminRevokeSessionsDialog } from "@/components/academy/admin-revoke-sessions-dialog";
 import {
   CopyButton,
   CopyableValue,
@@ -1068,10 +1069,14 @@ function AdminStudentSessionCard({
 }
 
 export function AdminStudentSessionList({
+  canRevokeSessions,
   displayTimeZone,
+  isCurrentActor,
   student,
 }: {
+  canRevokeSessions: boolean;
   displayTimeZone: string;
+  isCurrentActor: boolean;
   student: AdminStudentDetail;
 }) {
   const sortedSessions = sortAdminStudentSessions(
@@ -1096,6 +1101,14 @@ export function AdminStudentSessionList({
             )}
           </p>
         </div>
+        {canRevokeSessions ? (
+          <AdminRevokeSessionsDialog
+            activeSessionCount={student.activeSessionCount}
+            isCurrentActor={isCurrentActor}
+            studentDisplayName={student.displayName}
+            studentId={student.id}
+          />
+        ) : null}
       </div>
       <p className="admin-section-note">
         Обновление активности пока не подключено, поэтому показано

@@ -290,70 +290,89 @@ export class PostgresIdentityRepository implements IdentityRepository {
     clientContext?: SessionClientContext;
   }) {
     const clientContext = input.clientContext;
+    const client = await this.pool.connect();
 
-    await this.pool.query(
-      `
-        INSERT INTO identity_sessions (
-          id,
-          user_id,
-          token_sha256,
-          expires_at,
-          authenticated_at,
-          authentication_method,
-          authentication_method_id,
-          user_agent_family,
-          client_ip,
-          country_code,
-          region,
-          region_code,
-          city,
-          client_timezone,
-          browser_version,
-          operating_system,
-          operating_system_version,
-          device_type,
-          device_vendor,
-          device_model,
-          client_architecture,
-          client_bitness,
-          preferred_language,
-          raw_user_agent,
-          cloudflare_ray_id
-        )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24, $25
-        )
-      `,
-      [
-        randomUUID(),
-        input.userId,
-        input.tokenSha256,
-        input.expiresAt,
-        input.authenticatedAt,
-        input.authenticationMethod,
-        input.authenticationMethodId,
-        clientContext?.userAgentFamily ?? null,
-        clientContext?.ipAddress ?? null,
-        clientContext?.countryCode ?? null,
-        clientContext?.region ?? null,
-        clientContext?.regionCode ?? null,
-        clientContext?.city ?? null,
-        clientContext?.timezone ?? null,
-        clientContext?.browserVersion ?? null,
-        clientContext?.operatingSystem ?? null,
-        clientContext?.operatingSystemVersion ?? null,
-        clientContext?.deviceType ?? null,
-        clientContext?.deviceVendor ?? null,
-        clientContext?.deviceModel ?? null,
-        clientContext?.architecture ?? null,
-        clientContext?.bitness ?? null,
-        clientContext?.preferredLanguage ?? null,
-        clientContext?.rawUserAgent ?? null,
-        clientContext?.cloudflareRayId ?? null,
-      ],
-    );
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          SELECT id
+          FROM identity_users
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [input.userId],
+      );
+      await client.query(
+        `
+          INSERT INTO identity_sessions (
+            id,
+            user_id,
+            token_sha256,
+            expires_at,
+            authenticated_at,
+            authentication_method,
+            authentication_method_id,
+            user_agent_family,
+            client_ip,
+            country_code,
+            region,
+            region_code,
+            city,
+            client_timezone,
+            browser_version,
+            operating_system,
+            operating_system_version,
+            device_type,
+            device_vendor,
+            device_model,
+            client_architecture,
+            client_bitness,
+            preferred_language,
+            raw_user_agent,
+            cloudflare_ray_id
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13, $14, $15, $16, $17, $18, $19,
+            $20, $21, $22, $23, $24, $25
+          )
+        `,
+        [
+          randomUUID(),
+          input.userId,
+          input.tokenSha256,
+          input.expiresAt,
+          input.authenticatedAt,
+          input.authenticationMethod,
+          input.authenticationMethodId,
+          clientContext?.userAgentFamily ?? null,
+          clientContext?.ipAddress ?? null,
+          clientContext?.countryCode ?? null,
+          clientContext?.region ?? null,
+          clientContext?.regionCode ?? null,
+          clientContext?.city ?? null,
+          clientContext?.timezone ?? null,
+          clientContext?.browserVersion ?? null,
+          clientContext?.operatingSystem ?? null,
+          clientContext?.operatingSystemVersion ?? null,
+          clientContext?.deviceType ?? null,
+          clientContext?.deviceVendor ?? null,
+          clientContext?.deviceModel ?? null,
+          clientContext?.architecture ?? null,
+          clientContext?.bitness ?? null,
+          clientContext?.preferredLanguage ?? null,
+          clientContext?.rawUserAgent ?? null,
+          clientContext?.cloudflareRayId ?? null,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async findUserBySessionTokenSha256(tokenSha256: string) {
