@@ -19,7 +19,7 @@ type DashboardExpectations = {
   through: string;
 };
 
-type DashboardFixtureResult = DashboardExpectations & {
+type DashboardFixtureResult = {
   deletedStudentName: string;
 };
 
@@ -187,12 +187,21 @@ async function insertDashboardFixtures(
     [randomUUID(), randomUUID(), "a".repeat(64)],
   );
 
+  return {
+    deletedStudentName,
+  };
+}
+
+async function readDashboardExpectations(
+  database: Client,
+  generatedAt: string,
+): Promise<DashboardExpectations> {
   const result = await database.query<DashboardExpectations>(
     `
       WITH local_clock AS (
         SELECT
-          now() AS generated_at,
-          (now() AT TIME ZONE 'Europe/Moscow')::date
+          $1::timestamptz AS generated_at,
+          ($1::timestamptz AT TIME ZONE 'Europe/Moscow')::date
             AS local_today
       ),
       boundaries AS (
@@ -267,6 +276,7 @@ async function insertDashboardFixtures(
         boundaries.local_today::text AS "through"
       FROM boundaries
     `,
+    [generatedAt],
   );
 
   const expectations = result.rows[0];
@@ -275,10 +285,7 @@ async function insertDashboardFixtures(
     throw new Error("Не удалось подготовить ожидания дашборда E2E.");
   }
 
-  return {
-    ...expectations,
-    deletedStudentName,
-  };
+  return expectations;
 }
 
 test("защищённый /admin перечитывает роль на каждом запросе", async ({
@@ -412,7 +419,7 @@ test("защищённый /admin перечитывает роль на каж�
       `,
       [assignmentId, userId],
     );
-    const dashboardExpectations = await insertDashboardFixtures(
+    const dashboardFixture = await insertDashboardFixtures(
       database,
       userId,
     );
@@ -443,6 +450,21 @@ test("защищённый /admin перечитывает роль на каж�
     const adminResponse = await page.goto("/admin");
 
     expect(adminResponse?.status()).toBe(200);
+    const generatedAt = await page
+      .locator(".admin-dashboard-generated-at time")
+      .getAttribute("datetime");
+
+    if (!generatedAt) {
+      throw new Error(
+        "Дашборд не отобразил точное время снимка для E2E.",
+      );
+    }
+
+    const dashboardExpectations = await readDashboardExpectations(
+      database,
+      generatedAt,
+    );
+
     await expect(
       page.getByRole("heading", {
         name: "Обзор Академии",
@@ -532,7 +554,7 @@ test("защищённый /admin перечитывает роль на каж�
       );
       await expect(
         drilldownPage.getByText(
-          dashboardExpectations.deletedStudentName,
+          dashboardFixture.deletedStudentName,
           { exact: true },
         ),
       ).toHaveCount(0);
