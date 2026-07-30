@@ -215,6 +215,22 @@ export class PostgresAdministrationRepository
 
     try {
       await client.query("BEGIN");
+      const user = await client.query<{ id: string }>(
+        `
+          SELECT id
+          FROM identity_users
+          WHERE id = $1
+            AND status = 'active'
+          FOR UPDATE
+        `,
+        [input.expectedUserId],
+      );
+
+      if (!user.rows[0]) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
       const session = await client.query<{ id: string }>(
         `
           SELECT sessions.id
@@ -294,7 +310,7 @@ export class PostgresAdministrationRepository
               AND methods.identifier = $2
               AND users.status = 'active'
             LIMIT 1
-            FOR SHARE OF methods, users
+            FOR SHARE OF methods
           `,
           [
             input.expectedUserId,

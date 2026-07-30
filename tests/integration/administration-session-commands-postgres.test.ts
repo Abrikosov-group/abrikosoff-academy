@@ -15,7 +15,9 @@ import {
 import { configuredPermissionsForRole } from "@/modules/administration/domain/permissions";
 import type { AdminContext } from "@/modules/administration/domain/types";
 import { PostgresAdministrationCommandRepository } from "@/modules/administration/infrastructure/postgres-administration-command-repository";
+import { PostgresAdministrationRepository } from "@/modules/administration/infrastructure/postgres-administration-repository";
 import { PostgresIdentityAdministrationRepository } from "@/modules/identity/infrastructure/postgres-identity-administration-repository";
+import { PostgresIdentityRepository } from "@/modules/identity/infrastructure/postgres-identity-repository";
 
 const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
@@ -97,6 +99,136 @@ async function insertSession(
   );
 
   return id;
+}
+
+async function insertTelegramMethod(userId: string) {
+  const id = randomUUID();
+  const identifier = `telegram-${randomUUID()}`;
+
+  await pool.query(
+    `
+      INSERT INTO identity_methods (
+        id,
+        user_id,
+        method_type,
+        identifier,
+        verified_at,
+        metadata
+      )
+      VALUES ($1, $2, 'telegram', $3, now(), '{}'::jsonb)
+    `,
+    [id, userId, identifier],
+  );
+
+  return { id, identifier };
+}
+
+async function insertOwnerRole(userId: string) {
+  await pool.query(
+    `
+      INSERT INTO admin_role_assignments (
+        id,
+        user_id,
+        role,
+        status,
+        granted_by_user_id,
+        granted_by_kind,
+        grant_reason
+      )
+      VALUES (
+        $1,
+        $2,
+        'owner',
+        'active',
+        NULL,
+        'system',
+        'Подготовка конкурентного integration-теста'
+      )
+    `,
+    [randomUUID(), userId],
+  );
+}
+
+async function insertAuthenticatedTelegramSession(input: {
+  userId: string;
+  methodId: string;
+  tokenSha256: string;
+}) {
+  const id = randomUUID();
+
+  await pool.query(
+    `
+      INSERT INTO identity_sessions (
+        id,
+        user_id,
+        token_sha256,
+        expires_at,
+        authenticated_at,
+        authentication_method,
+        authentication_method_id
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        now() + interval '1 day',
+        now(),
+        'telegram_oidc',
+        $4
+      )
+    `,
+    [id, input.userId, input.tokenSha256, input.methodId],
+  );
+
+  return id;
+}
+
+async function waitForBlockedQuery(
+  controlPool: Pool,
+  applicationName: string,
+  queryFragment: string,
+) {
+  const timeoutAt = Date.now() + 5_000;
+
+  while (Date.now() < timeoutAt) {
+    const activity = await controlPool.query<{
+      query: string;
+      wait_event_type: string | null;
+    }>(
+      `
+        SELECT query, wait_event_type
+        FROM pg_stat_activity
+        WHERE application_name = $1
+          AND state = 'active'
+          AND wait_event_type = 'Lock'
+          AND position($2 in query) > 0
+      `,
+      [applicationName, queryFragment],
+    );
+
+    if (activity.rows[0]) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  const activity = await controlPool.query<{
+    query: string;
+    state: string;
+    wait_event_type: string | null;
+  }>(
+    `
+      SELECT query, state, wait_event_type
+      FROM pg_stat_activity
+      WHERE application_name = $1
+    `,
+    [applicationName],
+  );
+
+  throw new Error(
+    `Не дождались заблокированного запроса ${queryFragment}: ${JSON.stringify(activity.rows)}`,
+  );
 }
 
 function context(
@@ -330,6 +462,333 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
       },
     ]);
   });
+
+  it(
+    "сериализует массовый отзыв с конкурентным созданием сессии",
+    async () => {
+      const marker = randomUUID().slice(0, 8);
+      const commandApplicationName = `academy-revoke-${marker}`;
+      const createApplicationName = `academy-create-${marker}`;
+      const commandPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: commandApplicationName,
+        max: 2,
+      });
+      const createPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: createApplicationName,
+        max: 1,
+      });
+      const blocker = await pool.connect();
+      const inFlight: Promise<unknown>[] = [];
+      let blockerTransactionOpen = false;
+
+      try {
+        const actorUserId = await insertUser(
+          "Владелец конкурентного создания",
+        );
+        const targetUserId = await insertUser(
+          "Ученик конкурентного создания",
+        );
+        const method = await insertTelegramMethod(targetUserId);
+        const existingSessionId =
+          await insertSession(targetUserId);
+        const createdTokenSha256 = createHash("sha256")
+          .update(randomUUID())
+          .digest("hex");
+        const completionOrder: string[] = [];
+        const commandService = new RevokeUserSessionsService(
+          new PostgresAdministrationCommandRepository(
+            commandPool,
+            new PostgresIdentityAdministrationRepository(),
+          ),
+        );
+        const identityRepository =
+          new PostgresIdentityRepository(createPool);
+
+        await blocker.query("BEGIN");
+        blockerTransactionOpen = true;
+        await blocker.query(
+          `
+            SELECT id
+            FROM identity_sessions
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [existingSessionId],
+        );
+
+        const revokePromise = commandService
+          .execute({
+            context: context(actorUserId),
+            targetUserId,
+            reason: supportMeasureReason,
+            idempotencyKey: randomUUID(),
+          })
+          .then((result) => {
+            completionOrder.push("revoke");
+            return result;
+          });
+        inFlight.push(revokePromise);
+
+        await waitForBlockedQuery(
+          pool,
+          commandApplicationName,
+          "UPDATE identity_sessions",
+        );
+
+        const createPromise = identityRepository
+          .createSession({
+            userId: targetUserId,
+            tokenSha256: createdTokenSha256,
+            expiresAt: new Date(Date.now() + 86_400_000),
+            authenticatedAt: new Date(),
+            authenticationMethod: "telegram_oidc",
+            authenticationMethodId: method.id,
+          })
+          .then(() => {
+            completionOrder.push("create");
+          });
+        inFlight.push(createPromise);
+
+        await waitForBlockedQuery(
+          pool,
+          createApplicationName,
+          "FROM identity_users",
+        );
+        expect(completionOrder).toEqual([]);
+
+        await blocker.query("COMMIT");
+        blockerTransactionOpen = false;
+
+        await expect(revokePromise).resolves.toEqual({
+          activeSessionCount: 0,
+          currentSessionRevoked: false,
+          revokedSessionCount: 1,
+        });
+        await createPromise;
+
+        expect(completionOrder).toEqual(["revoke", "create"]);
+
+        const sessions = await pool.query<{
+          token_sha256: string;
+          revoked_at: Date | null;
+        }>(
+          `
+            SELECT token_sha256, revoked_at
+            FROM identity_sessions
+            WHERE user_id = $1
+              AND (
+                id = $2
+                OR token_sha256 = $3
+              )
+            ORDER BY token_sha256
+          `,
+          [
+            targetUserId,
+            existingSessionId,
+            createdTokenSha256,
+          ],
+        );
+        const sessionsByToken = new Map(
+          sessions.rows.map((session) => [
+            session.token_sha256,
+            session.revoked_at,
+          ]),
+        );
+
+        expect(
+          sessionsByToken.get(createdTokenSha256),
+        ).toBeNull();
+        expect(
+          sessions.rows.find(
+            (session) =>
+              session.token_sha256 !== createdTokenSha256,
+          )?.revoked_at,
+        ).toBeInstanceOf(Date);
+      } finally {
+        if (blockerTransactionOpen) {
+          await blocker.query("ROLLBACK");
+        }
+        blocker.release();
+        await Promise.allSettled(inFlight);
+        await Promise.all([
+          commandPool.end(),
+          createPool.end(),
+        ]);
+      }
+    },
+    15_000,
+  );
+
+  it(
+    "сериализует массовый отзыв с административной ротацией сессии",
+    async () => {
+      const marker = randomUUID().slice(0, 8);
+      const commandApplicationName = `academy-revoke-${marker}`;
+      const rotationApplicationName = `academy-rotate-${marker}`;
+      const commandPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: commandApplicationName,
+        max: 2,
+      });
+      const rotationPool = new Pool({
+        connectionString: testDatabaseUrl,
+        application_name: rotationApplicationName,
+        max: 1,
+      });
+      const blocker = await pool.connect();
+      const inFlight: Promise<unknown>[] = [];
+      let blockerTransactionOpen = false;
+
+      try {
+        const actorUserId = await insertUser(
+          "Владелец конкурентной ротации",
+        );
+        const targetUserId = await insertUser(
+          "Администратор конкурентной ротации",
+        );
+        const method = await insertTelegramMethod(targetUserId);
+        await insertOwnerRole(targetUserId);
+        const currentTokenSha256 = createHash("sha256")
+          .update(randomUUID())
+          .digest("hex");
+        const newTokenSha256 = createHash("sha256")
+          .update(randomUUID())
+          .digest("hex");
+        const currentSessionId =
+          await insertAuthenticatedTelegramSession({
+            userId: targetUserId,
+            methodId: method.id,
+            tokenSha256: currentTokenSha256,
+          });
+        const completionOrder: string[] = [];
+        const administrationRepository =
+          new PostgresAdministrationRepository(rotationPool);
+        const commandService = new RevokeUserSessionsService(
+          new PostgresAdministrationCommandRepository(
+            commandPool,
+            new PostgresIdentityAdministrationRepository(),
+          ),
+        );
+
+        await blocker.query("BEGIN");
+        blockerTransactionOpen = true;
+        await blocker.query(
+          `
+            SELECT id
+            FROM identity_sessions
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [currentSessionId],
+        );
+
+        const authenticatedAt = new Date();
+        const rotationPromise = administrationRepository
+          .rotateSessionForTelegramAdmin({
+            currentTokenSha256,
+            expectedSessionId: currentSessionId,
+            expectedUserId: targetUserId,
+            telegramIdentifier: method.identifier,
+            newTokenSha256,
+            authenticatedAt,
+            expiresAt: new Date(
+              authenticatedAt.getTime() + 86_400_000,
+            ),
+          })
+          .then((result) => {
+            completionOrder.push("rotation");
+            return result;
+          });
+        inFlight.push(rotationPromise);
+
+        await waitForBlockedQuery(
+          pool,
+          rotationApplicationName,
+          "SELECT sessions.id",
+        );
+
+        const revokePromise = commandService
+          .execute({
+            context: context(actorUserId),
+            targetUserId,
+            reason: supportMeasureReason,
+            idempotencyKey: randomUUID(),
+          })
+          .then((result) => {
+            completionOrder.push("revoke");
+            return result;
+          });
+        inFlight.push(revokePromise);
+
+        await waitForBlockedQuery(
+          pool,
+          commandApplicationName,
+          "FROM identity_users",
+        );
+        expect(completionOrder).toEqual([]);
+
+        await blocker.query("COMMIT");
+        blockerTransactionOpen = false;
+
+        await expect(rotationPromise).resolves.toMatchObject({
+          user: {
+            id: targetUserId,
+          },
+        });
+        await expect(revokePromise).resolves.toEqual({
+          activeSessionCount: 0,
+          currentSessionRevoked: false,
+          revokedSessionCount: 1,
+        });
+
+        expect(completionOrder).toEqual([
+          "rotation",
+          "revoke",
+        ]);
+
+        const activeSessions = await pool.query<{
+          count: number;
+        }>(
+          `
+            SELECT count(*)::integer AS count
+            FROM identity_sessions
+            WHERE user_id = $1
+              AND revoked_at IS NULL
+              AND expires_at > now()
+          `,
+          [targetUserId],
+        );
+        const rotatedSession = await pool.query<{
+          revoked_at: Date | null;
+        }>(
+          `
+            SELECT revoked_at
+            FROM identity_sessions
+            WHERE token_sha256 = $1
+          `,
+          [newTokenSha256],
+        );
+
+        expect(activeSessions.rows[0]?.count).toBe(0);
+        expect(
+          rotatedSession.rows[0]?.revoked_at,
+        ).toBeInstanceOf(Date);
+      } finally {
+        if (blockerTransactionOpen) {
+          await blocker.query("ROLLBACK");
+        }
+        blocker.release();
+        await Promise.allSettled(inFlight);
+        await Promise.all([
+          commandPool.end(),
+          rotationPool.end(),
+        ]);
+      }
+    },
+    15_000,
+  );
 
   it("не переисполняет ключ с изменённой причиной", async () => {
     const actorUserId = await insertUser(

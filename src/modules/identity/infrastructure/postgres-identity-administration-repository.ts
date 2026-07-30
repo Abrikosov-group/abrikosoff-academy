@@ -22,7 +22,7 @@ export class PostgresIdentityAdministrationRepository
         SELECT id
         FROM identity_users
         WHERE id = $1
-        FOR SHARE
+        FOR UPDATE
       `,
       [input.userId],
     );
