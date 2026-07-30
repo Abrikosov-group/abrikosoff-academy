@@ -375,7 +375,14 @@ export class PostgresAdministrationStudentReadRepository
           payment_count,
           latest_paid_plan
         FROM student_rows
-        WHERE ($5::text IS NULL OR user_status = $5::text)
+        WHERE (
+            $5::text IS NULL
+            OR (
+              $5::text = 'not_deleted'
+              AND user_status <> 'deleted'
+            )
+            OR user_status = $5::text
+          )
           AND ($6::text IS NULL OR access_state = $6::text)
           AND (
             $7::text IS NULL

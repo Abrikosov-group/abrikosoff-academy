@@ -162,6 +162,9 @@ export default async function AdminStudentsPage({
             name="status"
           >
             <option value="">Любой</option>
+            <option value="not_deleted">
+              Активен или заблокирован
+            </option>
             <option value="active">Активен</option>
             <option value="blocked">Заблокирован</option>
             <option value="deleted">Удалён</option>

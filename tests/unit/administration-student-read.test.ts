@@ -85,6 +85,14 @@ describe("запрос списка учеников", () => {
     });
   });
 
+  it("принимает составной фильтр без удалённых учеников", () => {
+    expect(
+      parseAdminStudentListQuery({
+        status: "not_deleted",
+      }).filters.status,
+    ).toBe("not_deleted");
+  });
+
   it("кодирует непрозрачный курсор без потери значений", () => {
     const encoded = encodeAdminStudentCursor(cursor);
 
