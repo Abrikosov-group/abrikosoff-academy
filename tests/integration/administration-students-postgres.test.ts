@@ -372,6 +372,42 @@ describe("read-only Administration учеников с PostgreSQL", () => {
     ).toContain(userId);
   });
 
+  it("составным фильтром возвращает активных и заблокированных без удалённых", async () => {
+    const marker = randomUUID();
+    const active = await insertStudent(pool, {
+      displayName: `Drill-down ${marker} active`,
+      status: "active",
+    });
+    const blocked = await insertStudent(pool, {
+      displayName: `Drill-down ${marker} blocked`,
+      status: "blocked",
+    });
+    const deleted = await insertStudent(pool, {
+      displayName: `Drill-down ${marker} deleted`,
+      status: "deleted",
+    });
+
+    const result = await service.listStudents({
+      filters: {
+        ...defaultFilters,
+        query: marker,
+        status: "not_deleted",
+        registeredFrom: "2026-07-29",
+        registeredTo: "2026-07-29",
+      },
+      displayTimeZone: "Europe/Moscow",
+      permissions: ownerPermissions,
+      at,
+    });
+    const returnedIds = result.items.map((student) => student.id);
+
+    expect(returnedIds).toEqual(
+      expect.arrayContaining([active.userId, blocked.userId]),
+    );
+    expect(returnedIds).not.toContain(deleted.userId);
+    expect(returnedIds).toHaveLength(2);
+  });
+
   it("различает состояния оплаченного доступа и фильтрует тариф", async () => {
     const cases = [
       {

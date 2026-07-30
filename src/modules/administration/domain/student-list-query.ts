@@ -2,7 +2,7 @@ import "server-only";
 
 import {
   adminStudentAccessStates,
-  adminStudentStatuses,
+  adminStudentStatusFilters,
   type AdminStudentCursor,
   type AdminStudentListFilters,
 } from "./student-read-model";
@@ -126,7 +126,7 @@ export function parseAdminStudentListQuery(
     query,
     status: recognizedValue(
       searchParams.status,
-      adminStudentStatuses,
+      adminStudentStatusFilters,
     ),
     access: recognizedValue(
       searchParams.access,

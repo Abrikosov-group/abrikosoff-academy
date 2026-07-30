@@ -13,6 +13,7 @@ function formatMetric(value: number) {
 
 function studentsPeriodHref(from: string, through: string) {
   const query = new URLSearchParams({
+    status: "not_deleted",
     from,
     to: through,
   });

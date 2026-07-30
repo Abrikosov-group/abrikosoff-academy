@@ -14,6 +14,14 @@ export const adminStudentStatuses = [
 export type AdminStudentStatus =
   (typeof adminStudentStatuses)[number];
 
+export const adminStudentStatusFilters = [
+  ...adminStudentStatuses,
+  "not_deleted",
+] as const;
+
+export type AdminStudentStatusFilter =
+  (typeof adminStudentStatusFilters)[number];
+
 export const adminStudentAccessStates = [
   "active",
   "scheduled",
@@ -41,7 +49,7 @@ export type AdminStudentCursor = {
 
 export type AdminStudentListFilters = {
   query: string;
-  status?: AdminStudentStatus;
+  status?: AdminStudentStatusFilter;
   access?: AdminStudentAccessFilter;
   source?: AdminStudentAccessSource;
   plan?: SubscriptionPlanId;

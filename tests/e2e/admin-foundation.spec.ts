@@ -19,12 +19,29 @@ type DashboardExpectations = {
   through: string;
 };
 
+type DashboardFixtureResult = DashboardExpectations & {
+  deletedStudentName: string;
+};
+
 async function insertDashboardFixtures(
   database: Client,
   userId: string,
-): Promise<DashboardExpectations> {
+): Promise<DashboardFixtureResult> {
   const paidOrderId = randomUUID();
   const pendingOrderId = randomUUID();
+  const deletedStudentName = `E2E Удалённый ${randomUUID()}`;
+
+  await database.query(
+    `
+      INSERT INTO identity_users (
+        id,
+        display_name,
+        status
+      )
+      VALUES ($1, $2, 'deleted')
+    `,
+    [randomUUID(), deletedStudentName],
+  );
 
   await database.query(
     `
@@ -258,7 +275,10 @@ async function insertDashboardFixtures(
     throw new Error("Не удалось подготовить ожидания дашборда E2E.");
   }
 
-  return expectations;
+  return {
+    ...expectations,
+    deletedStudentName,
+  };
 }
 
 test("защищённый /admin перечитывает роль на каждом запросе", async ({
@@ -472,24 +492,53 @@ test("защищённый /admin перечитывает роль на каж�
         "ru-RU",
       ),
     );
+    const newStudents7DaysHref =
+      `/admin/students?status=not_deleted&from=` +
+      `${dashboardExpectations.last7DaysFrom}&to=` +
+      dashboardExpectations.through;
+    const newStudents30DaysHref =
+      `/admin/students?status=not_deleted&from=` +
+      `${dashboardExpectations.last30DaysFrom}&to=` +
+      dashboardExpectations.through;
+
     await expect(
       newStudentsCard.getByRole("link", {
         name: "Открыть новых учеников за 7 дней",
         exact: true,
       }),
-    ).toHaveAttribute(
-      "href",
-      `/admin/students?from=${dashboardExpectations.last7DaysFrom}&to=${dashboardExpectations.through}`,
-    );
+    ).toHaveAttribute("href", newStudents7DaysHref);
     await expect(
       newStudentsCard.getByRole("link", {
         name: "Открыть новых учеников за 30 дней",
         exact: true,
       }),
-    ).toHaveAttribute(
-      "href",
-      `/admin/students?from=${dashboardExpectations.last30DaysFrom}&to=${dashboardExpectations.through}`,
-    );
+    ).toHaveAttribute("href", newStudents30DaysHref);
+
+    const drilldownPage = await context.newPage();
+
+    try {
+      const drilldownResponse = await drilldownPage.goto(
+        newStudents7DaysHref,
+      );
+
+      expect(drilldownResponse?.status()).toBe(200);
+      await expect(
+        drilldownPage.locator("#student-status"),
+      ).toHaveValue("not_deleted");
+      await expect(
+        drilldownPage.locator(".admin-data-table tbody tr"),
+      ).toHaveCount(
+        dashboardExpectations.newStudentsLast7Days,
+      );
+      await expect(
+        drilldownPage.getByText(
+          dashboardExpectations.deletedStudentName,
+          { exact: true },
+        ),
+      ).toHaveCount(0);
+    } finally {
+      await drilldownPage.close();
+    }
 
     const activeAccessCard = page.getByRole("article", {
       name: "Действующий оплаченный доступ",
