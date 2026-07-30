@@ -14,7 +14,7 @@ export class PostgresIdentityAdministrationRepository
     input: {
       userId: string;
       revokedAt: Date;
-      trackedSessionId: string;
+      trackedSessionId?: string;
     },
   ): Promise<RevokeActiveIdentitySessionsResult> {
     const user = await client.query<{ id: string }>(
@@ -42,10 +42,14 @@ export class PostgresIdentityAdministrationRepository
       `,
       [input.userId, input.revokedAt],
     );
-    const trackedSessionWasRevoked = revoked.rows.some(
-      (session) => session.id === input.trackedSessionId,
-    );
-    const trackedSession = trackedSessionWasRevoked
+    const trackedSessionWasRevoked =
+      input.trackedSessionId !== undefined &&
+      revoked.rows.some(
+        (session) => session.id === input.trackedSessionId,
+      );
+    const trackedSession =
+      input.trackedSessionId === undefined ||
+      trackedSessionWasRevoked
       ? undefined
       : await client.query<{ id: string }>(
           `
@@ -59,7 +63,8 @@ export class PostgresIdentityAdministrationRepository
           [input.trackedSessionId, input.userId],
         );
     const revokedTrackedSessionId =
-      trackedSessionWasRevoked || trackedSession?.rows[0]
+      input.trackedSessionId !== undefined &&
+      (trackedSessionWasRevoked || trackedSession?.rows[0])
         ? input.trackedSessionId
         : undefined;
 

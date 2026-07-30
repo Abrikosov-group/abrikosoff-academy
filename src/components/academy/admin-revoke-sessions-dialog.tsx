@@ -18,6 +18,19 @@ const sessionCountForms = [
   "сессии",
   "сессий",
 ] as const;
+const terminalCommandErrorCodes = new Set([
+  "ADMINISTRATION_DISABLED",
+  "ADMIN_AUTH_REQUIRED",
+  "ADMIN_LOGIN_REQUIRED",
+  "ADMIN_ROLE_REQUIRED",
+  "ADMIN_PERMISSION_DENIED",
+  "ADMIN_REAUTH_REQUIRED",
+  "ADMIN_VERIFICATION_REJECTED",
+  "ADMIN_COMMAND_INVALID_REQUEST",
+  "IDEMPOTENCY_CONFLICT",
+  "USER_NOT_FOUND",
+  "REVOKE_USER_SESSIONS_FAILED",
+]);
 
 type CommandPayload = {
   activeSessionCount?: unknown;
@@ -129,11 +142,7 @@ export function AdminRevokeSessionsDialog({
             ? payload.error.code
             : "";
 
-        if (
-          errorCode !== "COMMAND_IN_PROGRESS" &&
-          errorCode !== "COMMAND_ATTEMPT_SUPERSEDED" &&
-          errorCode !== "COMMAND_RECOVERY_REQUIRED"
-        ) {
+        if (terminalCommandErrorCodes.has(errorCode)) {
           operationKeyRef.current = null;
           submittedReasonRef.current = null;
         }
@@ -172,8 +181,6 @@ export function AdminRevokeSessionsDialog({
         payload.activeSessionCount !== 0 ||
         typeof payload.revokedSessionCount !== "number"
       ) {
-        operationKeyRef.current = null;
-        submittedReasonRef.current = null;
         setRequestId(
           typeof payload.requestId === "string"
             ? payload.requestId

@@ -16,7 +16,7 @@ export interface IdentityAdministrationRepository {
     input: {
       userId: string;
       revokedAt: Date;
-      trackedSessionId: string;
+      trackedSessionId?: string;
     },
   ): Promise<RevokeActiveIdentitySessionsResult>;
 }

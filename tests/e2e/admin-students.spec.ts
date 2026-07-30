@@ -986,6 +986,33 @@ test("владелец ищет ученика, отзывает сессии и
     expect(recoveryIdempotencyKey).toBe(
       supersededIdempotencyKey,
     );
+    let ambiguousIdempotencyKey: string | undefined;
+
+    await page.route(
+      `**${revokeSessionsEndpoint}`,
+      async (route) => {
+        ambiguousIdempotencyKey =
+          route.request().headers()["idempotency-key"];
+        await route.fulfill({
+          status: 504,
+          contentType: "text/plain",
+          body: "Gateway Timeout",
+        });
+      },
+      { times: 1 },
+    );
+    await commandDialog
+      .getByRole("button", {
+        name: "Отозвать сессии",
+        exact: true,
+      })
+      .click();
+    await expect(commandDialog.getByRole("alert")).toContainText(
+      "Не удалось отозвать сессии",
+    );
+    expect(ambiguousIdempotencyKey).toBe(
+      recoveryIdempotencyKey,
+    );
     let failedIdempotencyKey: string | undefined;
 
     await page.route(
@@ -1018,7 +1045,7 @@ test("владелец ищет ученика, отзывает сессии и
       "Не удалось отозвать сессии",
     );
     expect(failedIdempotencyKey).toBe(
-      recoveryIdempotencyKey,
+      ambiguousIdempotencyKey,
     );
 
     const commandResponsePromise = page.waitForResponse(

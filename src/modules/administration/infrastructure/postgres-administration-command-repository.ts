@@ -352,7 +352,12 @@ export class PostgresAdministrationCommandRepository
           {
             userId: command.targetId,
             revokedAt: activeExecution.executed_at,
-            trackedSessionId: command.actorSessionId,
+            ...(command.actorUserId === command.targetId
+              ? {
+                  trackedSessionId:
+                    command.actorSessionId,
+                }
+              : {}),
           },
         );
 

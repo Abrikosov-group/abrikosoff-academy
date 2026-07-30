@@ -806,6 +806,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
     const failingIdentityRepository: IdentityAdministrationRepository =
       {
         async revokeActiveSessions(client, input) {
+          expect(input.trackedSessionId).toBeUndefined();
           await client.query(
             `
               UPDATE identity_sessions
