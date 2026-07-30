@@ -57,8 +57,6 @@ function canEnableAdministration(
 }
 
 export function getAdministrationConfig(): AdministrationConfig {
-  getAdminDisplayTimeZone();
-
   const rawEnabled =
     process.env.ADMINISTRATION_ENABLED?.trim().toLowerCase() ||
     "false";
@@ -67,6 +65,12 @@ export function getAdministrationConfig(): AdministrationConfig {
     throw new TypeError(
       "ADMINISTRATION_ENABLED должен быть true или false.",
     );
+  }
+
+  const enabled = rawEnabled === "true";
+
+  if (!enabled) {
+    return { enabled: false, mode: "disabled" };
   }
 
   const rawMode =
@@ -79,11 +83,7 @@ export function getAdministrationConfig(): AdministrationConfig {
     );
   }
 
-  const enabled = rawEnabled === "true";
-
-  if (!enabled) {
-    return { enabled: false, mode: "disabled" };
-  }
+  getAdminDisplayTimeZone();
 
   const mode = rawMode as Exclude<
     AdministrationMode,

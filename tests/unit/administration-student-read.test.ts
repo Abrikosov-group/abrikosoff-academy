@@ -236,15 +236,16 @@ describe("безопасное представление ученика", () =>
     );
   });
 
-  it("сортирует активные сессии перед завершёнными и новые перед старыми", () => {
+  it("сортирует сессии по состоянию и времени создания", () => {
     const session = (
       id: string,
       state: AdminStudentSession["state"],
-      lastSeenAt: string,
+      createdAt: string,
+      lastSeenAt = createdAt,
     ): AdminStudentSession => ({
       id,
       state,
-      createdAt: lastSeenAt,
+      createdAt,
       lastSeenAt,
       expiresAt: "2026-09-01T00:00:00.000Z",
     });
@@ -258,6 +259,7 @@ describe("безопасное представление ученика", () =>
         "active-old",
         "active",
         "2026-07-29T12:00:00.000Z",
+        "2026-07-31T12:00:00.000Z",
       ),
       session(
         "revoked",
@@ -268,6 +270,7 @@ describe("безопасное представление ученика", () =>
         "active-new",
         "active",
         "2026-07-30T12:00:00.000Z",
+        "2026-07-28T12:00:00.000Z",
       ),
     ];
 

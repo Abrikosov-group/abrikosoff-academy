@@ -591,6 +591,12 @@ test("владелец ищет ученика, открывает карточ�
     await expect(
       sessionSummary.getByText("203.0.113.42", { exact: true }),
     ).toBeVisible();
+    await expect(
+      sessionSummary.getByText("Сессия создана", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      sessionSummary.getByText("Активность", { exact: true }),
+    ).toHaveCount(0);
     const copyIpButton = sessionSummary.locator(
       ".admin-copy-button",
     );

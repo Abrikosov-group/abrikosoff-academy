@@ -284,12 +284,9 @@ export function sortAdminStudentSessions(
       return stateDifference;
     }
 
-    const lastSeenDifference =
-      Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt);
-
-    return lastSeenDifference !== 0
-      ? lastSeenDifference
-      : Date.parse(right.createdAt) - Date.parse(left.createdAt);
+    return (
+      Date.parse(right.createdAt) - Date.parse(left.createdAt)
+    );
   });
 }
 

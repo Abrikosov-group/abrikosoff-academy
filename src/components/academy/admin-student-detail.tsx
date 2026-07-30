@@ -853,17 +853,6 @@ function SessionTechnicalDetails({
           </dd>
         </div>
         <div>
-          <dt>Последняя активность</dt>
-          <dd>
-            <time dateTime={session.lastSeenAt}>
-              {formatAdminDateTime(
-                session.lastSeenAt,
-                displayTimeZone,
-              )}
-            </time>
-          </dd>
-        </div>
-        <div>
           <dt>Истекает</dt>
           <dd>
             <time dateTime={session.expiresAt}>
@@ -1044,23 +1033,14 @@ function AdminStudentSessionCard({
           </dd>
         </div>
         <div>
-          <dt>Активность</dt>
+          <dt>Сессия создана</dt>
           <dd>
-            <time dateTime={session.lastSeenAt}>
+            <time dateTime={session.createdAt}>
               {formatAdminCompactDateTime(
-                session.lastSeenAt,
+                session.createdAt,
                 displayTimeZone,
               )}
             </time>
-            <small>
-              Создана{" "}
-              <time dateTime={session.createdAt}>
-                {formatAdminCompactDateTime(
-                  session.createdAt,
-                  displayTimeZone,
-                )}
-              </time>
-            </small>
           </dd>
         </div>
         <div>
@@ -1118,9 +1098,9 @@ export function AdminStudentSessionList({
         </div>
       </div>
       <p className="admin-section-note">
-        Последняя активность пока не обновляется в фоне.
-        Технические сведения фиксируются при новом входе, токены
-        не отображаются.
+        Обновление активности пока не подключено, поэтому показано
+        время создания сессии. Технические сведения фиксируются при
+        новом входе, токены не отображаются.
         {student.sessionsTruncated
           ? " Показаны последние 100 сессий."
           : ""}

@@ -149,9 +149,21 @@ describe("getAdministrationConfig", () => {
     );
   });
 
-  it("отклоняет неизвестный режим даже при выключенном гейте", () => {
+  it("не валидирует параметры выключенного контура", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("ADMINISTRATION_ENABLED", "false");
+    vi.stubEnv("ADMINISTRATION_MODE", "preview");
+    vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "Mars/Olympus");
+
+    expect(getAdministrationConfig()).toEqual({
+      enabled: false,
+      mode: "disabled",
+    });
+  });
+
+  it("отклоняет неизвестный режим включённого контура", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ADMINISTRATION_ENABLED", "true");
     vi.stubEnv("ADMINISTRATION_MODE", "preview");
 
     expect(() => getAdministrationConfig()).toThrowError(
@@ -159,8 +171,10 @@ describe("getAdministrationConfig", () => {
     );
   });
 
-  it("проверяет временную зону при чтении runtime-конфигурации", () => {
+  it("проверяет временную зону включённого контура", () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ADMINISTRATION_ENABLED", "true");
+    vi.stubEnv("ADMINISTRATION_MODE", "operational");
     vi.stubEnv("ADMIN_DISPLAY_TIME_ZONE", "Mars/Olympus");
 
     expect(() => getAdministrationConfig()).toThrowError(
