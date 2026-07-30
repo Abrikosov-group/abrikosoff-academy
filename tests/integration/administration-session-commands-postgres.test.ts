@@ -124,6 +124,8 @@ async function insertTelegramMethod(userId: string) {
 }
 
 async function insertOwnerRole(userId: string) {
+  const id = randomUUID();
+
   await pool.query(
     `
       INSERT INTO admin_role_assignments (
@@ -145,8 +147,31 @@ async function insertOwnerRole(userId: string) {
         'Подготовка конкурентного integration-теста'
       )
     `,
-    [randomUUID(), userId],
+    [id, userId],
   );
+
+  return id;
+}
+
+async function revokeOwnerRole(id: string) {
+  const result = await pool.query(
+    `
+      UPDATE admin_role_assignments
+      SET
+        status = 'revoked',
+        revoke_reason = 'Очистка конкурентного integration-теста',
+        revoked_at = now()
+      WHERE id = $1
+        AND status = 'active'
+    `,
+    [id],
+  );
+
+  if (result.rowCount !== 1) {
+    throw new Error(
+      "Не удалось отозвать тестовую роль владельца.",
+    );
+  }
 }
 
 async function insertAuthenticatedTelegramSession(input: {
@@ -640,6 +665,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
       const blocker = await pool.connect();
       const inFlight: Promise<unknown>[] = [];
       let blockerTransactionOpen = false;
+      let ownerRoleId: string | undefined;
 
       try {
         const actorUserId = await insertUser(
@@ -649,7 +675,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
           "Администратор конкурентной ротации",
         );
         const method = await insertTelegramMethod(targetUserId);
-        await insertOwnerRole(targetUserId);
+        ownerRoleId = await insertOwnerRole(targetUserId);
         const currentTokenSha256 = createHash("sha256")
           .update(randomUUID())
           .digest("hex");
@@ -781,10 +807,16 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
         }
         blocker.release();
         await Promise.allSettled(inFlight);
-        await Promise.all([
-          commandPool.end(),
-          rotationPool.end(),
-        ]);
+        try {
+          if (ownerRoleId) {
+            await revokeOwnerRole(ownerRoleId);
+          }
+        } finally {
+          await Promise.all([
+            commandPool.end(),
+            rotationPool.end(),
+          ]);
+        }
       }
     },
     15_000,
