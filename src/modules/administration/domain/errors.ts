@@ -12,7 +12,10 @@ export type AdministrationErrorCode =
   | "COMMAND_ATTEMPT_SUPERSEDED"
   | "COMMAND_RECOVERY_REQUIRED"
   | "USER_NOT_FOUND"
-  | "REVOKE_USER_SESSIONS_FAILED";
+  | "USER_STATUS_TRANSITION_INVALID"
+  | "LAST_AVAILABLE_OWNER"
+  | "REVOKE_USER_SESSIONS_FAILED"
+  | "CHANGE_USER_STATUS_FAILED";
 
 export class AdministrationError extends Error {
   constructor(

@@ -1,5 +1,6 @@
 import { CopyableIpAddress } from "@/components/academy/copyable-ip-address";
 import { AdminRevokeSessionsDialog } from "@/components/academy/admin-revoke-sessions-dialog";
+import { AdminUserStatusDialog } from "@/components/academy/admin-user-status-dialog";
 import {
   CopyButton,
   CopyableValue,
@@ -7,7 +8,6 @@ import {
 import { UserAvatar } from "@/components/academy/user-avatar";
 import {
   adminAccessStateLabel,
-  adminStudentStatusLabel,
   formatAdminCompactDateTime,
   formatAdminDate,
   formatAdminDateTime,
@@ -61,6 +61,14 @@ function statusBadgeClass(status: AdminStudentStatus) {
     : status === "blocked"
       ? "badge-error"
       : "badge-neutral";
+}
+
+function accountStatusLabel(status: AdminStudentStatus) {
+  return {
+    active: "Активна",
+    blocked: "Заблокирована",
+    deleted: "Удалена",
+  }[status];
 }
 
 function accessBadgeClass(state: AdminStudentAccessState) {
@@ -170,10 +178,14 @@ function latestCreatedSession(
 }
 
 export function AdminStudentSummary({
+  canChangeStatus,
   displayTimeZone,
+  isCurrentActor,
   student,
 }: {
+  canChangeStatus: boolean;
   displayTimeZone: string;
+  isCurrentActor: boolean;
   student: AdminStudentDetail;
 }) {
   const primaryTelegramMethod = selectPrimaryTelegramMethod(
@@ -208,20 +220,28 @@ export function AdminStudentSummary({
           aria-label="Состояние ученика"
           className="admin-student-summary-badges"
         >
-          <span
-            className={`badge ${statusBadgeClass(student.status)}`}
-          >
-            {adminStudentStatusLabel(student.status)}
-          </span>
-          <span
-            className={`badge ${accessBadgeClass(
-              student.effectiveAccess.state,
-            )}`}
-          >
-            {adminAccessStateLabel(
-              student.effectiveAccess.state,
-            )}
-          </span>
+          <div className="admin-student-summary-state">
+            <span>Статус учётной записи</span>
+            <strong
+              className={`badge ${statusBadgeClass(
+                student.status,
+              )}`}
+            >
+              {accountStatusLabel(student.status)}
+            </strong>
+          </div>
+          <div className="admin-student-summary-state">
+            <span>Доступ к обучению</span>
+            <strong
+              className={`badge ${accessBadgeClass(
+                student.effectiveAccess.state,
+              )}`}
+            >
+              {adminAccessStateLabel(
+                student.effectiveAccess.state,
+              )}
+            </strong>
+          </div>
         </div>
       </div>
 
@@ -302,6 +322,14 @@ export function AdminStudentSummary({
           value={student.id}
           variant="text"
         />
+        {canChangeStatus ? (
+          <AdminUserStatusDialog
+            isCurrentActor={isCurrentActor}
+            studentDisplayName={student.displayName}
+            studentId={student.id}
+            studentStatus={student.status}
+          />
+        ) : null}
       </div>
     </section>
   );

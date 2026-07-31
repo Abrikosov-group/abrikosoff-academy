@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AdminCommandReservation,
-  AdministrationCommandRepository,
+  AdministrationSessionCommandRepository,
   InternalAdminCommand,
   RevokeUserSessionsExecution,
 } from "@/modules/administration/application/administration-command-repository";
@@ -44,7 +44,7 @@ function adminContext(
 }
 
 class FakeCommandRepository
-  implements AdministrationCommandRepository
+  implements AdministrationSessionCommandRepository
 {
   reservation: AdminCommandReservation = {
     state: "reserved",

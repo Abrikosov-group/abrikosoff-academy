@@ -391,6 +391,8 @@ test("владелец ищет ученика, отзывает сессии и
     ).toBeVisible();
     const revokeSessionsEndpoint =
       `/api/admin/students/${target.userId}/sessions/revoke`;
+    const userStatusEndpoint =
+      `/api/admin/students/${target.userId}/status`;
 
     for (const probedUserId of [
       target.userId,
@@ -418,6 +420,30 @@ test("владелец ищет ученика, отзывает сессии и
       });
     }
 
+    const deniedStatusCommand = await page.request.post(
+      userStatusEndpoint,
+      {
+        data: {
+          action: "block",
+          reason: "support_security_measure",
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(deniedStatusCommand.status()).toBe(403);
+    await expect(
+      deniedStatusCommand.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_ROLE_REQUIRED",
+      },
+      requestId: expect.any(String),
+    });
+
     await context.addCookies([
       {
         name: "academy_session",
@@ -441,6 +467,66 @@ test("владелец ищет ученика, отзывает сессии и
       "page",
     );
 
+    await page.setViewportSize({ width: 1366, height: 900 });
+    const filterPanel = page.getByRole("form", {
+      name: "Поиск и фильтры учеников",
+    });
+    const resetFilters = page.getByRole("link", {
+      name: "Сбросить",
+      exact: true,
+    });
+    const filterPanelBox = await filterPanel.boundingBox();
+    const resetFiltersBox = await resetFilters.boundingBox();
+
+    expect(filterPanelBox).not.toBeNull();
+    expect(resetFiltersBox).not.toBeNull();
+    expect(
+      (resetFiltersBox?.x ?? 0) +
+        (resetFiltersBox?.width ?? 0),
+    ).toBeLessThanOrEqual(
+      (filterPanelBox?.x ?? 0) +
+        (filterPanelBox?.width ?? 0) +
+        1,
+    );
+
+    const adminLayout = page.locator(".admin-layout");
+    const expandedMainBox = await page
+      .locator(".admin-main")
+      .boundingBox();
+    const collapseSidebar = page.getByRole("button", {
+      name: "Свернуть боковое меню",
+      exact: true,
+    });
+
+    expect(expandedMainBox).not.toBeNull();
+    await expect(collapseSidebar).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await collapseSidebar.click();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Развернуть боковое меню",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+    await expect(studentsNavigation).toHaveAttribute(
+      "title",
+      "Ученики",
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await page.locator(".admin-main").boundingBox()
+          )?.width ?? 0,
+      )
+      .toBeGreaterThan((expandedMainBox?.width ?? 0) + 150);
+
     await page
       .getByLabel("Найти ученика")
       .fill("Ученик E2E");
@@ -452,6 +538,10 @@ test("владелец ищет ученика, отзывает сессии и
         name: /Целевой Ученик E2E/,
       }),
     ).toBeVisible();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
 
     await page
       .getByLabel("Найти ученика")
@@ -500,10 +590,49 @@ test("владелец ищет ученика, отзывает сессии и
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("Активен", {
+      page.getByText("Статус учётной записи", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Активна", {
         exact: true,
       }).first(),
     ).toBeVisible();
+    await expect(
+      page.getByText("Доступ к обучению", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 900 });
+    const studentSummaryBox = await page
+      .locator(".admin-student-summary")
+      .boundingBox();
+    const studentNameBox = await page
+      .getByRole("heading", {
+        level: 1,
+        name: "Целевой Ученик E2E",
+        exact: true,
+      })
+      .boundingBox();
+    const statusCommandBox = await page
+      .getByRole("button", {
+        name: "Заблокировать учётную запись",
+        exact: true,
+      })
+      .boundingBox();
+
+    expect(studentSummaryBox).not.toBeNull();
+    expect(studentNameBox?.width).toBeGreaterThan(300);
+    expect(statusCommandBox).not.toBeNull();
+    expect(
+      (statusCommandBox?.x ?? 0) +
+        (statusCommandBox?.width ?? 0),
+    ).toBeLessThanOrEqual(
+      (studentSummaryBox?.x ?? 0) +
+        (studentSummaryBox?.width ?? 0) +
+        1,
+    );
     await expect(
       page.getByText("target-receipt@example.test", {
         exact: true,
@@ -714,6 +843,21 @@ test("владелец ищет ученика, отзывает сессии и
         name: "Целевой Ученик E2E",
         exact: true,
       }),
+    ).toBeVisible();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
+    const mobileSidebarToggle = page.locator(
+      ".admin-sidebar-toggle",
+    );
+
+    await expect(mobileSidebarToggle).toHaveCount(1);
+    await expect(mobileSidebarToggle).toBeHidden();
+    await expect(
+      page
+        .locator(".admin-nav-label")
+        .filter({ hasText: /^Ученики$/u }),
     ).toBeVisible();
     const studentDetailHorizontalOverflow = await page.evaluate(
       () =>
@@ -1198,6 +1342,284 @@ test("владелец ищет ученика, отзывает сессии и
       revoked_count: 6,
       active_count: 0,
     });
+
+    const statusGetResponse = await page.request.get(
+      userStatusEndpoint,
+    );
+
+    expect(statusGetResponse.status()).toBe(405);
+
+    const foreignStatusOrigin = await page.request.post(
+      userStatusEndpoint,
+      {
+        data: {
+          action: "block",
+          reason: "support_security_measure",
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: "https://evil.example",
+        },
+      },
+    );
+
+    expect(foreignStatusOrigin.status()).toBe(403);
+    await expect(
+      foreignStatusOrigin.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_PERMISSION_DENIED",
+      },
+      requestId: expect.any(String),
+    });
+
+    const unknownStatusField = await page.request.post(
+      userStatusEndpoint,
+      {
+        data: {
+          action: "block",
+          reason: "support_security_measure",
+          unexpected: true,
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(unknownStatusField.status()).toBe(400);
+    await expect(
+      unknownStatusField.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+      },
+      requestId: expect.any(String),
+    });
+
+    const mismatchedStatusReason = await page.request.post(
+      userStatusEndpoint,
+      {
+        data: {
+          action: "block",
+          reason: "security_check_completed",
+        },
+        headers: {
+          "Idempotency-Key": randomUUID(),
+          Origin: baseUrl,
+        },
+      },
+    );
+
+    expect(mismatchedStatusReason.status()).toBe(400);
+    await expect(
+      mismatchedStatusReason.json(),
+    ).resolves.toMatchObject({
+      error: {
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+      },
+      requestId: expect.any(String),
+    });
+
+    const blockUserButton = page.getByRole("button", {
+      name: "Заблокировать учётную запись",
+      exact: true,
+    });
+
+    await expect(blockUserButton).toBeVisible();
+    await blockUserButton.click();
+    const blockUserDialog = page.getByRole("dialog", {
+      name: "Заблокировать учётную запись?",
+    });
+    const blockReasonField = blockUserDialog.getByLabel(
+      "Причина изменения",
+    );
+
+    await expect(blockUserDialog).toBeVisible();
+    await expect(
+      blockUserDialog.getByText(
+        "немедленно завершатся все активные сессии",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await expect(
+      blockUserDialog.getByText(
+        "История оплаченного доступа и платежей не изменится.",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await blockUserDialog
+      .getByRole("button", {
+        name: "Заблокировать",
+        exact: true,
+      })
+      .click();
+    await expect(blockReasonField).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await blockReasonField.selectOption(
+      "support_security_measure",
+    );
+    const blockResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(userStatusEndpoint) &&
+        response.request().method() === "POST",
+    );
+
+    await blockUserDialog
+      .getByRole("button", {
+        name: "Заблокировать",
+        exact: true,
+      })
+      .click();
+    const blockResponse = await blockResponsePromise;
+
+    expect(blockResponse.status()).toBe(200);
+    await expect(blockResponse.json()).resolves.toMatchObject({
+      status: "blocked",
+      statusChanged: true,
+      revokedSessionCount: 0,
+      currentSessionRevoked: false,
+      requestId: expect.any(String),
+    });
+    await expect(blockUserDialog).not.toBeVisible();
+    await expect(
+      page.getByText(
+        "Учётная запись заблокирована. Отозвано активных сессий: 0.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const blockedFeedback = page.locator(
+      ".admin-command-feedback-danger",
+    );
+
+    await expect(blockedFeedback).toHaveText(
+      "Учётная запись заблокирована. Отозвано активных сессий: 0.",
+    );
+    await expect
+      .poll(() =>
+        blockedFeedback.evaluate(
+          (element) => getComputedStyle(element).color,
+        ),
+      )
+      .toBe("rgb(180, 35, 24)");
+    await expect(
+      page.getByRole("button", {
+        name: "Разблокировать учётную запись",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Заблокирована", {
+        exact: true,
+      }).first(),
+    ).toBeVisible();
+
+    const blockedDatabaseState = await database.query<{
+      access_status: string;
+      status: string;
+    }>(
+      `
+        SELECT
+          users.status,
+          access.status AS access_status
+        FROM identity_users users
+        JOIN billing_access_grants access
+          ON access.customer_id = users.id
+        WHERE users.id = $1
+      `,
+      [target.userId],
+    );
+
+    expect(blockedDatabaseState.rows).toEqual([
+      {
+        access_status: "granted",
+        status: "blocked",
+      },
+    ]);
+
+    const unblockUserButton = page.getByRole("button", {
+      name: "Разблокировать учётную запись",
+      exact: true,
+    });
+
+    await unblockUserButton.click();
+    const unblockUserDialog = page.getByRole("dialog", {
+      name: "Разблокировать учётную запись?",
+    });
+
+    await expect(
+      unblockUserDialog.getByText(
+        "Прежние сессии не восстановятся",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await unblockUserDialog
+      .getByLabel("Причина изменения")
+      .selectOption("security_check_completed");
+    const unblockResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(userStatusEndpoint) &&
+        response.request().method() === "POST",
+    );
+
+    await unblockUserDialog
+      .getByRole("button", {
+        name: "Разблокировать",
+        exact: true,
+      })
+      .click();
+    const unblockResponse = await unblockResponsePromise;
+
+    expect(unblockResponse.status()).toBe(200);
+    await expect(unblockResponse.json()).resolves.toMatchObject({
+      status: "active",
+      statusChanged: true,
+      revokedSessionCount: 0,
+      currentSessionRevoked: false,
+      requestId: expect.any(String),
+    });
+    await expect(unblockUserDialog).not.toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Заблокировать учётную запись",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.locator(".admin-command-feedback-success"),
+    ).toHaveText(
+      "Учётная запись разблокирована. Для входа потребуется новая сессия.",
+    );
+
+    const unblockedDatabaseState = await database.query<{
+      active_session_count: number;
+      status: string;
+    }>(
+      `
+        SELECT
+          users.status,
+          count(sessions.id) FILTER (
+            WHERE sessions.revoked_at IS NULL
+              AND sessions.expires_at > now()
+          )::integer AS active_session_count
+        FROM identity_users users
+        LEFT JOIN identity_sessions sessions
+          ON sessions.user_id = users.id
+        WHERE users.id = $1
+        GROUP BY users.id
+      `,
+      [target.userId],
+    );
+
+    expect(unblockedDatabaseState.rows).toEqual([
+      {
+        active_session_count: 0,
+        status: "active",
+      },
+    ]);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/admin/students?q=E2E+Курсор&limit=25");

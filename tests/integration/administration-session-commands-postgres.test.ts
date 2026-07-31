@@ -289,6 +289,7 @@ function service(
     new PostgresAdministrationCommandRepository(
       pool,
       identityRepository,
+      new PostgresIdentityAdministrationRepository(),
     ),
   );
 }
@@ -526,6 +527,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
           new PostgresAdministrationCommandRepository(
             commandPool,
             new PostgresIdentityAdministrationRepository(),
+            new PostgresIdentityAdministrationRepository(),
           ),
         );
         const identityRepository =
@@ -695,6 +697,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
           new PostgresAdministrationCommandRepository(
             commandPool,
             new PostgresIdentityAdministrationRepository(),
+            new PostgresIdentityAdministrationRepository(),
           ),
         );
 
@@ -860,10 +863,12 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
           new PostgresAdministrationCommandRepository(
             firstCommandPool,
             new PostgresIdentityAdministrationRepository(),
+            new PostgresIdentityAdministrationRepository(),
           );
         const secondCommandRepository =
           new PostgresAdministrationCommandRepository(
             secondCommandPool,
+            new PostgresIdentityAdministrationRepository(),
             new PostgresIdentityAdministrationRepository(),
           );
         const firstCommand =
@@ -1249,6 +1254,7 @@ describe("отзыв сессий ученика с PostgreSQL", () => {
     const commandRepository =
       new PostgresAdministrationCommandRepository(
         pool,
+        new PostgresIdentityAdministrationRepository(),
         new PostgresIdentityAdministrationRepository(),
       );
     const firstReservation =

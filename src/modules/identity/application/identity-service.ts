@@ -64,7 +64,7 @@ export class IdentityService {
         this.sessionTtlDays * 24 * 60 * 60 * 1_000,
     );
 
-    await this.repository.createSession({
+    const sessionCreated = await this.repository.createSession({
       userId: user.id,
       tokenSha256: hashIdentityToken(token),
       expiresAt,
@@ -74,6 +74,14 @@ export class IdentityService {
       adminVerificationMethod,
       clientContext: input.clientContext,
     });
+
+    if (!sessionCreated) {
+      throw new IdentityError(
+        "INVALID_LOGIN",
+        "Не удалось выполнить вход в эту учётную запись.",
+        403,
+      );
+    }
 
     return {
       token,

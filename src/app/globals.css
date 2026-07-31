@@ -61,23 +61,67 @@
   min-height: calc(100vh - 84px);
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  transition: grid-template-columns 180ms ease;
+}
+
+.admin-layout[data-sidebar-state="collapsed"] {
+  grid-template-columns: 84px minmax(0, 1fr);
 }
 
 .admin-sidebar {
+  min-width: 0;
   padding: 34px 22px;
   border-right: 1px solid var(--border-default);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--background-subtle);
 }
 
+.admin-sidebar-heading {
+  min-height: 40px;
+  margin: 0 4px 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .admin-sidebar-label {
-  margin: 0 14px 12px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: 0.72rem;
   font-weight: 720;
   letter-spacing: 0.1em;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-sidebar-toggle {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: var(--background-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.admin-sidebar-toggle:hover {
+  border-color: var(--action-primary);
+  color: var(--action-primary);
+}
+
+.admin-sidebar-toggle:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
 }
 
 .admin-sidebar nav {
@@ -92,6 +136,7 @@
   border-radius: 12px;
   display: flex;
   align-items: center;
+  gap: 11px;
   color: var(--text-secondary);
   font-weight: 650;
 }
@@ -101,13 +146,52 @@
   color: var(--text-primary);
 }
 
+.admin-nav-icon {
+  flex: 0 0 auto;
+}
+
+.admin-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-back-link {
   margin-top: auto;
   border: 1px solid var(--border-default);
   background: var(--background-surface);
 }
 
+.admin-layout[data-sidebar-state="collapsed"] .admin-sidebar {
+  padding-inline: 12px;
+}
+
+.admin-layout[data-sidebar-state="collapsed"]
+  .admin-sidebar-heading {
+  margin-inline: 0;
+  justify-content: center;
+}
+
+.admin-layout[data-sidebar-state="collapsed"]
+  .admin-sidebar-label,
+.admin-layout[data-sidebar-state="collapsed"]
+  .admin-nav-label {
+  display: none;
+}
+
+.admin-layout[data-sidebar-state="collapsed"]
+  .admin-sidebar
+  nav
+  a,
+.admin-layout[data-sidebar-state="collapsed"]
+  .admin-back-link {
+  padding-inline: 0;
+  justify-content: center;
+}
+
 .admin-main {
+  min-width: 0;
   width: min(100%, 1440px);
   padding: clamp(44px, 6vw, 82px);
 }
@@ -429,12 +513,15 @@
 }
 
 .admin-filter-actions {
+  min-width: 0;
+  grid-column: span 2;
   display: flex;
   align-items: flex-end;
   gap: 10px;
 }
 
 .admin-filter-actions .button {
+  min-width: 0;
   min-height: 46px;
 }
 
@@ -635,8 +722,21 @@
 .admin-student-summary-badges {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 10px 14px;
+}
+
+.admin-student-summary-state {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+
+.admin-student-summary-state > span {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
 .admin-student-summary-facts {
@@ -977,11 +1077,42 @@
   gap: 8px;
 }
 
+.admin-status-command {
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.admin-status-command .button {
+  max-width: 100%;
+  min-height: 44px;
+  white-space: normal;
+}
+
 .admin-command-success {
   margin: 0;
   color: var(--status-success);
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.admin-command-feedback {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.admin-command-feedback-danger {
+  color: var(--status-error);
+}
+
+.admin-command-feedback-success {
+  color: var(--status-success);
 }
 
 .button-danger {
@@ -1370,6 +1501,12 @@
   contain-intrinsic-size: auto 220px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .admin-layout {
+    transition: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .admin-dashboard-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1381,6 +1518,20 @@
 
   .admin-student-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .admin-student-summary-identity {
+    grid-template-columns: 56px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .admin-student-summary-badges {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .admin-student-summary-facts,
@@ -1444,12 +1595,14 @@
     overflow-x: auto;
   }
 
-  .admin-sidebar-label {
+  .admin-sidebar-heading {
     display: none;
   }
 
   .admin-sidebar nav {
-    display: block;
+    flex: 0 0 auto;
+    display: flex;
+    gap: 5px;
   }
 
   .admin-sidebar nav a,
@@ -1457,6 +1610,26 @@
     min-height: 42px;
     padding: 9px 14px;
     white-space: nowrap;
+  }
+
+  .admin-layout[data-sidebar-state="collapsed"]
+    .admin-nav-label {
+    display: inline;
+  }
+
+  .admin-layout[data-sidebar-state="collapsed"]
+    .admin-sidebar {
+    padding: 12px 20px;
+  }
+
+  .admin-layout[data-sidebar-state="collapsed"]
+    .admin-sidebar
+    nav
+    a,
+  .admin-layout[data-sidebar-state="collapsed"]
+    .admin-back-link {
+    padding: 9px 14px;
+    justify-content: flex-start;
   }
 
   .admin-back-link {
@@ -1517,6 +1690,17 @@
     width: 100%;
   }
 
+  .admin-status-command {
+    width: 100%;
+    margin-left: 0;
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .admin-status-command .button {
+    width: 100%;
+  }
+
   .admin-student-section-navigation {
     margin-inline: -4px;
   }
@@ -1531,6 +1715,7 @@
   }
 
   .admin-filter-actions {
+    grid-column: auto;
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
@@ -1550,7 +1735,8 @@
     width: 100%;
   }
 
-  .admin-command-success {
+  .admin-command-success,
+  .admin-command-feedback {
     text-align: left;
   }
 

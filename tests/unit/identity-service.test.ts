@@ -16,7 +16,7 @@ const user = {
 function runtime() {
   const repository = {
     upsertIdentity: vi.fn().mockResolvedValue(user),
-    createSession: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn().mockResolvedValue(true),
     findUserBySessionTokenSha256: vi.fn(),
     revokeSession: vi.fn(),
     createLoginChallenge: vi.fn(),
@@ -89,5 +89,18 @@ describe("IdentityService", () => {
     });
     expect(repository.upsertIdentity).not.toHaveBeenCalled();
     expect(repository.createSession).not.toHaveBeenCalled();
+  });
+
+  it("не возвращает токен, если пользователь заблокирован между проверкой и созданием сессии", async () => {
+    const { repository, service } = runtime();
+
+    repository.createSession.mockResolvedValue(false);
+
+    await expect(
+      service.authenticateIdentity(telegramInput),
+    ).rejects.toMatchObject({
+      code: "INVALID_LOGIN",
+      httpStatus: 403,
+    });
   });
 });

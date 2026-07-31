@@ -63,7 +63,11 @@ export default async function AdminStudentDetailPage({
         ← Все ученики
       </Link>
       <AdminStudentSummary
+        canChangeStatus={context.permissions.has(
+          "users.status.write",
+        )}
         displayTimeZone={displayTimeZone}
+        isCurrentActor={context.actor.id === student.id}
         student={student}
       />
       <AdminStudentSectionNavigation />

@@ -4,6 +4,7 @@ import { getDatabasePool } from "@/lib/database";
 import { getIdentityConfig } from "@/modules/identity/server/identity-config";
 import { PostgresIdentityAdministrationRepository } from "@/modules/identity/infrastructure/postgres-identity-administration-repository";
 import { AdministrationDashboardReadService } from "../application/administration-dashboard-read-service";
+import { ChangeUserStatusService } from "../application/change-user-status-service";
 import { RevokeUserSessionsService } from "../application/revoke-user-sessions-service";
 import { AdministrationService } from "../application/administration-service";
 import { AdministrationStudentReadService } from "../application/administration-student-read-service";
@@ -24,6 +25,7 @@ export function getAdministrationRuntime() {
     new PostgresAdministrationCommandRepository(
       pool,
       identityAdministrationRepository,
+      identityAdministrationRepository,
     );
   const dashboardReadRepository =
     new PostgresAdministrationDashboardReadRepository(pool);
@@ -32,6 +34,9 @@ export function getAdministrationRuntime() {
 
   return {
     config,
+    changeUserStatusService: new ChangeUserStatusService(
+      commandRepository,
+    ),
     commandRepository,
     dashboardReadRepository,
     dashboardReadService: new AdministrationDashboardReadService(
