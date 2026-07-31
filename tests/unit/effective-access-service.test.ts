@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EffectiveAccessRepository } from "@/modules/access/application/effective-access-repository";
 import { EffectiveAccessService } from "@/modules/access/application/effective-access-service";
+import { AccessConfigurationError } from "@/modules/access/domain/errors";
 import type { EffectiveAccessBasis } from "@/modules/access/domain/effective-access";
 
 const at = new Date("2040-08-30T12:00:00.000Z");
@@ -14,6 +15,7 @@ const basis: EffectiveAccessBasis = {
 function createService(input: {
   bases?: readonly EffectiveAccessBasis[];
   hasManualGrantHistory?: boolean;
+  hasManualGrantHistoryError?: unknown;
   listActiveBasesError?: unknown;
 } = {}) {
   const listActiveBases = vi.fn(async () => {
@@ -23,9 +25,13 @@ function createService(input: {
 
     return input.bases ?? [];
   });
-  const hasManualGrantHistory = vi.fn(
-    async () => input.hasManualGrantHistory ?? false,
-  );
+  const hasManualGrantHistory = vi.fn(async () => {
+    if ("hasManualGrantHistoryError" in input) {
+      throw input.hasManualGrantHistoryError;
+    }
+
+    return input.hasManualGrantHistory ?? false;
+  });
   const repository = {
     listActiveBases,
     hasManualGrantHistory,
@@ -126,9 +132,10 @@ describe("EffectiveAccessService", () => {
     );
   });
 
-  it("не маскирует rollout-запрет shadow как сбой наблюдаемости", async () => {
+  it("в shadow сохраняет legacy при инфраструктурном сбое rollout-guard", async () => {
+    const guardError = new Error("MANUAL_HISTORY_READ_FAILED");
     const { listActiveBases, service } = createService({
-      hasManualGrantHistory: true,
+      hasManualGrantHistoryError: guardError,
     });
     const reportEvaluationFailure = vi.fn();
 
@@ -143,9 +150,37 @@ describe("EffectiveAccessService", () => {
         },
         observation: { reportEvaluationFailure },
       }),
-    ).rejects.toThrowError(
+    ).resolves.toBe(true);
+    expect(listActiveBases).not.toHaveBeenCalled();
+    expect(reportEvaluationFailure).toHaveBeenCalledWith(
+      guardError,
+    );
+  });
+
+  it("не маскирует rollout-запрет shadow как сбой наблюдаемости", async () => {
+    const { listActiveBases, service } = createService({
+      hasManualGrantHistory: true,
+    });
+    const reportEvaluationFailure = vi.fn();
+
+    const result = service.resolveCourseAccess({
+      userId: "student-id",
+      at,
+      legacyCanReadCourses: true,
+      config: {
+        effectiveAccessMode: "shadow",
+        manualAccessGrantingEnabled: false,
+      },
+      observation: { reportEvaluationFailure },
+    });
+
+    await expect(result).rejects.toThrowError(
       "Режим legacy или shadow запрещён после появления ручного гранта.",
     );
+    await expect(result).rejects.toMatchObject({
+      name: "AccessConfigurationError",
+      code: "LEGACY_ACCESS_MODE_FORBIDDEN",
+    });
     expect(listActiveBases).not.toHaveBeenCalled();
     expect(reportEvaluationFailure).not.toHaveBeenCalled();
   });
@@ -235,6 +270,12 @@ describe("EffectiveAccessService", () => {
     ).rejects.toThrowError(
       "Выдача ручного доступа разрешена только в режиме v2.",
     );
+    await expect(
+      service.assertRolloutConfiguration({
+        effectiveAccessMode: "shadow",
+        manualAccessGrantingEnabled: true,
+      }),
+    ).rejects.toBeInstanceOf(AccessConfigurationError);
     expect(hasManualGrantHistory).not.toHaveBeenCalled();
 
     await expect(

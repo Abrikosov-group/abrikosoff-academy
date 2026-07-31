@@ -1,4 +1,5 @@
 import type { EffectiveAccessRepository } from "./effective-access-repository";
+import { AccessConfigurationError } from "../domain/errors";
 import {
   createEffectiveAccessDecision,
   resolveCanReadCourses,
@@ -62,21 +63,24 @@ export class EffectiveAccessService {
     config: AccessRolloutConfig;
     observation?: ShadowObservation;
   }) {
-    await this.assertRolloutConfiguration(input.config);
-
-    if (input.config.effectiveAccessMode === "legacy") {
-      return input.legacyCanReadCourses;
-    }
-
     let effectiveAccess;
 
     try {
+      await this.assertRolloutConfiguration(input.config);
+
+      if (input.config.effectiveAccessMode === "legacy") {
+        return input.legacyCanReadCourses;
+      }
+
       effectiveAccess = await this.getEffectiveAccess(
         input.userId,
         input.at,
       );
     } catch (error) {
-      if (input.config.effectiveAccessMode !== "shadow") {
+      if (
+        input.config.effectiveAccessMode !== "shadow" ||
+        error instanceof AccessConfigurationError
+      ) {
         throw error;
       }
 
@@ -101,7 +105,8 @@ export class EffectiveAccessService {
       config.manualAccessGrantingEnabled &&
       config.effectiveAccessMode !== "v2"
     ) {
-      throw new TypeError(
+      throw new AccessConfigurationError(
+        "MANUAL_ACCESS_GRANTING_REQUIRES_V2",
         "Выдача ручного доступа разрешена только в режиме v2.",
       );
     }
@@ -114,7 +119,8 @@ export class EffectiveAccessService {
     }
 
     if (await this.repository.hasManualGrantHistory()) {
-      throw new TypeError(
+      throw new AccessConfigurationError(
+        "LEGACY_ACCESS_MODE_FORBIDDEN",
         "Режим legacy или shadow запрещён после появления ручного гранта.",
       );
     }
