@@ -14,8 +14,16 @@
 production-выпуска. Жизненным циклом поезда управляет один доверенный workflow
 `train-lifecycle`, чьё определение загружается только из `main`. Только его
 отдельная служебная identity может писать в append-only реестр; candidate-build,
-staging и production workflows имеют доступ только на чтение. В операции `open`
-под блокировкой конкурентных запусков `train-lifecycle` выдаёт уникальный
+staging и production workflows имеют доступ только на чтение. Операции `open` и
+`abort` запускаются подтверждённым `workflow_dispatch` владельца самого
+`train-lifecycle`. Операции `close`, `fail` и `recover` не отправляются из
+production workflow через API: завершение точно заданного production workflow
+запускает `train-lifecycle` событием `workflow_run: completed` из определения на
+default branch. Обработчик повторно получает через API workflow ID, run ID, head
+SHA, manifest и deployment и отклоняет иной workflow, ref либо несовпадение.
+Production workflow сохраняет read-разрешения, а право записи остаётся у одной
+служебной identity. В операции `open` под блокировкой конкурентных запусков
+`train-lifecycle` выдаёт уникальный
 `train_id`, создаёт точную `source_branch` от актуального `main`, автоматически
 применяет к ней точные branch protection rules и только после этого добавляет
 неизменяемую запись `train_opened` с отдельным `opened_from_main_sha`. Этот SHA
@@ -361,12 +369,15 @@ Pull request можно перевести из чернового состоя�
 9. Production workflow не ищет образ по новому SHA, созданному слиянием или
    squash-слиянием в ветке `main`. Для этого явно задаются минимальные разрешения
    `contents: read`, `pull-requests: read`, `actions: read`, `deployments: read`
-   и `packages: read`. Через GitHub API workflow требует ровно один связанный
-   слитый PR с базовой веткой `main`; при `release_type=train` его исходная ветка
-   и `train_id` должны точно совпасть с единственной записью `train_opened` без
-   терминальной `train_closed`, `train_aborted` или `train_recovered`, release
-   manifest и успешным staging deployment. Workflow получает head SHA этого PR
-   и требует его точного совпадения с SHA deployment.
+   и `packages: read`. Он не отправляет `workflow_dispatch` и не получает
+   `actions: write`: его завершение независимо обрабатывает `train-lifecycle`
+   через `workflow_run: completed`. Через GitHub API production workflow требует
+   ровно один связанный слитый PR с базовой веткой `main`; при
+   `release_type=train` его исходная ветка и `train_id` должны точно совпасть с
+   единственной записью `train_opened` без терминальной `train_closed`,
+   `train_aborted` или `train_recovered`, release manifest и успешным staging
+   deployment. Workflow получает head SHA этого PR и требует его точного
+   совпадения с SHA deployment.
 10. По идентификатору запуска из staging deployment workflow получает release
     manifest. Он требует, чтобы запуск относился к доверенному workflow и его
     определению из `candidate_base_main_sha`, обработал точный SHA кандидата и
@@ -381,29 +392,33 @@ Pull request можно перевести из чернового состоя�
 11. В production без повторной сборки развёртываются те же образы по digest из
     проверенного release manifest.
 12. После выпуска выполняются health-check и smoke-тесты ключевых сценариев. При
-    отказе запускается документированный откат, после чего production workflow
-    независимо от результата отката вызывает операцию `fail` `train-lifecycle`.
-    Под блокировкой она проверяет начатый production deployment, отсутствие
-    терминальной записи и добавляет нетерминальную запись
+    отказе запускается документированный откат, а результат выпуска и отката
+    сохраняется до завершения production workflow. Событие
+    `workflow_run: completed` запускает `train-lifecycle`; после повторной
+    проверки точного run, manifest и deployment обработчик выбирает операцию
+    `fail`. Под блокировкой она проверяет начатый production deployment,
+    отсутствие терминальной записи и добавляет нетерминальную запись
     `train_release_failed` с SHA неудачного `main`, контрольной суммой manifest,
     идентификаторами выпуска и отката, стадией отказа и результатом отката.
-13. После успешного выпуска production workflow вызывает операцию `close`
-    `train-lifecycle`. Под блокировкой жизненного цикла она добавляет в
-    append-only реестр неизменяемую запись `train_closed` для этого `train_id` и
-    закрывает интеграционную ветку. Следующий поезд получает новый `train_id` и
-    создаётся от нового `main`.
+13. После успешного train-выпуска тот же обработчик `workflow_run` повторно
+    проверяет точный production run, manifest и deployment и выбирает операцию
+    `close`. Под блокировкой жизненного цикла она добавляет в append-only реестр
+    неизменяемую запись `train_closed` для этого `train_id` и закрывает
+    интеграционную ветку. Следующий поезд получает новый `train_id` и создаётся
+    от нового `main`.
 14. Запись `train_release_failed` оставляет поезд активным и не разрешает открыть
     следующий. После устранения причины допустим повторный выпуск того же
     manifest при неизменном `main`; его успех завершается обычной операцией
     `close`. Если требуется изменение кода или конфигурации, выпускается принятый
     recovery-hotfix, manifest которого содержит `recovery_for_train_id`. После
-    его успешного production-выпуска workflow вызывает операцию `recover`
-    `train-lifecycle`. Она проверяет связь manifest, успешного deployment,
-    точного текущего SHA `main` и активного `train_id`, добавляет терминальную
-    запись `train_recovered` с SHA восстановленного `main`, контрольной суммой
-    manifest, идентификатором deployment и набором digest и закрывает
-    интеграционную ветку. Неудачная или незавершённая попытка восстановления не
-    снимает блокировку.
+    его успешного production-выпуска обработчик `workflow_run` после повторной
+    проверки выбирает операцию `recover`. Она проверяет связь manifest,
+    успешного deployment, точного текущего SHA `main` и активного `train_id`,
+    добавляет терминальную запись `train_recovered` с SHA восстановленного
+    `main`, контрольной суммой manifest, идентификатором deployment и набором
+    digest и закрывает интеграционную ветку. Успешный обычный hotfix без
+    `recovery_for_train_id` не меняет состояние поезда. Неудачная или
+    незавершённая попытка восстановления не снимает блокировку.
 15. Если поезд решено не выпускать и production deployment для него ещё не
     начинался, владелец отменяет его отдельным подтверждённым запуском операции
     `abort` того же `train-lifecycle`. Под блокировкой жизненного цикла workflow
@@ -441,6 +456,11 @@ cherry-pick. Поэтому для интеграционной ветки не 
 релизного кандидата. Recovery-hotfix после `train_release_failed` в закрываемую
 ветку не синхронизируется: успешная операция `recover` завершает этот поезд, а
 следующий создаётся от уже восстановленного `main`.
+
+Изменения доверенных lifecycle-, build- и release-workflows из ветки кандидата
+не исполняются. Они проходят отдельный инфраструктурный PR и должны находиться в
+`main` до заморозки кандидата. Если такой PR изменяет `main` после заморозки,
+кандидат аннулируется и заново проходит сборку и staging-приёмку.
 
 ## 10. Разделение ответственности
 
