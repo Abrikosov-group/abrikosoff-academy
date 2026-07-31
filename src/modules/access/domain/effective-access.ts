@@ -102,11 +102,15 @@ export function resolveCanReadCourses(input: {
       input.legacyCanReadCourses !==
       input.effectiveAccess.canReadCourses
     ) {
-      input.reportMismatch?.(
-        input.legacyCanReadCourses
-          ? "EFFECTIVE_ACCESS_LEGACY_ONLY"
-          : "EFFECTIVE_ACCESS_V2_ONLY",
-      );
+      try {
+        input.reportMismatch?.(
+          input.legacyCanReadCourses
+            ? "EFFECTIVE_ACCESS_LEGACY_ONLY"
+            : "EFFECTIVE_ACCESS_V2_ONLY",
+        );
+      } catch {
+        // Shadow-диагностика не должна изменять применяемое legacy-решение.
+      }
     }
 
     return input.legacyCanReadCourses;

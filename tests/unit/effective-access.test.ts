@@ -96,6 +96,25 @@ describe("решение эффективного доступа", () => {
     );
   });
 
+  it("в shadow сохраняет прежнее решение при ошибке необязательного отчёта", () => {
+    const reportMismatch = vi.fn(() => {
+      throw new Error("Сбой отправки shadow-метрики");
+    });
+
+    expect(
+      resolveCanReadCourses({
+        mode: "shadow",
+        legacyCanReadCourses: true,
+        effectiveAccess: createEffectiveAccessDecision(at, []),
+        reportMismatch,
+      }),
+    ).toBe(true);
+    expect(reportMismatch).toHaveBeenCalledWith(
+      "EFFECTIVE_ACCESS_LEGACY_ONLY",
+    );
+    expect(reportMismatch).toHaveBeenCalledTimes(1);
+  });
+
   it("в аварийном режиме добавляет только ручное основание к прежнему paid", () => {
     expect(
       resolveCanReadCourses({
