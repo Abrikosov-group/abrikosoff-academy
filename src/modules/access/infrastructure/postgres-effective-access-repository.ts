@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { EffectiveAccessRepository } from "../application/effective-access-repository";
 import type { EffectiveAccessBasis } from "../domain/effective-access";
 
@@ -15,7 +15,7 @@ type ActiveBasisRow = {
 export class PostgresEffectiveAccessRepository
   implements EffectiveAccessRepository
 {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool | PoolClient) {}
 
   async listActiveBases(userId: string, at: Date) {
     const result = await this.pool.query<ActiveBasisRow>(

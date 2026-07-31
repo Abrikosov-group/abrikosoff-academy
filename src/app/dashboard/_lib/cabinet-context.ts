@@ -3,10 +3,8 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { getDatabasePool } from "@/lib/database";
-import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
-import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
-import { resolveStudentCourseAccess } from "@/modules/access/server/get-effective-access";
+import { readStudentCourseAccess } from "@/modules/access/server/read-student-course-access";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const getCabinetContext = cache(async () => {
@@ -16,31 +14,21 @@ export const getCabinetContext = cache(async () => {
     redirect("/login");
   }
 
-  const evaluatedAt = new Date();
-  const [subscription, canAccessAdministration] =
+  const [access, canAccessAdministration] =
     await Promise.all([
-      getSubscriptionSummary(getDatabasePool(), user.id),
+      readStudentCourseAccess(getDatabasePool(), user.id),
       getAdministrationRuntime().service.canEnterAdministration(
         user.id,
       ),
     ]);
-  const subscriptionActive = await resolveStudentCourseAccess({
-    userId: user.id,
-    at: evaluatedAt,
-    legacyCanReadCourses: hasCurrentSubscriptionAccess(
-      subscription,
-      evaluatedAt,
-    ),
-  });
 
   return {
     user,
     canAccessAdministration,
-    subscription,
-    subscriptionActive,
-    subscriptionEnded: Boolean(
-      subscription?.currentPeriodEnd && !subscriptionActive,
-    ),
+    subscription: access.subscription,
+    subscriptionActive: access.subscriptionActive,
+    subscriptionEnded: access.subscriptionEnded,
+    canReadCourses: access.canReadCourses,
   };
 });
 

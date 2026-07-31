@@ -20,6 +20,7 @@ export default async function DashboardPage() {
   const {
     user,
     subscription,
+    canReadCourses,
     subscriptionActive,
     subscriptionEnded,
   } = await getCabinetContext();
@@ -46,12 +47,12 @@ export default async function DashboardPage() {
             <Link
               className="button button-secondary"
               href={
-                subscriptionActive
+                canReadCourses
                   ? "/courses/healthy-habits/lessons/1"
                   : "/dashboard/subscription"
               }
             >
-              {subscriptionActive
+              {canReadCourses
                 ? "Открыть первый урок"
                 : "Оформить доступ"}
             </Link>
