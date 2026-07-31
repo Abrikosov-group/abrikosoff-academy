@@ -1,5 +1,6 @@
 import { CopyableIpAddress } from "@/components/academy/copyable-ip-address";
 import { AdminRevokeSessionsDialog } from "@/components/academy/admin-revoke-sessions-dialog";
+import { AdminUserStatusDialog } from "@/components/academy/admin-user-status-dialog";
 import {
   CopyButton,
   CopyableValue,
@@ -170,10 +171,14 @@ function latestCreatedSession(
 }
 
 export function AdminStudentSummary({
+  canChangeStatus,
   displayTimeZone,
+  isCurrentActor,
   student,
 }: {
+  canChangeStatus: boolean;
   displayTimeZone: string;
+  isCurrentActor: boolean;
   student: AdminStudentDetail;
 }) {
   const primaryTelegramMethod = selectPrimaryTelegramMethod(
@@ -302,6 +307,14 @@ export function AdminStudentSummary({
           value={student.id}
           variant="text"
         />
+        {canChangeStatus ? (
+          <AdminUserStatusDialog
+            isCurrentActor={isCurrentActor}
+            studentDisplayName={student.displayName}
+            studentId={student.id}
+            studentStatus={student.status}
+          />
+        ) : null}
       </div>
     </section>
   );

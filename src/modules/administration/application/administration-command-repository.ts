@@ -1,4 +1,6 @@
 import type { AdminRole } from "../domain/types";
+import type { UserStatusCommandAction } from "../domain/user-status-command";
+import type { IdentityUserStatus } from "@/modules/identity/domain/types";
 
 export type InternalAdminCommand = {
   principalKey: string;
@@ -48,18 +50,42 @@ export type RevokeUserSessionsExecution =
       resultStatus: 404;
     };
 
-export interface AdministrationCommandRepository {
+export type ChangeUserStatusCommand = InternalAdminCommand & {
+  statusAction: UserStatusCommandAction;
+  targetStatus: Extract<
+    IdentityUserStatus,
+    "active" | "blocked"
+  >;
+};
+
+export type ChangeUserStatusExecution =
+  | {
+      state: "succeeded";
+      previousStatus: Extract<
+        IdentityUserStatus,
+        "active" | "blocked"
+      >;
+      currentStatus: Extract<
+        IdentityUserStatus,
+        "active" | "blocked"
+      >;
+      statusChanged: boolean;
+      revokedSessionCount: number;
+      revokedActorSessionId?: string;
+    }
+  | {
+      state: "rejected";
+      errorCode:
+        | "USER_NOT_FOUND"
+        | "USER_STATUS_TRANSITION_INVALID"
+        | "LAST_AVAILABLE_OWNER";
+      resultStatus: 404 | 409;
+    };
+
+export interface AdministrationCommandLifecycleRepository {
   reserveInternalCommand(
     command: InternalAdminCommand,
   ): Promise<AdminCommandReservation>;
-
-  executeRevokeUserSessions(
-    command: InternalAdminCommand,
-    reservation: {
-      executionId: string;
-      attemptCount: number;
-    },
-  ): Promise<RevokeUserSessionsExecution>;
 
   recordFailedInternalCommand(
     command: InternalAdminCommand,
@@ -70,3 +96,30 @@ export interface AdministrationCommandRepository {
     errorCode: string,
   ): Promise<boolean>;
 }
+
+export interface AdministrationSessionCommandRepository
+  extends AdministrationCommandLifecycleRepository {
+  executeRevokeUserSessions(
+    command: InternalAdminCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<RevokeUserSessionsExecution>;
+}
+
+export interface AdministrationUserStatusCommandRepository
+  extends AdministrationCommandLifecycleRepository {
+  executeChangeUserStatus(
+    command: ChangeUserStatusCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<ChangeUserStatusExecution>;
+}
+
+export interface AdministrationCommandRepository
+  extends
+    AdministrationSessionCommandRepository,
+    AdministrationUserStatusCommandRepository {}

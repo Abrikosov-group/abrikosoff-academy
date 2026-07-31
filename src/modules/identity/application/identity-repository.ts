@@ -46,7 +46,7 @@ export interface IdentityRepository {
     authenticationMethodId: string;
     adminVerificationMethod?: SessionAdminVerificationMethod;
     clientContext?: SessionClientContext;
-  }): Promise<void>;
+  }): Promise<boolean>;
 
   findUserBySessionTokenSha256(
     tokenSha256: string,

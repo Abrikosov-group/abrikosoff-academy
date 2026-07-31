@@ -11,10 +11,12 @@ import type {
 import type {
   AuthenticatedUser,
   IdentityMethodType,
+  IdentityUserStatus,
   SessionAdminVerificationMethod,
   SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
+import { IdentityError } from "../domain/errors";
 import {
   getAvatarUrlFromMetadata,
   normalizeUserAvatarUrl,
@@ -29,6 +31,10 @@ type IdentityRow = {
   method_type: IdentityMethodType;
   identifier: string;
   metadata: Record<string, unknown>;
+};
+
+type IdentityLookupRow = IdentityRow & {
+  user_status: IdentityUserStatus;
 };
 
 function mapIdentityRow(row: IdentityRow): AuthenticatedUser {
@@ -51,12 +57,13 @@ async function findIdentity(
   methodType: IdentityMethodType,
   identifier: string,
 ) {
-  const result = await client.query<IdentityRow>(
+  const result = await client.query<IdentityLookupRow>(
     `
       SELECT
         users.id AS user_id,
         users.display_name,
         users.receipt_email,
+        users.status AS user_status,
         (
           SELECT telegram_methods.metadata ->> 'photoUrl'
           FROM identity_methods telegram_methods
@@ -76,13 +83,19 @@ async function findIdentity(
       JOIN identity_users users ON users.id = methods.user_id
       WHERE methods.method_type = $1
         AND methods.identifier = $2
-        AND users.status = 'active'
       LIMIT 1
     `,
     [methodType, identifier],
   );
 
-  return result.rows[0] ? mapIdentityRow(result.rows[0]) : null;
+  const row = result.rows[0];
+
+  return row
+    ? {
+        user: mapIdentityRow(row),
+        status: row.user_status,
+      }
+    : null;
 }
 
 async function recordPrivacyConsent(
@@ -119,7 +132,7 @@ async function updateExistingIdentity(
   existing: AuthenticatedUser,
   input: UpsertIdentityInput,
 ) {
-  await client.query(
+  const updatedUser = await client.query<{ id: string }>(
     `
       UPDATE identity_users
       SET
@@ -127,9 +140,20 @@ async function updateExistingIdentity(
         receipt_email = COALESCE($3, receipt_email),
         updated_at = now()
       WHERE id = $1
+        AND status = 'active'
+      RETURNING id
     `,
     [existing.id, input.displayName, input.receiptEmail ?? null],
   );
+
+  if (!updatedUser.rows[0]) {
+    throw new IdentityError(
+      "INVALID_LOGIN",
+      "Не удалось выполнить вход в эту учётную запись.",
+      403,
+    );
+  }
+
   await client.query(
     `
       UPDATE identity_methods
@@ -186,14 +210,22 @@ export class PostgresIdentityRepository implements IdentityRepository {
         input.identifier,
       );
 
-      if (existing) {
+      if (existing?.status === "active") {
         const updated = await updateExistingIdentity(
           client,
-          existing,
+          existing.user,
           input,
         );
         await client.query("COMMIT");
         return updated;
+      }
+
+      if (existing) {
+        throw new IdentityError(
+          "INVALID_LOGIN",
+          "Не удалось выполнить вход в эту учётную запись.",
+          403,
+        );
       }
 
       const userId = randomUUID();
@@ -262,9 +294,17 @@ export class PostgresIdentityRepository implements IdentityRepository {
             throw error;
           }
 
+          if (racedIdentity.status !== "active") {
+            throw new IdentityError(
+              "INVALID_LOGIN",
+              "Не удалось выполнить вход в эту учётную запись.",
+              403,
+            );
+          }
+
           const updated = await updateExistingIdentity(
             client,
-            racedIdentity,
+            racedIdentity.user,
             input,
           );
           await client.query("COMMIT");
@@ -296,15 +336,23 @@ export class PostgresIdentityRepository implements IdentityRepository {
 
     try {
       await client.query("BEGIN");
-      await client.query(
+      const user = await client.query<{
+        status: IdentityUserStatus;
+      }>(
         `
-          SELECT id
+          SELECT status
           FROM identity_users
           WHERE id = $1
           FOR UPDATE
         `,
         [input.userId],
       );
+
+      if (user.rows[0]?.status !== "active") {
+        await client.query("COMMIT");
+        return false;
+      }
+
       await client.query(
         `
           INSERT INTO identity_sessions (
@@ -376,6 +424,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
         ],
       );
       await client.query("COMMIT");
+      return true;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

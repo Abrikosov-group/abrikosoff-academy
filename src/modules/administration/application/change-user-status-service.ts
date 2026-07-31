@@ -1,34 +1,52 @@
 import { createHash } from "node:crypto";
 import { logAdministrationAuditWriteFailure } from "@/lib/safe-server-log";
-import type { AdministrationSessionCommandRepository } from "./administration-command-repository";
+import type {
+  AdministrationUserStatusCommandRepository,
+  ChangeUserStatusCommand,
+  ChangeUserStatusExecution,
+} from "./administration-command-repository";
 import { AdministrationError } from "../domain/errors";
 import {
-  canonicalRevokeUserSessionsReason,
-  isRevokeUserSessionsReasonCode,
-} from "../domain/revoke-user-sessions";
+  canonicalUserStatusReason,
+  isUserStatusCommandAction,
+  isUserStatusReasonCode,
+  targetStatusForUserStatusAction,
+} from "../domain/user-status-command";
+import type {
+  UserStatusCommandAction,
+  UserStatusReasonCode,
+} from "../domain/user-status-command";
 import type { AdminContext } from "../domain/types";
 
-export const revokeUserSessionsAction =
-  "identity.sessions.revoke_all";
-export const identityUserTargetType = "identity_user";
+export const blockUserAction = "identity.user.block";
+export const unblockUserAction = "identity.user.unblock";
+export const userStatusIdentityTargetType = "identity_user";
 
-type RevokeUserSessionsInput = {
+type ChangeUserStatusInput = {
   context: AdminContext;
   targetUserId: string;
+  statusAction: unknown;
   reason: unknown;
   idempotencyKey: unknown;
   userAgentFamily?: string;
 };
 
-export type RevokeUserSessionsResult = {
+export type ChangeUserStatusResult = {
+  status: "active" | "blocked";
+  statusChanged: boolean;
   revokedSessionCount: number;
-  activeSessionCount: 0;
   currentSessionRevoked: boolean;
 };
+
+type SuccessfulUserStatusResult = Extract<
+  ChangeUserStatusExecution,
+  { state: "succeeded" }
+>;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const idempotencyKeyPattern = /^[A-Za-z0-9_-]+$/u;
+
 function invalidRequest(message: string) {
   return new AdministrationError(
     "ADMIN_COMMAND_INVALID_REQUEST",
@@ -37,13 +55,19 @@ function invalidRequest(message: string) {
   );
 }
 
-export function normalizeRevokeUserSessionsInput(
-  input: RevokeUserSessionsInput,
-) {
-  if (!input.context.permissions.has("sessions.revoke")) {
+function commandAction(statusAction: UserStatusCommandAction) {
+  return statusAction === "block"
+    ? blockUserAction
+    : unblockUserAction;
+}
+
+export function normalizeChangeUserStatusInput(
+  input: ChangeUserStatusInput,
+): ChangeUserStatusCommand {
+  if (!input.context.permissions.has("users.status.write")) {
     throw new AdministrationError(
       "ADMIN_PERMISSION_DENIED",
-      "Недостаточно прав для отзыва сессий.",
+      "Недостаточно прав для изменения состояния ученика.",
       403,
     );
   }
@@ -56,16 +80,21 @@ export function normalizeRevokeUserSessionsInput(
     );
   }
 
+  if (!isUserStatusCommandAction(input.statusAction)) {
+    throw invalidRequest(
+      "Выберите допустимое действие с учётной записью.",
+    );
+  }
+
+  const statusAction = input.statusAction;
   const reasonCode =
     typeof input.reason === "string" ? input.reason.trim() : "";
 
-  if (!isRevokeUserSessionsReasonCode(reasonCode)) {
+  if (!isUserStatusReasonCode(statusAction, reasonCode)) {
     throw invalidRequest(
-      "Выберите допустимую обезличенную причину отзыва.",
+      "Выберите допустимую обезличенную причину изменения.",
     );
   }
-  const reason =
-    canonicalRevokeUserSessionsReason(reasonCode);
 
   const idempotencyKey =
     typeof input.idempotencyKey === "string"
@@ -82,32 +111,44 @@ export function normalizeRevokeUserSessionsInput(
     );
   }
 
+  const action = commandAction(statusAction);
+  const targetStatus =
+    targetStatusForUserStatusAction(statusAction);
+
   return {
     principalKey: `user:${input.context.actor.id}`,
     actorUserId: input.context.actor.id,
     actorSessionId: input.context.sessionId,
     actorRoles: input.context.roles,
-    action: revokeUserSessionsAction,
+    action,
     idempotencyKey,
     requestId: input.context.requestId,
     requestSha256: createHash("sha256")
       .update(
         JSON.stringify({
-          action: revokeUserSessionsAction,
+          action,
           reasonCode,
-          targetType: identityUserTargetType,
+          targetType: userStatusIdentityTargetType,
           targetUserId,
         }),
       )
       .digest("hex"),
-    targetType: identityUserTargetType,
+    targetType: userStatusIdentityTargetType,
     targetId: targetUserId,
-    reason,
+    reason: canonicalUserStatusReason(
+      statusAction,
+      reasonCode as UserStatusReasonCode,
+    ),
+    statusAction,
+    targetStatus,
     userAgentFamily: input.userAgentFamily,
   };
 }
 
-function resultFromStoredValue(value: unknown) {
+function resultFromStoredValue(
+  value: unknown,
+  expectedStatus: "active" | "blocked",
+): SuccessfulUserStatusResult {
   if (
     !value ||
     typeof value !== "object" ||
@@ -119,16 +160,25 @@ function resultFromStoredValue(value: unknown) {
   }
 
   const candidate = value as {
-    activeSessionCount?: unknown;
+    currentStatus?: unknown;
+    previousStatus?: unknown;
     revokedActorSessionId?: unknown;
     revokedSessionCount?: unknown;
+    statusChanged?: unknown;
   };
 
   if (
-    candidate.activeSessionCount !== 0 ||
+    candidate.currentStatus !== expectedStatus ||
+    (candidate.previousStatus !== "active" &&
+      candidate.previousStatus !== "blocked") ||
+    typeof candidate.statusChanged !== "boolean" ||
     typeof candidate.revokedSessionCount !== "number" ||
     !Number.isSafeInteger(candidate.revokedSessionCount) ||
     candidate.revokedSessionCount < 0 ||
+    candidate.statusChanged !==
+      (candidate.previousStatus !== candidate.currentStatus) ||
+    (expectedStatus === "active" &&
+      candidate.revokedActorSessionId !== undefined) ||
     (candidate.revokedActorSessionId !== undefined &&
       (typeof candidate.revokedActorSessionId !== "string" ||
         !uuidPattern.test(candidate.revokedActorSessionId)))
@@ -139,10 +189,17 @@ function resultFromStoredValue(value: unknown) {
   }
 
   return {
-    activeSessionCount: 0,
+    state: "succeeded",
+    currentStatus: candidate.currentStatus as
+      | "active"
+      | "blocked",
+    previousStatus: candidate.previousStatus as
+      | "active"
+      | "blocked",
     revokedActorSessionId:
       candidate.revokedActorSessionId as string | undefined,
     revokedSessionCount: candidate.revokedSessionCount,
+    statusChanged: candidate.statusChanged,
   };
 }
 
@@ -158,22 +215,51 @@ function terminalCommandError(
     );
   }
 
+  if (errorCode === "USER_STATUS_TRANSITION_INVALID") {
+    return new AdministrationError(
+      "USER_STATUS_TRANSITION_INVALID",
+      "Состояние этой учётной записи нельзя изменить.",
+      409,
+    );
+  }
+
+  if (errorCode === "LAST_AVAILABLE_OWNER") {
+    return new AdministrationError(
+      "LAST_AVAILABLE_OWNER",
+      "Последнего доступного владельца нельзя заблокировать.",
+      409,
+    );
+  }
+
   return new AdministrationError(
-    "REVOKE_USER_SESSIONS_FAILED",
-    "Не удалось отозвать сессии. Повторите попытку позже.",
+    "CHANGE_USER_STATUS_FAILED",
+    "Не удалось изменить состояние ученика. Повторите попытку позже.",
     resultStatus >= 500 ? resultStatus : 500,
   );
 }
 
-export class RevokeUserSessionsService {
+function resultForClient(
+  result: SuccessfulUserStatusResult,
+  actorSessionId: string,
+): ChangeUserStatusResult {
+  return {
+    status: result.currentStatus,
+    statusChanged: result.statusChanged,
+    revokedSessionCount: result.revokedSessionCount,
+    currentSessionRevoked:
+      result.revokedActorSessionId === actorSessionId,
+  };
+}
+
+export class ChangeUserStatusService {
   constructor(
-    private readonly repository: AdministrationSessionCommandRepository,
+    private readonly repository: AdministrationUserStatusCommandRepository,
   ) {}
 
   async execute(
-    input: RevokeUserSessionsInput,
-  ): Promise<RevokeUserSessionsResult> {
-    const command = normalizeRevokeUserSessionsInput(input);
+    input: ChangeUserStatusInput,
+  ): Promise<ChangeUserStatusResult> {
+    const command = normalizeChangeUserStatusInput(input);
     const reservation =
       await this.repository.reserveInternalCommand(command);
 
@@ -188,25 +274,20 @@ export class RevokeUserSessionsService {
     if (reservation.state === "in_progress") {
       throw new AdministrationError(
         "COMMAND_IN_PROGRESS",
-        "Отзыв сессий уже выполняется. Повторите попытку позже.",
+        "Изменение состояния уже выполняется. Повторите попытку позже.",
         409,
       );
     }
 
     if (reservation.state === "replayed") {
       if (reservation.status === "succeeded") {
-        const storedResult = resultFromStoredValue(
-          reservation.result,
+        return resultForClient(
+          resultFromStoredValue(
+            reservation.result,
+            command.targetStatus,
+          ),
+          input.context.sessionId,
         );
-
-        return {
-          activeSessionCount: 0,
-          currentSessionRevoked:
-            storedResult.revokedActorSessionId ===
-            input.context.sessionId,
-          revokedSessionCount:
-            storedResult.revokedSessionCount,
-        };
       }
 
       throw terminalCommandError(
@@ -217,7 +298,7 @@ export class RevokeUserSessionsService {
 
     try {
       const execution =
-        await this.repository.executeRevokeUserSessions(
+        await this.repository.executeChangeUserStatus(
           command,
           reservation,
         );
@@ -229,17 +310,16 @@ export class RevokeUserSessionsService {
         );
       }
 
-      return {
-        activeSessionCount: 0,
-        currentSessionRevoked:
-          execution.revokedActorSessionId ===
-          input.context.sessionId,
-        revokedSessionCount: execution.revokedSessionCount,
-      };
+      return resultForClient(
+        execution,
+        input.context.sessionId,
+      );
     } catch (error) {
       if (
         error instanceof AdministrationError &&
         (error.code === "USER_NOT_FOUND" ||
+          error.code === "USER_STATUS_TRANSITION_INVALID" ||
+          error.code === "LAST_AVAILABLE_OWNER" ||
           error.code === "COMMAND_ATTEMPT_SUPERSEDED")
       ) {
         throw error;
@@ -252,7 +332,7 @@ export class RevokeUserSessionsService {
           await this.repository.recordFailedInternalCommand(
             command,
             reservation,
-            "REVOKE_USER_SESSIONS_FAILED",
+            "CHANGE_USER_STATUS_FAILED",
           );
       } catch (persistenceError) {
         logAdministrationAuditWriteFailure(persistenceError);
@@ -274,8 +354,8 @@ export class RevokeUserSessionsService {
       }
 
       throw new AdministrationError(
-        "REVOKE_USER_SESSIONS_FAILED",
-        "Не удалось отозвать сессии. Повторите попытку позже.",
+        "CHANGE_USER_STATUS_FAILED",
+        "Не удалось изменить состояние ученика. Повторите попытку позже.",
         500,
         { cause: error },
       );

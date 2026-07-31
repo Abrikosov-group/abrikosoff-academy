@@ -3,9 +3,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { IdentityAdministrationRepository } from "@/modules/identity/application/identity-administration-repository";
+import type { IdentityUserStatusAdministrationRepository } from "@/modules/identity/application/identity-user-status-administration-repository";
 import type {
   AdminCommandReservation,
   AdministrationCommandRepository,
+  ChangeUserStatusCommand,
+  ChangeUserStatusExecution,
   InternalAdminCommand,
   RevokeUserSessionsExecution,
 } from "../application/administration-command-repository";
@@ -13,6 +16,7 @@ import { AdministrationError } from "../domain/errors";
 
 type CommandExecutionRow = {
   id: string;
+  action: string;
   request_sha256: string;
   status:
     | "in_progress"
@@ -35,6 +39,7 @@ async function selectCommandForUpdate(
     `
       SELECT
         id,
+        action,
         request_sha256,
         status,
         result_status,
@@ -45,13 +50,11 @@ async function selectCommandForUpdate(
         attempt_count
       FROM admin_command_executions
       WHERE principal_key = $1
-        AND action = $2
-        AND idempotency_key = $3
+        AND idempotency_key = $2
       FOR UPDATE
     `,
     [
       command.principalKey,
-      command.action,
       command.idempotencyKey,
     ],
   );
@@ -128,12 +131,83 @@ async function insertAuditEvent(
   );
 }
 
+async function rejectChangeUserStatusCommand(
+  client: PoolClient,
+  input: {
+    command: ChangeUserStatusCommand;
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    };
+    errorCode:
+      | "USER_NOT_FOUND"
+      | "USER_STATUS_TRANSITION_INVALID"
+      | "LAST_AVAILABLE_OWNER";
+    resultStatus: 404 | 409;
+    beforeState?: Record<string, unknown>;
+  },
+): Promise<ChangeUserStatusExecution> {
+  const rejected = await client.query<{
+    id: string;
+    completed_at: Date;
+  }>(
+    `
+      UPDATE admin_command_executions
+      SET
+        status = 'rejected',
+        result_status = $4,
+        result = '{"completed":false}'::jsonb,
+        error_code = $5,
+        lease_expires_at = NULL,
+        completed_at = statement_timestamp(),
+        updated_at = statement_timestamp()
+      WHERE id = $1
+        AND request_sha256 = $2
+        AND status = 'in_progress'
+        AND attempt_count = $3
+      RETURNING id, completed_at
+    `,
+    [
+      input.reservation.executionId,
+      input.command.requestSha256,
+      input.reservation.attemptCount,
+      input.resultStatus,
+      input.errorCode,
+    ],
+  );
+  const rejectedExecution = rejected.rows[0];
+
+  if (!rejectedExecution) {
+    throw new AdministrationError(
+      "COMMAND_ATTEMPT_SUPERSEDED",
+      "Операция уже продолжена другой попыткой.",
+      409,
+    );
+  }
+
+  await insertAuditEvent(client, {
+    command: input.command,
+    executionId: input.reservation.executionId,
+    outcome: "rejected",
+    errorCode: input.errorCode,
+    beforeState: input.beforeState,
+    createdAt: rejectedExecution.completed_at,
+  });
+
+  return {
+    state: "rejected",
+    errorCode: input.errorCode,
+    resultStatus: input.resultStatus,
+  };
+}
+
 export class PostgresAdministrationCommandRepository
   implements AdministrationCommandRepository
 {
   constructor(
     private readonly pool: Pool,
     private readonly identityRepository: IdentityAdministrationRepository,
+    private readonly identityUserStatusRepository: IdentityUserStatusAdministrationRepository,
   ) {}
 
   async reserveInternalCommand(
@@ -145,6 +219,19 @@ export class PostgresAdministrationCommandRepository
     try {
       await client.query("BEGIN");
       transactionOpen = true;
+      await client.query(
+        `
+          SELECT pg_advisory_xact_lock(
+            hashtextextended($1, 0)
+          )
+        `,
+        [
+          JSON.stringify([
+            command.principalKey,
+            command.idempotencyKey,
+          ]),
+        ],
+      );
       let existing = await selectCommandForUpdate(client, command);
 
       if (!existing.rows[0]) {
@@ -216,7 +303,9 @@ export class PostgresAdministrationCommandRepository
       const previous = existing.rows[0];
 
       if (
+        existing.rows.length > 1 ||
         !previous ||
+        previous.action !== command.action ||
         previous.request_sha256 !== command.requestSha256
       ) {
         await client.query("COMMIT");
@@ -491,6 +580,296 @@ export class PostgresAdministrationCommandRepository
           identityResult.revokedSessionCount,
         revokedActorSessionId:
           identityResult.revokedTrackedSessionId,
+      };
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async executeChangeUserStatus(
+    command: ChangeUserStatusCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<ChangeUserStatusExecution> {
+    const client = await this.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      const execution = await client.query<{ id: string }>(
+        `
+          SELECT id
+          FROM admin_command_executions
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+            AND lease_expires_at > statement_timestamp()
+          FOR UPDATE
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+        ],
+      );
+      const activeExecution = execution.rows[0];
+
+      if (!activeExecution) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      if (command.statusAction === "block") {
+        const invariantLock = await client.query<{ name: string }>(
+          `
+            SELECT name
+            FROM admin_invariant_locks
+            WHERE name = 'active_owner'
+            FOR UPDATE
+          `,
+        );
+
+        if (!invariantLock.rows[0]) {
+          throw new TypeError(
+            "Защитный lock доступного владельца не найден.",
+          );
+        }
+      }
+
+      const lockedUser =
+        await this.identityUserStatusRepository.lockUsersForStatusChange(
+          client,
+          {
+            actorUserId: command.actorUserId,
+            userId: command.targetId,
+          },
+        );
+
+      if (!lockedUser.userExists) {
+        const result = await rejectChangeUserStatusCommand(
+          client,
+          {
+            command,
+            reservation,
+            errorCode: "USER_NOT_FOUND",
+            resultStatus: 404,
+          },
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return result;
+      }
+
+      if (lockedUser.status === "deleted") {
+        const result = await rejectChangeUserStatusCommand(
+          client,
+          {
+            command,
+            reservation,
+            errorCode: "USER_STATUS_TRANSITION_INVALID",
+            resultStatus: 409,
+            beforeState: {
+              status: lockedUser.status,
+            },
+          },
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return result;
+      }
+
+      const previousStatus = lockedUser.status;
+
+      if (
+        command.statusAction === "block" &&
+        previousStatus === "active"
+      ) {
+        const ownerState = await client.query<{
+          target_is_owner: boolean;
+          available_owner_count: number;
+        }>(
+          `
+            SELECT
+              EXISTS (
+                SELECT 1
+                FROM admin_role_assignments target_role
+                WHERE target_role.user_id = $1
+                  AND target_role.role = 'owner'
+                  AND target_role.status = 'active'
+              ) AS target_is_owner,
+              (
+                SELECT count(
+                  DISTINCT available_role.user_id
+                )::integer
+                FROM admin_role_assignments available_role
+                JOIN identity_users available_user
+                  ON available_user.id =
+                    available_role.user_id
+                WHERE available_role.role = 'owner'
+                  AND available_role.status = 'active'
+                  AND available_user.status = 'active'
+              ) AS available_owner_count
+          `,
+          [command.targetId],
+        );
+        const state = ownerState.rows[0];
+
+        if (!state) {
+          throw new TypeError(
+            "Не удалось проверить число доступных владельцев.",
+          );
+        }
+
+        if (
+          state.target_is_owner &&
+          state.available_owner_count <= 1
+        ) {
+          const result = await rejectChangeUserStatusCommand(
+            client,
+            {
+              command,
+              reservation,
+              errorCode: "LAST_AVAILABLE_OWNER",
+              resultStatus: 409,
+              beforeState: {
+                status: previousStatus,
+              },
+            },
+          );
+          await client.query("COMMIT");
+          transactionOpen = false;
+          return result;
+        }
+      }
+
+      const mutationTime = await client.query<{
+        changed_at: Date;
+      }>(
+        `
+          SELECT statement_timestamp() AS changed_at
+        `,
+      );
+      const changedAt = mutationTime.rows[0]?.changed_at;
+
+      if (!changedAt) {
+        throw new TypeError(
+          "Не удалось зафиксировать время изменения состояния.",
+        );
+      }
+
+      const identityResult =
+        await this.identityUserStatusRepository.applyUserStatusChange(
+          client,
+          {
+            userId: command.targetId,
+            previousStatus,
+            targetStatus: command.targetStatus,
+            changedAt,
+            ...(command.statusAction === "block" &&
+            command.actorUserId === command.targetId
+              ? {
+                  trackedSessionId:
+                    command.actorSessionId,
+                }
+              : {}),
+          },
+        );
+      const result = {
+        previousStatus,
+        currentStatus: command.targetStatus,
+        statusChanged: identityResult.statusChanged,
+        revokedSessionCount:
+          identityResult.revokedSessionCount,
+        ...(identityResult.revokedTrackedSessionId
+          ? {
+              revokedActorSessionId:
+                identityResult.revokedTrackedSessionId,
+            }
+          : {}),
+      };
+      const completed = await client.query<{
+        id: string;
+        completed_at: Date;
+      }>(
+        `
+          UPDATE admin_command_executions
+          SET
+            status = 'succeeded',
+            result_status = 200,
+            result = $4::jsonb,
+            error_code = NULL,
+            lease_expires_at = NULL,
+            completed_at = statement_timestamp(),
+            updated_at = statement_timestamp()
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+          RETURNING id, completed_at
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+          JSON.stringify(result),
+        ],
+      );
+
+      if (!completed.rows[0]) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      await insertAuditEvent(client, {
+        command,
+        executionId: reservation.executionId,
+        outcome: "succeeded",
+        beforeState: {
+          status: previousStatus,
+          ...(command.statusAction === "block" ||
+          previousStatus === "blocked"
+            ? {
+                activeSessionCount:
+                  identityResult.revokedSessionCount,
+              }
+            : {}),
+        },
+        afterState: {
+          status: command.targetStatus,
+          statusChanged: identityResult.statusChanged,
+          ...(command.statusAction === "block" ||
+          previousStatus === "blocked"
+            ? {
+                activeSessionCount: 0,
+                revokedSessionCount:
+                  identityResult.revokedSessionCount,
+              }
+            : {}),
+        },
+        createdAt: completed.rows[0].completed_at,
+      });
+      await client.query("COMMIT");
+      transactionOpen = false;
+
+      return {
+        state: "succeeded",
+        ...result,
       };
     } catch (error) {
       if (transactionOpen) {

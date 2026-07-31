@@ -1,5 +1,10 @@
 export type IdentityMethodType = "telegram" | "email" | "phone";
 
+export type IdentityUserStatus =
+  | "active"
+  | "blocked"
+  | "deleted";
+
 export type SessionAuthenticationMethod =
   | "telegram_oidc"
   | "email_magic_link"
