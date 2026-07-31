@@ -87,7 +87,9 @@ export function resolveCanReadCourses(input: {
   mode: EffectiveAccessMode;
   legacyCanReadCourses: boolean;
   effectiveAccess: EffectiveAccessDecision;
-  reportMismatch?: (code: EffectiveAccessMismatchCode) => void;
+  reportMismatch?: (
+    code: EffectiveAccessMismatchCode,
+  ) => void | Promise<void>;
 }) {
   const manualAccess = input.effectiveAccess.activeBases.some(
     (basis) => basis.source === "manual",
@@ -103,11 +105,15 @@ export function resolveCanReadCourses(input: {
       input.effectiveAccess.canReadCourses
     ) {
       try {
-        input.reportMismatch?.(
+        const report = input.reportMismatch?.(
           input.legacyCanReadCourses
             ? "EFFECTIVE_ACCESS_LEGACY_ONLY"
             : "EFFECTIVE_ACCESS_V2_ONLY",
         );
+        if (report) {
+          // Shadow-диагностика не должна создавать необработанное отклонение.
+          void report.catch(() => undefined);
+        }
       } catch {
         // Shadow-диагностика не должна изменять применяемое legacy-решение.
       }

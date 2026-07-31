@@ -115,6 +115,28 @@ describe("решение эффективного доступа", () => {
     expect(reportMismatch).toHaveBeenCalledTimes(1);
   });
 
+  it("в shadow безопасно завершает асинхронную ошибку необязательного отчёта", async () => {
+    let rejectReport: (reason: Error) => void = () => undefined;
+    const reportPromise = new Promise<void>((_resolve, reject) => {
+      rejectReport = reject;
+    });
+    const catchSpy = vi.spyOn(reportPromise, "catch");
+    const reportMismatch = vi.fn(() => reportPromise);
+
+    expect(
+      resolveCanReadCourses({
+        mode: "shadow",
+        legacyCanReadCourses: true,
+        effectiveAccess: createEffectiveAccessDecision(at, []),
+        reportMismatch,
+      }),
+    ).toBe(true);
+    expect(catchSpy).toHaveBeenCalledTimes(1);
+    rejectReport(new Error("Асинхронный сбой shadow-метрики"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportMismatch).toHaveBeenCalledTimes(1);
+  });
+
   it("в аварийном режиме добавляет только ручное основание к прежнему paid", () => {
     expect(
       resolveCanReadCourses({
