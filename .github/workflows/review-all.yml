@@ -1,0 +1,68 @@
+name: Тройное ИИ-ревью
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-all-${{ github.repository }}-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Запустить независимые ревью
+    if: >-
+      github.run_attempt == 1 &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/review-all' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ secrets.REVIEW_DISPATCH_TOKEN }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Проверить токен диспетчера
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Не настроен секрет REVIEW_DISPATCH_TOKEN"
+            exit 1
+          fi
+          gh api user --jq '"Диспетчер: " + .login'
+
+      - name: Запустить Codex, Claude и Gemini
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body='@codex review'
+          gh api --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body='@claude[agent]+claude-opus-4.8 review'
+          gh api --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body='/gemini review'
+
+      - name: Подтвердить запуск
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --raw-field content='rocket'
+          echo 'Отправлены запросы Codex, Claude и Gemini.' >> "$GITHUB_STEP_SUMMARY"
+
