@@ -467,6 +467,66 @@ test("владелец ищет ученика, отзывает сессии и
       "page",
     );
 
+    await page.setViewportSize({ width: 1366, height: 900 });
+    const filterPanel = page.getByRole("form", {
+      name: "Поиск и фильтры учеников",
+    });
+    const resetFilters = page.getByRole("link", {
+      name: "Сбросить",
+      exact: true,
+    });
+    const filterPanelBox = await filterPanel.boundingBox();
+    const resetFiltersBox = await resetFilters.boundingBox();
+
+    expect(filterPanelBox).not.toBeNull();
+    expect(resetFiltersBox).not.toBeNull();
+    expect(
+      (resetFiltersBox?.x ?? 0) +
+        (resetFiltersBox?.width ?? 0),
+    ).toBeLessThanOrEqual(
+      (filterPanelBox?.x ?? 0) +
+        (filterPanelBox?.width ?? 0) +
+        1,
+    );
+
+    const adminLayout = page.locator(".admin-layout");
+    const expandedMainBox = await page
+      .locator(".admin-main")
+      .boundingBox();
+    const collapseSidebar = page.getByRole("button", {
+      name: "Свернуть боковое меню",
+      exact: true,
+    });
+
+    expect(expandedMainBox).not.toBeNull();
+    await expect(collapseSidebar).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await collapseSidebar.click();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Развернуть боковое меню",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+    await expect(studentsNavigation).toHaveAttribute(
+      "title",
+      "Ученики",
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await page.locator(".admin-main").boundingBox()
+          )?.width ?? 0,
+      )
+      .toBeGreaterThan((expandedMainBox?.width ?? 0) + 150);
+
     await page
       .getByLabel("Найти ученика")
       .fill("Ученик E2E");
@@ -478,6 +538,10 @@ test("владелец ищет ученика, отзывает сессии и
         name: /Целевой Ученик E2E/,
       }),
     ).toBeVisible();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
 
     await page
       .getByLabel("Найти ученика")
@@ -526,10 +590,49 @@ test("владелец ищет ученика, отзывает сессии и
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("Активен", {
+      page.getByText("Статус учётной записи", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Активна", {
         exact: true,
       }).first(),
     ).toBeVisible();
+    await expect(
+      page.getByText("Доступ к обучению", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 900, height: 900 });
+    const studentSummaryBox = await page
+      .locator(".admin-student-summary")
+      .boundingBox();
+    const studentNameBox = await page
+      .getByRole("heading", {
+        level: 1,
+        name: "Целевой Ученик E2E",
+        exact: true,
+      })
+      .boundingBox();
+    const statusCommandBox = await page
+      .getByRole("button", {
+        name: "Заблокировать учётную запись",
+        exact: true,
+      })
+      .boundingBox();
+
+    expect(studentSummaryBox).not.toBeNull();
+    expect(studentNameBox?.width).toBeGreaterThan(300);
+    expect(statusCommandBox).not.toBeNull();
+    expect(
+      (statusCommandBox?.x ?? 0) +
+        (statusCommandBox?.width ?? 0),
+    ).toBeLessThanOrEqual(
+      (studentSummaryBox?.x ?? 0) +
+        (studentSummaryBox?.width ?? 0) +
+        1,
+    );
     await expect(
       page.getByText("target-receipt@example.test", {
         exact: true,
@@ -740,6 +843,17 @@ test("владелец ищет ученика, отзывает сессии и
         name: "Целевой Ученик E2E",
         exact: true,
       }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Развернуть боковое меню",
+        exact: true,
+      }),
+    ).toBeHidden();
+    await expect(
+      page
+        .locator(".admin-nav-label")
+        .filter({ hasText: /^Ученики$/u }),
     ).toBeVisible();
     const studentDetailHorizontalOverflow = await page.evaluate(
       () =>
@@ -1373,6 +1487,20 @@ test("владелец ищет ученика, отзывает сессии и
         { exact: true },
       ),
     ).toBeVisible();
+    const blockedFeedback = page.locator(
+      ".admin-command-feedback-danger",
+    );
+
+    await expect(blockedFeedback).toHaveText(
+      "Учётная запись заблокирована. Отозвано активных сессий: 0.",
+    );
+    await expect
+      .poll(() =>
+        blockedFeedback.evaluate(
+          (element) => getComputedStyle(element).color,
+        ),
+      )
+      .toBe("rgb(180, 35, 24)");
     await expect(
       page.getByRole("button", {
         name: "Разблокировать учётную запись",
@@ -1380,7 +1508,7 @@ test("владелец ищет ученика, отзывает сессии и
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("Заблокирован", {
+      page.getByText("Заблокирована", {
         exact: true,
       }).first(),
     ).toBeVisible();
@@ -1456,6 +1584,11 @@ test("владелец ищет ученика, отзывает сессии и
         exact: true,
       }),
     ).toBeVisible();
+    await expect(
+      page.locator(".admin-command-feedback-success"),
+    ).toHaveText(
+      "Учётная запись разблокирована. Для входа потребуется новая сессия.",
+    );
 
     const unblockedDatabaseState = await database.query<{
       active_session_count: number;

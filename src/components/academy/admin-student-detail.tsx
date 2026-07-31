@@ -8,7 +8,6 @@ import {
 import { UserAvatar } from "@/components/academy/user-avatar";
 import {
   adminAccessStateLabel,
-  adminStudentStatusLabel,
   formatAdminCompactDateTime,
   formatAdminDate,
   formatAdminDateTime,
@@ -62,6 +61,14 @@ function statusBadgeClass(status: AdminStudentStatus) {
     : status === "blocked"
       ? "badge-error"
       : "badge-neutral";
+}
+
+function accountStatusLabel(status: AdminStudentStatus) {
+  return {
+    active: "Активна",
+    blocked: "Заблокирована",
+    deleted: "Удалена",
+  }[status];
 }
 
 function accessBadgeClass(state: AdminStudentAccessState) {
@@ -213,20 +220,28 @@ export function AdminStudentSummary({
           aria-label="Состояние ученика"
           className="admin-student-summary-badges"
         >
-          <span
-            className={`badge ${statusBadgeClass(student.status)}`}
-          >
-            {adminStudentStatusLabel(student.status)}
-          </span>
-          <span
-            className={`badge ${accessBadgeClass(
-              student.effectiveAccess.state,
-            )}`}
-          >
-            {adminAccessStateLabel(
-              student.effectiveAccess.state,
-            )}
-          </span>
+          <div className="admin-student-summary-state">
+            <span>Статус учётной записи</span>
+            <strong
+              className={`badge ${statusBadgeClass(
+                student.status,
+              )}`}
+            >
+              {accountStatusLabel(student.status)}
+            </strong>
+          </div>
+          <div className="admin-student-summary-state">
+            <span>Доступ к обучению</span>
+            <strong
+              className={`badge ${accessBadgeClass(
+                student.effectiveAccess.state,
+              )}`}
+            >
+              {adminAccessStateLabel(
+                student.effectiveAccess.state,
+              )}
+            </strong>
+          </div>
         </div>
       </div>
 

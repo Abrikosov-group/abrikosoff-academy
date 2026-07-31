@@ -42,6 +42,11 @@ type CommandPayload = {
   statusChanged?: unknown;
 };
 
+type CommandFeedback = {
+  message: string;
+  tone: "danger" | "success";
+};
+
 export function AdminUserStatusDialog({
   isCurrentActor,
   studentDisplayName,
@@ -62,7 +67,8 @@ export function AdminUserStatusDialog({
   const [processing, setProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [requestId, setRequestId] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [feedback, setFeedback] =
+    useState<CommandFeedback | null>(null);
 
   if (studentStatus === "deleted") {
     return null;
@@ -84,6 +90,7 @@ export function AdminUserStatusDialog({
     setReasonError("");
     setErrorMessage("");
     setRequestId("");
+    setFeedback(null);
     dialogRef.current?.showModal();
   }
 
@@ -225,17 +232,19 @@ export function AdminUserStatusDialog({
       }
 
       if (blocking) {
-        setSuccessMessage(
-          payload.statusChanged
+        setFeedback({
+          message: payload.statusChanged
             ? `Учётная запись заблокирована. Отозвано активных сессий: ${payload.revokedSessionCount}.`
             : "Учётная запись уже заблокирована. Активные сессии отозваны.",
-        );
+          tone: "danger",
+        });
       } else {
-        setSuccessMessage(
-          payload.statusChanged
+        setFeedback({
+          message: payload.statusChanged
             ? "Учётная запись разблокирована. Для входа потребуется новая сессия."
             : "Учётная запись уже активна.",
-        );
+          tone: "success",
+        });
       }
 
       setReason("");
@@ -265,12 +274,12 @@ export function AdminUserStatusDialog({
           ? "Заблокировать учётную запись"
           : "Разблокировать учётную запись"}
       </button>
-      {successMessage ? (
+      {feedback ? (
         <p
-          className="admin-command-success"
+          className={`admin-command-feedback admin-command-feedback-${feedback.tone}`}
           role="status"
         >
-          {successMessage}
+          {feedback.message}
         </p>
       ) : null}
       <dialog

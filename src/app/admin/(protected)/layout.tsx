@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { AccountMenu } from "@/components/academy/account-menu";
-import { AdminNavigation } from "@/components/academy/admin-navigation";
+import { AdminWorkspace } from "@/components/academy/admin-workspace";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 
@@ -11,6 +12,9 @@ export default async function ProtectedAdminLayout({
   children: React.ReactNode;
 }>) {
   const context = await requireAdminContext("admin.enter");
+  const sidebarInitiallyCollapsed =
+    (await cookies()).get("academy_admin_sidebar")?.value ===
+    "collapsed";
 
   return (
     <main className="admin-page">
@@ -37,21 +41,15 @@ export default async function ProtectedAdminLayout({
           />
         </div>
       </header>
-      <div className="admin-layout">
-        <aside className="admin-sidebar">
-          <p className="admin-sidebar-label">Панель управления</p>
-          <AdminNavigation
-            showStudents={
-              context.permissions.has("users.read") &&
-              context.permissions.has("access.read")
-            }
-          />
-          <Link className="admin-back-link" href="/dashboard">
-            Личный кабинет
-          </Link>
-        </aside>
-        <div className="admin-main">{children}</div>
-      </div>
+      <AdminWorkspace
+        initiallyCollapsed={sidebarInitiallyCollapsed}
+        showStudents={
+          context.permissions.has("users.read") &&
+          context.permissions.has("access.read")
+        }
+      >
+        {children}
+      </AdminWorkspace>
     </main>
   );
 }
