@@ -389,8 +389,8 @@ test("защищённый /admin перечитывает роль на каж�
           now(),
           'telegram_oidc',
           $4,
-          now(),
-          'telegram_oidc',
+          NULL,
+          NULL,
           'Google Chrome'
         )
       `,
@@ -425,6 +425,30 @@ test("защищённый /admin перечитывает роль на каж�
     );
     await database.query("COMMIT");
 
+    const anonymousAdminStart = await page.request.post(
+      "/api/auth/telegram/start",
+      {
+        data: {
+          privacyAccepted: true,
+          redirectPath: "/admin",
+        },
+      },
+    );
+    const anonymousAdminStartPayload =
+      await anonymousAdminStart.json();
+
+    expect(anonymousAdminStart.status()).toBe(200);
+    expect(anonymousAdminStartPayload).toEqual({
+      authUrl: expect.any(String),
+    });
+    const administrativeState = new URL(
+      anonymousAdminStartPayload.authUrl,
+    ).searchParams.get("state");
+
+    expect(administrativeState).toMatch(
+      /^[A-Za-z0-9_-]{43}$/,
+    );
+
     await context.addCookies([
       {
         name: "academy_session",
@@ -434,6 +458,78 @@ test("защищённый /admin перечитывает роль на каж�
         sameSite: "Lax",
       },
     ]);
+
+    const racedAdminCallback = await page.request.get(
+      `/api/auth/telegram/callback?state=${encodeURIComponent(
+        administrativeState!,
+      )}`,
+      {
+        maxRedirects: 0,
+      },
+    );
+
+    expect(racedAdminCallback.status()).toBe(307);
+    expect(racedAdminCallback.headers().location).toBe(
+      `${baseUrl}/admin/verify?next=%2Fadmin`,
+    );
+    const clearedAdministrativeState =
+      racedAdminCallback.headers()["set-cookie"] ?? "";
+
+    expect(clearedAdministrativeState).toContain(
+      "academy_telegram_state=;",
+    );
+    expect(clearedAdministrativeState).toContain("Max-Age=0");
+
+    const existingSessionAdminStart = await page.request.post(
+      "/api/auth/telegram/start",
+      {
+        data: {
+          privacyAccepted: true,
+          redirectPath: "/admin",
+        },
+      },
+    );
+
+    expect(existingSessionAdminStart.status()).toBe(200);
+    await expect(
+      existingSessionAdminStart.json(),
+    ).resolves.toEqual({
+      nextUrl: "/admin/verify?next=%2Fadmin",
+    });
+    expect(
+      existingSessionAdminStart.headers()["set-cookie"] ?? "",
+    ).not.toContain("academy_telegram_state=");
+
+    const ordinarySession = await database.query<{
+      adminVerifiedAt: Date | null;
+      revokedAt: Date | null;
+    }>(
+      `
+        SELECT
+          admin_verified_at AS "adminVerifiedAt",
+          revoked_at AS "revokedAt"
+        FROM identity_sessions
+        WHERE id = $1
+      `,
+      [sessionId],
+    );
+
+    expect(ordinarySession.rows[0]).toEqual({
+      adminVerifiedAt: null,
+      revokedAt: null,
+    });
+
+    await database.query(
+      `
+        UPDATE identity_sessions
+        SET
+          admin_verified_at = now(),
+          admin_verification_method = 'telegram_oidc'
+        WHERE id = $1
+      `,
+      [sessionId],
+    );
+
     await page.route(avatarUrl, async (route) => {
       await route.fulfill({
         body: `

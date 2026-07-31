@@ -2,6 +2,7 @@ import type {
   AuthenticatedUser,
   IdentityMethodType,
   PrivacyConsent,
+  SessionAdminVerificationMethod,
   SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
@@ -43,6 +44,7 @@ export interface IdentityRepository {
     authenticatedAt: Date;
     authenticationMethod: SessionAuthenticationMethod;
     authenticationMethodId: string;
+    adminVerificationMethod?: SessionAdminVerificationMethod;
     clientContext?: SessionClientContext;
   }): Promise<void>;
 

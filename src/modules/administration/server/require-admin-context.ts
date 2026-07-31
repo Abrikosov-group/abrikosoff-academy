@@ -8,7 +8,7 @@ import {
 } from "next/navigation";
 import { logSecurityEvent } from "@/lib/safe-server-log";
 import { loginPathFor } from "@/modules/identity/domain/login-redirect";
-import { normalizeAdminRedirectPath } from "../domain/admin-redirect";
+import { adminVerificationPathFor } from "../domain/admin-redirect";
 import { getCurrentSessionTokenSha256 } from "@/modules/identity/server/session";
 import { AdministrationError } from "../domain/errors";
 import type {
@@ -18,12 +18,6 @@ import type {
 } from "../domain/types";
 import { getAdministrationConfig } from "./administration-config";
 import { getAdministrationRuntime } from "./get-administration-runtime";
-
-export function adminVerificationPathFor(nextPath: string) {
-  return `/admin/verify?next=${encodeURIComponent(
-    normalizeAdminRedirectPath(nextPath),
-  )}`;
-}
 
 export async function requireAdminContext(
   permission: AdminPermission,

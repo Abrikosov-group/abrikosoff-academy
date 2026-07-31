@@ -153,7 +153,9 @@ Telegram-egress разрешает точный `api.telegram.org:443`, а OIDC 
 [ADR-0005](decisions/0005-admin-authorization-and-audit.md). Ограниченный
 предзапусковой просмотр production-фундамента владельцем отделён от
 операционного режима в
-[ADR-0007](decisions/0007-production-owner-preview.md).
+[ADR-0007](decisions/0007-production-owner-preview.md), а единый свежий вход
+без повторного экрана того же OIDC определён в
+[ADR-0008](decisions/0008-single-fresh-admin-login.md).
 
 ## Неприкосновенные правила
 

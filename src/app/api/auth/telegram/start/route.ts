@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  adminVerificationPathFor,
+  resolveAdminRedirectPath,
+} from "@/modules/administration/domain/admin-redirect";
 import { IdentityError } from "@/modules/identity/domain/errors";
 import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redirect";
 import {
@@ -11,6 +15,7 @@ import {
   setTelegramLoginStateCookie,
 } from "@/modules/identity/server/telegram-login-state";
 import { buildTelegramAuthorizationUrl } from "@/modules/identity/server/telegram-oidc";
+import { getCurrentUser } from "@/modules/identity/server/session";
 import {
   readJsonBodyWithLimit,
   RequestBodyTooLargeError,
@@ -66,12 +71,40 @@ export async function POST(request: Request) {
         400,
       );
     }
-    const redirectPath = normalizeLoginRedirectPath(body.redirectPath);
+    const requestedRedirectPath = normalizeLoginRedirectPath(
+      body.redirectPath,
+    );
+    const adminRedirectPath = resolveAdminRedirectPath(
+      requestedRedirectPath,
+    );
+    const administrativeAuthentication =
+      adminRedirectPath !== null;
+    const redirectPath =
+      adminRedirectPath ?? requestedRedirectPath;
+
+    if (adminRedirectPath && (await getCurrentUser())) {
+      return NextResponse.json(
+        {
+          nextUrl: adminVerificationPathFor(
+            adminRedirectPath,
+          ),
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
 
     const state = createTelegramLoginState(
       redirectPath,
       privacyDocumentVersion,
       config.telegram.clientSecret,
+      new Date(),
+      administrativeAuthentication
+        ? { purpose: "admin_login" }
+        : { purpose: "login" },
     );
     const authUrl = buildTelegramAuthorizationUrl(config.telegram, state);
     const response = NextResponse.json(

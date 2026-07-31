@@ -154,8 +154,14 @@ export function LoginPanel({
       });
       const payload = (await response.json()) as {
         authUrl?: unknown;
+        nextUrl?: unknown;
         error?: { message?: unknown };
       };
+
+      if (response.ok && typeof payload.nextUrl === "string") {
+        window.location.assign(payload.nextUrl);
+        return;
+      }
 
       if (!response.ok || typeof payload.authUrl !== "string") {
         throw new Error(

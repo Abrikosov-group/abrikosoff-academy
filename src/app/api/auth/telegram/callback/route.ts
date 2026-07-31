@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { adminVerificationPathFor } from "@/modules/administration/domain/admin-redirect";
 import { AdministrationError } from "@/modules/administration/domain/errors";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
 import { IdentityError } from "@/modules/identity/domain/errors";
@@ -11,6 +12,7 @@ import { getIdentityRuntime } from "@/modules/identity/server/get-identity-servi
 import { collectSessionClientContext } from "@/modules/identity/server/session-client-context";
 import {
   getCurrentSessionTokenSha256,
+  getCurrentUser,
   setSessionCookie,
 } from "@/modules/identity/server/session";
 import {
@@ -37,7 +39,9 @@ export async function GET(request: NextRequest) {
     config.trustedProxy,
   );
   const userAgentFamily = clientContext.userAgentFamily;
-  let callbackPurpose: "login" | "admin" = "login";
+  let callbackPurpose: "login" | "admin_login" | "admin" =
+    "login";
+  let callbackRedirectPath = "/dashboard";
 
   try {
     if (!config.telegram) {
@@ -56,6 +60,7 @@ export async function GET(request: NextRequest) {
       config.telegram.clientSecret,
     );
     callbackPurpose = loginState.purpose;
+    callbackRedirectPath = loginState.redirectPath;
 
     if (url.searchParams.has("error")) {
       throw new IdentityError(
@@ -63,6 +68,29 @@ export async function GET(request: NextRequest) {
         "Вход через Telegram был отменён.",
         400,
       );
+    }
+
+    if (
+      loginState.purpose === "admin_login" &&
+      (await getCurrentUser())
+    ) {
+      const response = NextResponse.redirect(
+        new URL(
+          adminVerificationPathFor(loginState.redirectPath),
+          publicOrigin,
+        ),
+      );
+
+      clearTelegramLoginStateCookie(response);
+      logSecurityEvent(
+        "administration.initial_login_rejected",
+        {
+          code: "ACTIVE_SESSION_REQUIRES_STEP_UP",
+          requestId,
+          userAgentFamily,
+        },
+      );
+      return response;
     }
 
     const identity = await exchangeTelegramAuthorizationCode(
@@ -87,6 +115,8 @@ export async function GET(request: NextRequest) {
             })
         : await getIdentityRuntime().service.authenticateIdentity({
             authenticationMethod: "telegram_oidc",
+            administrativeAuthentication:
+              loginState.purpose === "admin_login",
             methodType: "telegram",
             identifier: identity.subject,
             displayName: identity.displayName,
@@ -114,7 +144,11 @@ export async function GET(request: NextRequest) {
     const errorPath =
       callbackPurpose === "admin"
         ? `/admin/verify?error=${errorCode}`
-        : `/login?error=${errorCode}`;
+        : callbackPurpose === "admin_login"
+          ? `/login?error=${errorCode}&next=${encodeURIComponent(
+              callbackRedirectPath,
+            )}`
+          : `/login?error=${errorCode}`;
     const response = NextResponse.redirect(
       new URL(errorPath, publicOrigin),
     );
@@ -132,7 +166,7 @@ export async function GET(request: NextRequest) {
         );
       } else if (error.code !== "AUTH_NOT_CONFIGURED") {
         logSecurityEvent(
-          callbackPurpose === "admin" ||
+          callbackPurpose !== "login" ||
             error instanceof AdministrationError
             ? "administration.telegram_callback_rejected"
             : "identity.telegram_callback_rejected",

@@ -152,7 +152,6 @@ describe("Telegram login state", () => {
           "22222222-2222-4222-8222-222222222222",
       },
     );
-
     expect(
       verifyTelegramLoginState(
         state.state,
@@ -168,6 +167,39 @@ describe("Telegram login state", () => {
         "11111111-1111-4111-8111-111111111111",
       requestedByUserId:
         "22222222-2222-4222-8222-222222222222",
+    });
+  });
+
+  it("связывает первоначальный административный вход без прежней сессии", () => {
+    const state = createTelegramLoginState(
+      "/admin/students",
+      consentVersion,
+      clientSecret,
+      issuedAt,
+      {
+        purpose: "admin_login",
+      },
+    );
+    const [encodedPayload] = state.cookieValue.split(".");
+    const wirePayload = JSON.parse(
+      Buffer.from(encodedPayload!, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+
+    expect(
+      verifyTelegramLoginState(
+        state.state,
+        state.cookieValue,
+        consentVersion,
+        clientSecret,
+        issuedAt,
+      ),
+    ).toMatchObject({
+      purpose: "admin_login",
+      redirectPath: "/admin/students",
+    });
+    expect(wirePayload).toMatchObject({
+      purpose: "login",
+      administrativeAuthentication: true,
     });
   });
 
