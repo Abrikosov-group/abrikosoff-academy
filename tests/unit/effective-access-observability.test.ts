@@ -49,14 +49,17 @@ describe("наблюдаемость shadow-доступа", () => {
     );
     const serialized = JSON.stringify(payload);
 
-    expect(payload).toMatchObject({
+    expect(payload).toEqual({
       level: "error",
       event: "access.effective_access_shadow_evaluation_failed",
+      incidentId: expect.any(String),
+      errorType: "error",
       errorDetails: {
         name: "Error",
         code: "POSTGRES_READ_FAILED",
       },
     });
+    expect(payload).not.toHaveProperty("userId");
     expect(serialized).not.toContain("private-user");
     expect(serialized).not.toContain("secret-value");
   });
