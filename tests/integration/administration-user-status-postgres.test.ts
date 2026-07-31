@@ -706,58 +706,78 @@ describe("изменение состояния ученика с PostgreSQL", (
     }
   });
 
-  it("сериализует одинаковый idempotency key между блокировкой и разблокировкой", async () => {
+  it("разделяет одинаковый idempotency key между блокировкой и разблокировкой", async () => {
     const actorUserId = await insertUser(
-      "Владелец конфликта действий",
+      "Владелец независимых действий",
     );
     await insertOwnerRole(actorUserId);
     const targetUserId = await insertUser(
-      "Ученик конфликта действий",
+      "Ученик независимых действий",
     );
     const idempotencyKey = randomUUID();
     const commandService = service();
-    const results = await Promise.allSettled([
-      commandService.execute({
-        context: context(actorUserId),
-        targetUserId,
-        statusAction: "block",
-        reason: "support_security_measure",
-        idempotencyKey,
-      }),
-      commandService.execute({
-        context: context(actorUserId),
-        targetUserId,
-        statusAction: "unblock",
-        reason: "security_check_completed",
-        idempotencyKey,
-      }),
-    ]);
+    const blockInput = {
+      context: context(actorUserId),
+      targetUserId,
+      statusAction: "block",
+      reason: "support_security_measure",
+      idempotencyKey,
+    } as const;
+    const unblockInput = {
+      context: context(actorUserId),
+      targetUserId,
+      statusAction: "unblock",
+      reason: "security_check_completed",
+      idempotencyKey,
+    } as const;
 
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toEqual([
-      expect.objectContaining({
-        reason: expect.objectContaining({
-          code: "IDEMPOTENCY_CONFLICT",
-          httpStatus: 409,
-        }),
-      }),
-    ]);
+    await expect(commandService.execute(blockInput)).resolves.toEqual({
+      status: "blocked",
+      statusChanged: true,
+      revokedSessionCount: 0,
+      currentSessionRevoked: false,
+    });
+    await expect(commandService.execute(unblockInput)).resolves.toEqual({
+      status: "active",
+      statusChanged: true,
+      revokedSessionCount: 0,
+      currentSessionRevoked: false,
+    });
+    await expect(commandService.execute(blockInput)).resolves.toEqual({
+      status: "blocked",
+      statusChanged: true,
+      revokedSessionCount: 0,
+      currentSessionRevoked: false,
+    });
 
-    const executionCount = await pool.query<{ count: number }>(
+    const executions = await pool.query<{
+      action: string;
+      count: number;
+    }>(
       `
-        SELECT count(*)::integer AS count
+        SELECT action, count(*)::integer AS count
         FROM admin_command_executions
         WHERE principal_key = $1
           AND idempotency_key = $2
+        GROUP BY action
+        ORDER BY action
       `,
       [`user:${actorUserId}`, idempotencyKey],
     );
+    const target = await pool.query<{ status: string }>(
+      `
+        SELECT status
+        FROM identity_users
+        WHERE id = $1
+      `,
+      [targetUserId],
+    );
 
-    expect(executionCount.rows).toEqual([{ count: 1 }]);
+    expect(executions.rows).toEqual([
+      { action: "identity.user.block", count: 1 },
+      { action: "identity.user.unblock", count: 1 },
+    ]);
+    expect(target.rows).toEqual([{ status: "active" }]);
   });
 
   it("сериализует взаимную блокировку двух владельцев и сохраняет одного доступного", async () => {

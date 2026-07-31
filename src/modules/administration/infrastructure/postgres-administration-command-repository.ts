@@ -16,7 +16,6 @@ import { AdministrationError } from "../domain/errors";
 
 type CommandExecutionRow = {
   id: string;
-  action: string;
   request_sha256: string;
   status:
     | "in_progress"
@@ -39,7 +38,6 @@ async function selectCommandForUpdate(
     `
       SELECT
         id,
-        action,
         request_sha256,
         status,
         result_status,
@@ -50,11 +48,13 @@ async function selectCommandForUpdate(
         attempt_count
       FROM admin_command_executions
       WHERE principal_key = $1
-        AND idempotency_key = $2
+        AND action = $2
+        AND idempotency_key = $3
       FOR UPDATE
     `,
     [
       command.principalKey,
+      command.action,
       command.idempotencyKey,
     ],
   );
@@ -228,6 +228,7 @@ export class PostgresAdministrationCommandRepository
         [
           JSON.stringify([
             command.principalKey,
+            command.action,
             command.idempotencyKey,
           ]),
         ],
@@ -305,7 +306,6 @@ export class PostgresAdministrationCommandRepository
       if (
         existing.rows.length > 1 ||
         !previous ||
-        previous.action !== command.action ||
         previous.request_sha256 !== command.requestSha256
       ) {
         await client.query("COMMIT");
