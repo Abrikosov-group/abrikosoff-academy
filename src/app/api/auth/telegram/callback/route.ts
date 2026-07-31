@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { adminVerificationPathFor } from "@/modules/administration/domain/admin-redirect";
 import { AdministrationError } from "@/modules/administration/domain/errors";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
 import { IdentityError } from "@/modules/identity/domain/errors";
@@ -11,6 +12,7 @@ import { getIdentityRuntime } from "@/modules/identity/server/get-identity-servi
 import { collectSessionClientContext } from "@/modules/identity/server/session-client-context";
 import {
   getCurrentSessionTokenSha256,
+  getCurrentUser,
   setSessionCookie,
 } from "@/modules/identity/server/session";
 import {
@@ -66,6 +68,29 @@ export async function GET(request: NextRequest) {
         "Вход через Telegram был отменён.",
         400,
       );
+    }
+
+    if (
+      loginState.purpose === "admin_login" &&
+      (await getCurrentUser())
+    ) {
+      const response = NextResponse.redirect(
+        new URL(
+          adminVerificationPathFor(loginState.redirectPath),
+          publicOrigin,
+        ),
+      );
+
+      clearTelegramLoginStateCookie(response);
+      logSecurityEvent(
+        "administration.initial_login_rejected",
+        {
+          code: "ACTIVE_SESSION_REQUIRES_STEP_UP",
+          requestId,
+          userAgentFamily,
+        },
+      );
+      return response;
     }
 
     const identity = await exchangeTelegramAuthorizationCode(

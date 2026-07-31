@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminVerificationPathFor,
   isAdminRedirectPath,
   normalizeAdminRedirectPath,
   resolveAdminRedirectPath,
@@ -48,5 +49,18 @@ describe("normalizeAdminRedirectPath", () => {
       ),
     ).toBe("/admin/students?q=active");
     expect(resolveAdminRedirectPath("/dashboard")).toBeNull();
+  });
+
+  it("строит безопасный маршрут связанного step-up", () => {
+    expect(
+      adminVerificationPathFor(
+        "/admin/students?q=active#sessions",
+      ),
+    ).toBe(
+      "/admin/verify?next=%2Fadmin%2Fstudents%3Fq%3Dactive%23sessions",
+    );
+    expect(adminVerificationPathFor("/dashboard")).toBe(
+      "/admin/verify?next=%2Fadmin",
+    );
   });
 });

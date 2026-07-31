@@ -35,6 +35,11 @@ export default defineConfig({
       NEXT_DIST_DIR: ".next-e2e",
       PAYMENT_DEFAULT_PROVIDER: "demo",
       PAYMENTS_MODE: "demo",
+      TELEGRAM_OIDC_CLIENT_ID: "8802171680",
+      TELEGRAM_OIDC_CLIENT_SECRET:
+        "telegram-oidc-client-secret-for-e2e-tests",
+      TELEGRAM_OIDC_REDIRECT_URI:
+        `${baseURL}/api/auth/telegram/callback`,
     },
     reuseExistingServer: false,
     timeout: 120_000,

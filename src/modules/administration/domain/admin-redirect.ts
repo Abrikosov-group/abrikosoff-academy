@@ -24,6 +24,12 @@ export function normalizeAdminRedirectPath(value: unknown) {
   return resolveAdminRedirectPath(value) ?? "/admin";
 }
 
+export function adminVerificationPathFor(nextPath: string) {
+  return `/admin/verify?next=${encodeURIComponent(
+    normalizeAdminRedirectPath(nextPath),
+  )}`;
+}
+
 export function isAdminRedirectPath(value: unknown) {
   return resolveAdminRedirectPath(value) !== null;
 }
