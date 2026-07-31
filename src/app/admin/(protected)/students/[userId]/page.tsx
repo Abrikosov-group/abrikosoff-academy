@@ -80,7 +80,11 @@ export default async function AdminStudentDetailPage({
         student={student}
       />
       <AdminStudentSessionList
+        canRevokeSessions={context.permissions.has(
+          "sessions.revoke",
+        )}
         displayTimeZone={displayTimeZone}
+        isCurrentActor={context.actor.id === student.id}
         student={student}
       />
     </>

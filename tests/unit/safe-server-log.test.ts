@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  logAdministrationAuditWriteFailure,
   logSecurityEvent,
+  logTechnicalEvent,
   logUnexpectedServerError,
 } from "@/lib/safe-server-log";
 
@@ -144,5 +146,75 @@ describe("logSecurityEvent", () => {
     expect(payload).not.toHaveProperty("userAgentFamily");
     expect(serialized).not.toContain("token=secret");
     expect(serialized).not.toContain("private-user");
+  });
+});
+
+describe("logAdministrationAuditWriteFailure", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("фиксирует сигнал метрики без текста ошибки", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const error = Object.assign(
+      new Error("token=secret-value"),
+      {
+        code: "POSTGRES_WRITE_FAILED",
+      },
+    );
+
+    logAdministrationAuditWriteFailure(error);
+
+    const payload = JSON.parse(
+      String(consoleError.mock.calls[0]?.[0]),
+    );
+
+    expect(payload).toMatchObject({
+      event: "administration.audit_write_failed",
+      metric: "admin_audit_write_failed_total",
+      increment: 1,
+      errorDetails: {
+        code: "POSTGRES_WRITE_FAILED",
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("secret-value");
+  });
+});
+
+describe("logTechnicalEvent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("пишет только безопасные поля технического события", () => {
+    const consoleInfo = vi
+      .spyOn(console, "info")
+      .mockImplementation(() => undefined);
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+
+    logTechnicalEvent(
+      "administration.revoke_sessions_not_executed",
+      {
+        code: "IDEMPOTENCY_CONFLICT",
+        requestId,
+        userAgentFamily: "Google Chrome",
+      },
+    );
+
+    const payload = JSON.parse(
+      String(consoleInfo.mock.calls[0]?.[0]),
+    );
+
+    expect(payload).toMatchObject({
+      level: "info",
+      event:
+        "administration.revoke_sessions_not_executed",
+      code: "IDEMPOTENCY_CONFLICT",
+      requestId,
+      userAgentFamily: "Google Chrome",
+    });
+    expect(payload.incidentId).toEqual(expect.any(String));
   });
 });

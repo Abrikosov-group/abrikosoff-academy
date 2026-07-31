@@ -163,6 +163,7 @@ export type AdminStudentDetail = {
   methods: readonly AdminStudentIdentityMethod[];
   sessions: readonly AdminStudentSession[];
   sessionCount: number;
+  activeSessionCount: number;
   sessionsTruncated: boolean;
   paidGrants: readonly AdminStudentPaidGrant[];
   effectiveAccess: AdminStudentEffectiveAccess;

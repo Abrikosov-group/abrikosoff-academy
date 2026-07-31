@@ -131,11 +131,6 @@ export default async function AdminStudentsPage({
       <header className="admin-page-heading admin-page-heading-wide">
         <p className="overline">Поддержка учеников</p>
         <h1>Ученики</h1>
-        <p>
-          Поиск по учётным данным и просмотр фактического
-          оплаченного доступа. Изменяющие команды пока не
-          подключены.
-        </p>
       </header>
 
       <form
