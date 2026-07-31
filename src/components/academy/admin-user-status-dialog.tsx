@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatRussianCount } from "@/modules/administration/domain/student-presentation";
 import {
   blockUserReasonOptions,
   isUserStatusReasonCode,
@@ -15,11 +14,6 @@ import {
 } from "@/modules/administration/domain/user-status-command";
 import type { AdminStudentStatus } from "@/modules/administration/domain/student-read-model";
 
-const sessionCountForms = [
-  "сессия",
-  "сессии",
-  "сессий",
-] as const;
 const terminalCommandErrorCodes = new Set([
   "ADMINISTRATION_DISABLED",
   "ADMIN_AUTH_REQUIRED",
@@ -233,10 +227,7 @@ export function AdminUserStatusDialog({
       if (blocking) {
         setSuccessMessage(
           payload.statusChanged
-            ? `Учётная запись заблокирована. ${formatRussianCount(
-                payload.revokedSessionCount,
-                sessionCountForms,
-              )} отозвано.`
+            ? `Учётная запись заблокирована. Отозвано активных сессий: ${payload.revokedSessionCount}.`
             : "Учётная запись уже заблокирована. Активные сессии отозваны.",
         );
       } else {

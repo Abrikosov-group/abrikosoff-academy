@@ -1368,6 +1368,12 @@ test("владелец ищет ученика, отзывает сессии и
     });
     await expect(blockUserDialog).not.toBeVisible();
     await expect(
+      page.getByText(
+        "Учётная запись заблокирована. Отозвано активных сессий: 0.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
       page.getByRole("button", {
         name: "Разблокировать учётную запись",
         exact: true,
