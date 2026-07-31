@@ -20,6 +20,7 @@ describe("серверная инициализация Next.js", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
@@ -42,6 +43,26 @@ describe("серверная инициализация Next.js", () => {
     );
 
     await expect(register()).rejects.toBe(configurationError);
+  });
+
+  it("завершает процесс после ошибки startup-проверки", async () => {
+    const configurationError = new TypeError(
+      "Запрещённая конфигурация эффективного доступа",
+    );
+    const exitMock = vi
+      .spyOn(process, "exit")
+      .mockImplementation(
+        (() => undefined) as typeof process.exit,
+      );
+    vi.useFakeTimers();
+    validateEffectiveAccessConfigurationMock.mockRejectedValue(
+      configurationError,
+    );
+
+    await expect(register()).rejects.toBe(configurationError);
+    await vi.runAllTimersAsync();
+
+    expect(exitMock).toHaveBeenCalledWith(1);
   });
 
   it("не загружает Node.js-валидатор в Edge runtime", async () => {

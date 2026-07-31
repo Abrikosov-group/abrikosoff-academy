@@ -3,9 +3,9 @@ export async function register() {
     return;
   }
 
-  const { validateEffectiveAccessConfiguration } = await import(
-    "@/modules/access/server/get-effective-access"
+  const { registerNodeInstrumentation } = await import(
+    "@/instrumentation-node"
   );
 
-  await validateEffectiveAccessConfiguration();
+  await registerNodeInstrumentation();
 }
