@@ -43,6 +43,7 @@ export async function withDatabaseReadSnapshot<T>(
 ) {
   const client = await pool.connect();
   let transactionStarted = false;
+  let connectionBroken = false;
 
   try {
     await client.query(
@@ -72,6 +73,7 @@ export async function withDatabaseReadSnapshot<T>(
       try {
         await client.query("ROLLBACK");
       } catch (rollbackError) {
+        connectionBroken = true;
         logUnexpectedServerError(
           "database.read_snapshot_rollback_error",
           rollbackError,
@@ -81,6 +83,6 @@ export async function withDatabaseReadSnapshot<T>(
 
     throw error;
   } finally {
-    client.release();
+    client.release(connectionBroken);
   }
 }
