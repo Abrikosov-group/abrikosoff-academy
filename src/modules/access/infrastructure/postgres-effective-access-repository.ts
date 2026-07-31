@@ -28,7 +28,13 @@ export class PostgresEffectiveAccessRepository
           grants.period_end
         FROM billing_access_grants grants
         WHERE grants.customer_id = $1
-          AND grants.status = 'granted'
+          AND (
+            grants.status = 'granted'
+            OR (
+              grants.status = 'revoked'
+              AND grants.revoked_at > $2
+            )
+          )
           AND grants.granted_at <= $2
           AND grants.created_at <= $2
           AND grants.period_start <= $2
@@ -44,7 +50,13 @@ export class PostgresEffectiveAccessRepository
           grants.period_end
         FROM access_manual_grants grants
         WHERE grants.customer_id = $1
-          AND grants.status = 'granted'
+          AND (
+            grants.status = 'granted'
+            OR (
+              grants.status = 'revoked'
+              AND grants.revoked_at > $2
+            )
+          )
           AND grants.granted_at <= $2
           AND grants.created_at <= $2
           AND grants.period_start <= $2

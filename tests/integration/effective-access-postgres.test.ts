@@ -547,6 +547,84 @@ describe("эффективный доступ с PostgreSQL", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("сохраняет paid и manual основания до точного момента отзыва", async () => {
+    const actorUserId = await insertUser(
+      "Владелец проверки исторического доступа",
+    );
+    const customerId = await insertUser(
+      "Ученик проверки исторического доступа",
+    );
+    const periodStart = new Date(at.getTime() - 60_000);
+    const periodEnd = new Date(at.getTime() + 60_000);
+    const revokedAt = new Date(at.getTime() + 1);
+    const paidGrantId = await insertPaidGrant({
+      userId: customerId,
+      periodStart,
+      periodEnd,
+      createdAt: periodStart,
+    });
+    const manualGrant = await insertManualGrant({
+      actorUserId,
+      customerId,
+      periodStart,
+      periodEnd,
+      grantedAt: periodStart,
+    });
+
+    await pool.query(
+      `
+        UPDATE billing_access_grants
+        SET
+          status = 'revoked',
+          revoked_at = $2,
+          updated_at = $2
+        WHERE order_id = $1
+      `,
+      [paidGrantId, revokedAt],
+    );
+    await pool.query(
+      `
+        UPDATE access_manual_grants
+        SET
+          status = 'revoked',
+          revoked_by_user_id = $2,
+          revoke_reason = 'Доступ отозван после проверяемого момента',
+          revoked_at = $3,
+          updated_at = $3
+        WHERE id = $1
+      `,
+      [manualGrant.grantId, actorUserId, revokedAt],
+    );
+
+    const beforeRevocation = await service.getEffectiveAccess(
+      customerId,
+      at,
+    );
+
+    expect(beforeRevocation.canReadCourses).toBe(true);
+    expect(beforeRevocation.activeBases).toHaveLength(2);
+    expect(beforeRevocation.activeBases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: paidGrantId,
+          source: "paid",
+        }),
+        expect.objectContaining({
+          id: manualGrant.grantId,
+          source: "manual",
+        }),
+      ]),
+    );
+    await expect(
+      service.getEffectiveAccess(customerId, revokedAt),
+    ).resolves.toEqual({
+      evaluatedAt: revokedAt.toISOString(),
+      canReadCourses: false,
+      activePeriod: null,
+      activeBases: [],
+    });
+  });
+
   it("защищает происхождение и жизненный цикл ручного гранта", async () => {
     const actorUserId = await insertUser(
       "Владелец проверки истории гранта",
