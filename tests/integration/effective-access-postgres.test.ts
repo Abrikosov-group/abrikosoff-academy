@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { EffectiveAccessService } from "@/modules/access/application/effective-access-service";
 import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
@@ -404,6 +404,73 @@ describe("эффективный доступ с PostgreSQL", () => {
       expect(effectiveAccess.canReadCourses).toBe(
         hasCurrentSubscriptionAccess(legacySubscription, at),
       );
+    },
+  );
+
+  it.each([
+    {
+      label: "legacy-only",
+      subscriptionStatus: "active" as const,
+      createPaidGrant: false,
+      legacyCanReadCourses: true,
+      expectedCode: "EFFECTIVE_ACCESS_LEGACY_ONLY" as const,
+    },
+    {
+      label: "v2-only",
+      subscriptionStatus: "pending" as const,
+      createPaidGrant: true,
+      legacyCanReadCourses: false,
+      expectedCode: "EFFECTIVE_ACCESS_V2_ONLY" as const,
+    },
+  ])(
+    "в shadow применяет $label решение прежнего пути и фиксирует безопасный код",
+    async ({
+      subscriptionStatus,
+      createPaidGrant,
+      legacyCanReadCourses,
+      expectedCode,
+    }) => {
+      const userId = await insertUser(
+        `Shadow-регрессия ${subscriptionStatus} ${randomUUID()}`,
+      );
+      const periodStart = new Date(at.getTime() - 60_000);
+      const periodEnd = new Date(at.getTime() + 60_000);
+
+      await insertSubscription({
+        userId,
+        status: subscriptionStatus,
+        periodStart,
+        periodEnd,
+      });
+      if (createPaidGrant) {
+        await insertPaidGrant({
+          userId,
+          periodStart,
+          periodEnd,
+          createdAt: periodStart,
+        });
+      }
+
+      const subscription = await getSubscriptionSummary(pool, userId);
+      const reportMismatch = vi.fn();
+
+      expect(
+        hasCurrentSubscriptionAccess(subscription, at),
+      ).toBe(legacyCanReadCourses);
+      await expect(
+        service.resolveCourseAccess({
+          userId,
+          at,
+          legacyCanReadCourses,
+          config: {
+            effectiveAccessMode: "shadow",
+            manualAccessGrantingEnabled: false,
+          },
+          observation: { reportMismatch },
+        }),
+      ).resolves.toBe(legacyCanReadCourses);
+      expect(reportMismatch).toHaveBeenCalledWith(expectedCode);
+      expect(reportMismatch).toHaveBeenCalledTimes(1);
     },
   );
 

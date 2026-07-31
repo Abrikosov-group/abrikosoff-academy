@@ -14,8 +14,15 @@ const basis: EffectiveAccessBasis = {
 function createService(input: {
   bases?: readonly EffectiveAccessBasis[];
   hasManualGrantHistory?: boolean;
+  listActiveBasesError?: unknown;
 } = {}) {
-  const listActiveBases = vi.fn(async () => input.bases ?? []);
+  const listActiveBases = vi.fn(async () => {
+    if ("listActiveBasesError" in input) {
+      throw input.listActiveBasesError;
+    }
+
+    return input.bases ?? [];
+  });
   const hasManualGrantHistory = vi.fn(
     async () => input.hasManualGrantHistory ?? false,
   );
@@ -61,6 +68,125 @@ describe("EffectiveAccessService", () => {
     ).rejects.toThrowError(
       "Момент вычисления доступа должен быть корректной датой.",
     );
+    expect(listActiveBases).not.toHaveBeenCalled();
+  });
+
+  it("в shadow применяет legacy на том же моменте и сообщает несовпадение", async () => {
+    const { hasManualGrantHistory, listActiveBases, service } =
+      createService({ bases: [basis] });
+    const reportMismatch = vi.fn();
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: false,
+        config: {
+          effectiveAccessMode: "shadow",
+          manualAccessGrantingEnabled: false,
+        },
+        observation: { reportMismatch },
+      }),
+    ).resolves.toBe(false);
+    expect(hasManualGrantHistory).toHaveBeenCalledTimes(1);
+    expect(listActiveBases).toHaveBeenCalledWith(
+      "student-id",
+      at,
+    );
+    expect(reportMismatch).toHaveBeenCalledWith(
+      "EFFECTIVE_ACCESS_V2_ONLY",
+    );
+  });
+
+  it("в shadow сохраняет legacy при сбое нового чтения", async () => {
+    const evaluationError = new Error(
+      "Ошибка нового чтения с private-user@example.test",
+    );
+    const { service } = createService({
+      listActiveBasesError: evaluationError,
+    });
+    const reportEvaluationFailure = vi.fn(() => {
+      throw new Error("Сбой необязательной диагностики");
+    });
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: true,
+        config: {
+          effectiveAccessMode: "shadow",
+          manualAccessGrantingEnabled: false,
+        },
+        observation: { reportEvaluationFailure },
+      }),
+    ).resolves.toBe(true);
+    expect(reportEvaluationFailure).toHaveBeenCalledWith(
+      evaluationError,
+    );
+  });
+
+  it("не маскирует rollout-запрет shadow как сбой наблюдаемости", async () => {
+    const { listActiveBases, service } = createService({
+      hasManualGrantHistory: true,
+    });
+    const reportEvaluationFailure = vi.fn();
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: true,
+        config: {
+          effectiveAccessMode: "shadow",
+          manualAccessGrantingEnabled: false,
+        },
+        observation: { reportEvaluationFailure },
+      }),
+    ).rejects.toThrowError(
+      "Режим legacy или shadow запрещён после появления ручного гранта.",
+    );
+    expect(listActiveBases).not.toHaveBeenCalled();
+    expect(reportEvaluationFailure).not.toHaveBeenCalled();
+  });
+
+  it("в применяемом v2 не подменяет сбой новым legacy-решением", async () => {
+    const evaluationError = new Error("Сбой нового чтения");
+    const { hasManualGrantHistory, service } = createService({
+      listActiveBasesError: evaluationError,
+    });
+    const reportEvaluationFailure = vi.fn();
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: true,
+        config: {
+          effectiveAccessMode: "v2",
+          manualAccessGrantingEnabled: false,
+        },
+        observation: { reportEvaluationFailure },
+      }),
+    ).rejects.toBe(evaluationError);
+    expect(hasManualGrantHistory).not.toHaveBeenCalled();
+    expect(reportEvaluationFailure).not.toHaveBeenCalled();
+  });
+
+  it("в legacy не выполняет новое чтение", async () => {
+    const { listActiveBases, service } = createService();
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: true,
+        config: {
+          effectiveAccessMode: "legacy",
+          manualAccessGrantingEnabled: false,
+        },
+      }),
+    ).resolves.toBe(true);
     expect(listActiveBases).not.toHaveBeenCalled();
   });
 

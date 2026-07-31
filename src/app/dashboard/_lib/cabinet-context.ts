@@ -6,6 +6,7 @@ import { getDatabasePool } from "@/lib/database";
 import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
+import { resolveStudentCourseAccess } from "@/modules/access/server/get-effective-access";
 import { getCurrentUser } from "@/modules/identity/server/session";
 
 export const getCabinetContext = cache(async () => {
@@ -15,6 +16,7 @@ export const getCabinetContext = cache(async () => {
     redirect("/login");
   }
 
+  const evaluatedAt = new Date();
   const [subscription, canAccessAdministration] =
     await Promise.all([
       getSubscriptionSummary(getDatabasePool(), user.id),
@@ -22,8 +24,14 @@ export const getCabinetContext = cache(async () => {
         user.id,
       ),
     ]);
-  const subscriptionActive =
-    hasCurrentSubscriptionAccess(subscription);
+  const subscriptionActive = await resolveStudentCourseAccess({
+    userId: user.id,
+    at: evaluatedAt,
+    legacyCanReadCourses: hasCurrentSubscriptionAccess(
+      subscription,
+      evaluatedAt,
+    ),
+  });
 
   return {
     user,

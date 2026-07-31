@@ -4,6 +4,10 @@ import { getDatabasePool } from "@/lib/database";
 import { EffectiveAccessService } from "../application/effective-access-service";
 import { PostgresEffectiveAccessRepository } from "../infrastructure/postgres-effective-access-repository";
 import { getAccessConfig } from "./access-config";
+import {
+  reportEffectiveAccessShadowEvaluationFailure,
+  reportEffectiveAccessShadowMismatch,
+} from "./effective-access-observability";
 
 export function getEffectiveAccessRuntime() {
   const config = getAccessConfig();
@@ -27,6 +31,24 @@ export async function getEffectiveAccess(
   await runtime.service.assertRolloutConfiguration(runtime.config);
 
   return runtime.service.getEffectiveAccess(userId, at);
+}
+
+export async function resolveStudentCourseAccess(input: {
+  userId: string;
+  at: Date;
+  legacyCanReadCourses: boolean;
+}) {
+  const runtime = getEffectiveAccessRuntime();
+
+  return runtime.service.resolveCourseAccess({
+    ...input,
+    config: runtime.config,
+    observation: {
+      reportEvaluationFailure:
+        reportEffectiveAccessShadowEvaluationFailure,
+      reportMismatch: reportEffectiveAccessShadowMismatch,
+    },
+  });
 }
 
 export async function validateEffectiveAccessConfiguration() {

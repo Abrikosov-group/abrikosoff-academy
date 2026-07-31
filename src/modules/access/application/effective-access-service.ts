@@ -1,6 +1,8 @@
 import type { EffectiveAccessRepository } from "./effective-access-repository";
 import {
   createEffectiveAccessDecision,
+  resolveCanReadCourses,
+  type EffectiveAccessMismatchCode,
   type EffectiveAccessMode,
 } from "../domain/effective-access";
 
@@ -8,6 +10,30 @@ export type AccessRolloutConfig = {
   effectiveAccessMode: EffectiveAccessMode;
   manualAccessGrantingEnabled: boolean;
 };
+
+type ShadowObservation = {
+  reportEvaluationFailure?: (
+    error: unknown,
+  ) => void | Promise<void>;
+  reportMismatch?: (
+    code: EffectiveAccessMismatchCode,
+  ) => void | Promise<void>;
+};
+
+function reportShadowEvaluationFailure(
+  reporter: ShadowObservation["reportEvaluationFailure"],
+  error: unknown,
+) {
+  try {
+    const report = reporter?.(error);
+
+    if (report) {
+      void report.catch(() => undefined);
+    }
+  } catch {
+    // Наблюдаемость shadow не меняет применяемое legacy-решение.
+  }
+}
 
 export class EffectiveAccessService {
   constructor(
@@ -27,6 +53,47 @@ export class EffectiveAccessService {
     const bases = await this.repository.listActiveBases(userId, at);
 
     return createEffectiveAccessDecision(at, bases);
+  }
+
+  async resolveCourseAccess(input: {
+    userId: string;
+    at: Date;
+    legacyCanReadCourses: boolean;
+    config: AccessRolloutConfig;
+    observation?: ShadowObservation;
+  }) {
+    await this.assertRolloutConfiguration(input.config);
+
+    if (input.config.effectiveAccessMode === "legacy") {
+      return input.legacyCanReadCourses;
+    }
+
+    let effectiveAccess;
+
+    try {
+      effectiveAccess = await this.getEffectiveAccess(
+        input.userId,
+        input.at,
+      );
+    } catch (error) {
+      if (input.config.effectiveAccessMode !== "shadow") {
+        throw error;
+      }
+
+      reportShadowEvaluationFailure(
+        input.observation?.reportEvaluationFailure,
+        error,
+      );
+
+      return input.legacyCanReadCourses;
+    }
+
+    return resolveCanReadCourses({
+      mode: input.config.effectiveAccessMode,
+      legacyCanReadCourses: input.legacyCanReadCourses,
+      effectiveAccess,
+      reportMismatch: input.observation?.reportMismatch,
+    });
   }
 
   async assertRolloutConfiguration(config: AccessRolloutConfig) {
