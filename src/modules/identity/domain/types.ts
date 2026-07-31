@@ -5,6 +5,11 @@ export type SessionAuthenticationMethod =
   | "email_magic_link"
   | "demo";
 
+export type SessionAdminVerificationMethod = Exclude<
+  SessionAuthenticationMethod,
+  "demo"
+>;
+
 export type SessionDeviceType =
   | "desktop"
   | "mobile"

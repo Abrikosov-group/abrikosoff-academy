@@ -21,8 +21,16 @@ function decodeAdminPathname(pathname: string) {
 }
 
 export function normalizeAdminRedirectPath(value: unknown) {
+  return resolveAdminRedirectPath(value) ?? "/admin";
+}
+
+export function isAdminRedirectPath(value: unknown) {
+  return resolveAdminRedirectPath(value) !== null;
+}
+
+export function resolveAdminRedirectPath(value: unknown) {
   if (!isSafeInternalRedirectPath(value)) {
-    return "/admin";
+    return null;
   }
 
   try {
@@ -30,7 +38,7 @@ export function normalizeAdminRedirectPath(value: unknown) {
     const decodedPathname = decodeAdminPathname(redirectUrl.pathname);
 
     if (/[\\?#\u0000-\u001f\u007f]/u.test(decodedPathname)) {
-      return "/admin";
+      return null;
     }
 
     const canonicalUrl = new URL(decodedPathname, adminRedirectBaseUrl);
@@ -45,8 +53,8 @@ export function normalizeAdminRedirectPath(value: unknown) {
       return `${canonicalPathname}${redirectUrl.search}${redirectUrl.hash}`;
     }
   } catch {
-    return "/admin";
+    return null;
   }
 
-  return "/admin";
+  return null;
 }

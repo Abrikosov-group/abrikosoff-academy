@@ -11,6 +11,7 @@ import type {
 import type {
   AuthenticatedUser,
   IdentityMethodType,
+  SessionAdminVerificationMethod,
   SessionClientContext,
   SessionAuthenticationMethod,
 } from "../domain/types";
@@ -287,6 +288,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
     authenticatedAt: Date;
     authenticationMethod: SessionAuthenticationMethod;
     authenticationMethodId: string;
+    adminVerificationMethod?: SessionAdminVerificationMethod;
     clientContext?: SessionClientContext;
   }) {
     const clientContext = input.clientContext;
@@ -313,6 +315,9 @@ export class PostgresIdentityRepository implements IdentityRepository {
             authenticated_at,
             authentication_method,
             authentication_method_id,
+            admin_verified_at,
+            admin_verification_method,
+            admin_break_glass_expires_at,
             user_agent_family,
             client_ip,
             country_code,
@@ -333,9 +338,9 @@ export class PostgresIdentityRepository implements IdentityRepository {
             cloudflare_ray_id
           )
           VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18, $19,
-            $20, $21, $22, $23, $24, $25
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, NULL,
+            $10, $11, $12, $13, $14, $15, $16, $17, $18,
+            $19, $20, $21, $22, $23, $24, $25, $26, $27
           )
         `,
         [
@@ -346,6 +351,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
           input.authenticatedAt,
           input.authenticationMethod,
           input.authenticationMethodId,
+          input.adminVerificationMethod
+            ? input.authenticatedAt
+            : null,
+          input.adminVerificationMethod ?? null,
           clientContext?.userAgentFamily ?? null,
           clientContext?.ipAddress ?? null,
           clientContext?.countryCode ?? null,

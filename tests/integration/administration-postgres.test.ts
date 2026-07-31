@@ -459,6 +459,70 @@ describe("Administration с PostgreSQL", () => {
       code: "ADMIN_REAUTH_REQUIRED",
     });
 
+    const directAdminSession =
+      await identityService.authenticateIdentity({
+        authenticationMethod: "telegram_oidc",
+        administrativeAuthentication: true,
+        methodType: "telegram",
+        identifier: telegramIdentifier,
+        displayName: "Владелец интеграционного теста",
+        receiptEmail: "owner-admin@example.test",
+        metadata: {
+          username: "owner_admin_integration",
+        },
+        consent,
+        clientContext: {
+          userAgentFamily: "Google Chrome",
+          operatingSystem: "macOS",
+          deviceType: "desktop",
+        },
+      });
+    const directAdminTokenSha256 = hashIdentityToken(
+      directAdminSession.token,
+    );
+
+    await expect(
+      administrationService.getContext({
+        tokenSha256: directAdminTokenSha256,
+        permission: "dashboard.read",
+        requestId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({
+      actor: {
+        id: ordinarySession.user.id,
+      },
+      roles: ["owner"],
+      adminVerificationMethod: "telegram_oidc",
+    });
+
+    const directSessionMetadata = await pool.query<{
+      same_timestamp: boolean;
+      authentication_method: string;
+      admin_verification_method: string;
+      operating_system: string;
+      device_type: string;
+    }>(
+      `
+        SELECT
+          authenticated_at = admin_verified_at AS same_timestamp,
+          authentication_method,
+          admin_verification_method,
+          operating_system,
+          device_type
+        FROM identity_sessions
+        WHERE token_sha256 = $1
+      `,
+      [directAdminTokenSha256],
+    );
+
+    expect(directSessionMetadata.rows[0]).toEqual({
+      same_timestamp: true,
+      authentication_method: "telegram_oidc",
+      admin_verification_method: "telegram_oidc",
+      operating_system: "macOS",
+      device_type: "desktop",
+    });
+
     const verification =
       await administrationService.prepareTelegramVerification({
         tokenSha256: ordinaryTokenSha256,

@@ -23,6 +23,11 @@ export function createOpaqueIdentityToken() {
 
 export type AuthenticateIdentityInput = UpsertIdentityInput & {
   authenticationMethod: SessionAuthenticationMethod;
+  /**
+   * Только серверное доказательство из проверенного browser-bound intent.
+   * Оно записывает свежесть, но не выдаёт роль или permission.
+   */
+  administrativeAuthentication?: boolean;
   clientContext?: SessionClientContext;
 };
 
@@ -35,6 +40,22 @@ export class IdentityService {
   async authenticateIdentity(
     input: AuthenticateIdentityInput,
   ): Promise<LoginSession> {
+    if (
+      input.administrativeAuthentication &&
+      input.authenticationMethod === "demo"
+    ) {
+      throw new IdentityError(
+        "INVALID_REQUEST",
+        "Тестовый вход не может подтвердить административную сессию.",
+        400,
+      );
+    }
+    const adminVerificationMethod =
+      input.administrativeAuthentication &&
+      input.authenticationMethod !== "demo"
+        ? input.authenticationMethod
+        : undefined;
+
     const user = await this.repository.upsertIdentity(input);
     const token = createOpaqueIdentityToken();
     const authenticatedAt = new Date();
@@ -50,6 +71,7 @@ export class IdentityService {
       authenticatedAt,
       authenticationMethod: input.authenticationMethod,
       authenticationMethodId: user.primaryMethod.id,
+      adminVerificationMethod,
       clientContext: input.clientContext,
     });
 

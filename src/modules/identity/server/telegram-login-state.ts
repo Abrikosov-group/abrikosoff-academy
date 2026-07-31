@@ -20,6 +20,7 @@ type TelegramLoginStatePayload = {
   redirectPath: string;
   consentVersion: string;
   purpose: "login" | "admin";
+  administrativeAuthentication?: true;
   requestedBySessionId?: string;
   requestedByUserId?: string;
   issuedAt: number;
@@ -35,6 +36,7 @@ export type TelegramLoginState = {
 
 export type TelegramLoginIntent =
   | { purpose: "login" }
+  | { purpose: "admin_login" }
   | {
       purpose: "admin";
       requestedBySessionId: string;
@@ -109,7 +111,13 @@ export function createTelegramLoginState(
     codeVerifier,
     redirectPath,
     consentVersion,
-    purpose: intent.purpose,
+    purpose:
+      intent.purpose === "admin_login"
+        ? "login"
+        : intent.purpose,
+    ...(intent.purpose === "admin_login"
+      ? { administrativeAuthentication: true as const }
+      : {}),
     ...(intent.purpose === "admin"
       ? {
           requestedBySessionId: intent.requestedBySessionId,
@@ -200,6 +208,14 @@ export function verifyTelegramLoginState(
     !("purpose" in payload) ||
     typeof payload.purpose !== "string" ||
     !["login", "admin"].includes(payload.purpose) ||
+    (
+      "administrativeAuthentication" in payload &&
+      payload.administrativeAuthentication !== true
+    ) ||
+    (
+      payload.purpose === "admin" &&
+      "administrativeAuthentication" in payload
+    ) ||
     !("issuedAt" in payload) ||
     typeof payload.issuedAt !== "number"
   ) {
@@ -215,6 +231,9 @@ export function verifyTelegramLoginState(
       400,
     );
   }
+  const administrativeAuthentication =
+    "administrativeAuthentication" in payload &&
+    payload.administrativeAuthentication === true;
 
   const common = {
     redirectPath: payload.redirectPath,
@@ -250,7 +269,10 @@ export function verifyTelegramLoginState(
 
   return {
     ...common,
-    purpose: "login" as const,
+    purpose:
+      administrativeAuthentication
+        ? ("admin_login" as const)
+        : ("login" as const),
   };
 }
 

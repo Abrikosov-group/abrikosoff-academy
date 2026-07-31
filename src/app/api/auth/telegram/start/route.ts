@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveAdminRedirectPath } from "@/modules/administration/domain/admin-redirect";
 import { IdentityError } from "@/modules/identity/domain/errors";
 import { normalizeLoginRedirectPath } from "@/modules/identity/domain/login-redirect";
 import {
@@ -66,12 +67,25 @@ export async function POST(request: Request) {
         400,
       );
     }
-    const redirectPath = normalizeLoginRedirectPath(body.redirectPath);
+    const requestedRedirectPath = normalizeLoginRedirectPath(
+      body.redirectPath,
+    );
+    const adminRedirectPath = resolveAdminRedirectPath(
+      requestedRedirectPath,
+    );
+    const administrativeAuthentication =
+      adminRedirectPath !== null;
+    const redirectPath =
+      adminRedirectPath ?? requestedRedirectPath;
 
     const state = createTelegramLoginState(
       redirectPath,
       privacyDocumentVersion,
       config.telegram.clientSecret,
+      new Date(),
+      administrativeAuthentication
+        ? { purpose: "admin_login" }
+        : { purpose: "login" },
     );
     const authUrl = buildTelegramAuthorizationUrl(config.telegram, state);
     const response = NextResponse.json(
