@@ -844,12 +844,16 @@ test("владелец ищет ученика, отзывает сессии и
         exact: true,
       }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", {
-        name: "Развернуть боковое меню",
-        exact: true,
-      }),
-    ).toBeHidden();
+    await expect(adminLayout).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
+    const mobileSidebarToggle = page.locator(
+      ".admin-sidebar-toggle",
+    );
+
+    await expect(mobileSidebarToggle).toHaveCount(1);
+    await expect(mobileSidebarToggle).toBeHidden();
     await expect(
       page
         .locator(".admin-nav-label")
