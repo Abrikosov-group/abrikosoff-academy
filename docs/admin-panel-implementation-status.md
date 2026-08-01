@@ -283,7 +283,8 @@ step-up. Отдельных маршрутов общего списка дос�
 3. production promotion тех же digest без повторной сборки и атомарную замену
    действующего workflow с train-, hotfix- и infrastructure-no-deploy путями;
 4. закрытие поезда, фиксацию любого отказа, включая reconcile раннего сбоя до
-   создания manifest или deployment, проверенный откат и recovery.
+   получения и проверки manifest либо создания production deployment,
+   проверенный откат и recovery.
 
 До production-реализации email необходимо зафиксировать:
 
@@ -312,7 +313,8 @@ production-режима `operational`.
    candidate-build с доказательством неизменности защищённого release-контура и
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
    promotion тех же digest без повторной сборки, fail-closed выпуск, reconcile
-   раннего сбоя до создания артефактов, откат и recovery.
+   раннего сбоя до получения входных свидетельств либо создания production
+   deployment, откат и recovery.
 3. **Email Identity в production.** Общий magic-link для учеников и
    администраторов, безопасный `link_method`, lifecycle методов, browser
    binding, GET/POST-split, delivery outbox, email adapter, worker и
