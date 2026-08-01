@@ -189,7 +189,7 @@ deployment и promotion проверенных digest без повторной 
 |---|---|---|
 | CI и действующий автоматический production-релиз прямых PR из `main` | ✅ Готово | Сохранять этот контур для текущего production и аварийных hotfix до атомарной замены; он не является готовым выпуском интеграционного поезда |
 | Начальный шлюз релизного поезда: lifecycle, реестр и защиты | ⬜ Не начато | До первого функционального слияния реализовать доверенный lifecycle workflow и append-only реестр, зарегистрировать и защитить точную ветку, ограничить production Environment веткой `main` и обеспечить явный отказ release workflow для другого ref |
-| Финальный шлюз релизного поезда: staging, manifest и promotion по digest | ⬜ Не начато | До финального PR в `main` реализовать candidate-build, неизменяемый release manifest, staging deployment и приёмку, promotion тех же digest без повторной сборки, fail-closed выпуск и recovery |
+| Финальный шлюз релизного поезда: staging, manifest и promotion по digest | ⬜ Не начато | До финального PR в `main` реализовать candidate-build с доказательством неизменности защищённого release-контура, неизменяемый release manifest, staging deployment и приёмку, promotion тех же digest без повторной сборки, fail-closed выпуск и recovery |
 | Локальная production-подобная приёмка по постоянному HTTPS-адресу | ✅ Готово | Именованный Cloudflare Tunnel, отдельные база, Telegram-бот и OIDC-клиент; `operational` для локальных тестовых данных и безопасный `owner_preview`; порядок запуска и обязательного завершения сессии зафиксированы в [инструкции](operations/local-public-development.md) |
 | Сигнал сбоя записи административного аудита | ✅ Фундамент | Подключить штатное внешнее оповещение при развитии эксплуатации |
 | Сигнал доступности владельца | ⬜ Не готово | Реализовать `admin_available_owner_count` и alert |
@@ -276,7 +276,8 @@ step-up. Отдельных маршрутов общего списка дос�
 финальный шлюз выпуска:
 
 1. candidate-build с неизменяемым release manifest, точными
-   `run_id` + `run_attempt`, artifact ID и digest всех выпускаемых образов;
+   `run_id` + `run_attempt`, artifact ID, digest всех выпускаемых образов и
+   доказательством неизменности workflow и управляющих файлов release-контура;
 2. staging deployment, полный автоматический контур и приёмку точного
    замороженного SHA;
 3. production promotion тех же digest без повторной сборки и атомарную замену
@@ -307,8 +308,9 @@ production-режима `operational`.
    зарегистрировать и защитить точную ветку, ограничить production Environment
    веткой `main` и отклонять другой ref в release workflow.
 2. **Финальный шлюз выпуска.** До финального PR поезда в `main` реализовать
-   candidate-build и неизменяемый manifest, staging, promotion тех же digest
-   без повторной сборки, fail-closed выпуск, откат и recovery.
+   candidate-build с доказательством неизменности защищённого release-контура и
+   неизменяемый manifest, staging, promotion тех же digest без повторной сборки,
+   fail-closed выпуск, откат и recovery.
 3. **Email Identity в production.** Общий magic-link для учеников и
    администраторов, безопасный `link_method`, lifecycle методов, browser
    binding, GET/POST-split, delivery outbox, email adapter, worker и
