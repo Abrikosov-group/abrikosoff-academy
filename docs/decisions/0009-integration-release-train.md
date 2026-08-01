@@ -45,21 +45,24 @@ production-деплоя.
    `workflow_dispatch`, и production workflow не вызывает их через GitHub API:
    завершение точно заданного production workflow запускает `train-lifecycle`
    событием `workflow_run: completed` из определения на default branch.
-   Обработчик повторно получает по API точный workflow ID, run ID, head SHA,
-   manifest и deployment и отклоняет иной workflow, ref либо несовпадающие
-   данные. Операция `reconcile` принимает только точные `train_id` и
-   `production_run_id`, не принимает желаемое состояние и направляет те же
-   проверенные данные в тот же обработчик переходов. Поэтому production workflow
-   сохраняет только read-разрешения, а запись в реестр остаётся у одной
-   служебной identity. В операции `open` под блокировкой жизненного цикла
-   workflow `train-lifecycle`:
+   Обработчик повторно получает по API точные workflow ID, `run_id`,
+   `run_attempt`, head SHA, manifest и deployment и отклоняет иной workflow, ref
+   либо несовпадающие данные. Любая ссылка на GitHub Actions-запуск в manifest,
+   deployment и реестре состоит из пары `run_id` + `run_attempt`: `run_id` без
+   номера попытки не используется как доказательство или ключ идемпотентности.
+   Операция `reconcile` принимает только точные `train_id`,
+   `production_run_id` и `production_run_attempt`, не принимает желаемое
+   состояние и направляет данные точной попытки в тот же обработчик переходов.
+   Поэтому production workflow сохраняет только read-разрешения, а запись в
+   реестр остаётся у одной служебной identity. В операции `open` под блокировкой
+   жизненного цикла workflow `train-lifecycle`:
    - генерирует уникальный `train_id` и точную `source_branch` от актуального
      `main`;
    - создаёт эту ветку и применяет к ней точные branch protection rules без
      административного обхода;
    - последним шагом добавляет в append-only реестр неизменяемую запись
-     `train_opened` с `train_id`, `source_branch`, `opened_from_main_sha` и
-     идентификатором запуска.
+     `train_opened` с `train_id`, `source_branch`, `opened_from_main_sha`,
+     `lifecycle_run_id` и `lifecycle_run_attempt`.
    `opened_from_main_sha` фиксирует только точку происхождения ветки при открытии
    поезда, остаётся неизменным после синхронизации hotfix или инфраструктурного
    PR и не используется как база замороженного релизного кандидата.
@@ -142,14 +145,18 @@ production-деплоя.
    workflow из ветки кандидата. Workflow однократно собирает и публикует все
    выпускаемые образы, как минимум образ приложения и Telegram-egress. Их полные
    имена с digest вместе с `train_id`, точной `source_branch`, SHA кандидата, SHA
-   его Git-tree, `candidate_base_main_sha` и идентификатором запуска workflow
-   записываются в неизменяемый release manifest — артефакт этого конкретного
-   запуска, сохранённый механизмом, который гарантирует неизменяемость. Staging
-   развёртывается только из этого manifest, а запись staging deployment
-   сохраняет `train_id`, `source_branch`, SHA кандидата,
-   `candidate_base_main_sha`, идентификатор запуска, контрольную сумму manifest
-   и все значения digest. Любой новый коммит в кандидате или `main` аннулирует
-   кандидата и требует повторить синхронизацию, сборку и staging-приёмку.
+   его Git-tree, `candidate_base_main_sha`, `candidate_build_run_id` и
+   `candidate_build_run_attempt` записываются в неизменяемый release manifest —
+   артефакт этой конкретной попытки, сохранённый механизмом, который гарантирует
+   неизменяемость. Staging развёртывается только из этого manifest, а запись
+   staging deployment сохраняет `train_id`, `source_branch`, SHA кандидата,
+   `candidate_base_main_sha`, `candidate_build_run_id`,
+   `candidate_build_run_attempt`, `release_manifest_artifact_id`,
+   `staging_run_id`, `staging_run_attempt`, контрольную сумму manifest и все
+   значения digest. Artifact ID обязан принадлежать указанной попытке
+   candidate-build; одно имя artifact не является достаточной ссылкой. Любой
+   новый коммит в кандидате или `main` аннулирует кандидата и требует повторить
+   синхронизацию, сборку и staging-приёмку.
 10. После завершения этапов 0–4 карты реализации и успешной staging-приёмки
     создаётся финальный PR из точной `source_branch` единственного активного
     поезда в `main`. Его head SHA обязан совпадать с SHA принятого
@@ -179,8 +186,9 @@ production-деплоя.
     признаков или несколько связанных PR останавливают workflow. Только пути
     train и hotfix продолжаются: с минимальными read-разрешениями для contents,
     pull-requests, actions, deployments и packages workflow получает release
-    manifest указанного там запуска. Он не отправляет `workflow_dispatch` и не
-    получает `actions: write`: его завершение независимо обрабатывает
+    manifest по точным `release_manifest_artifact_id`, `run_id` и `run_attempt`
+    из staging deployment. Он не отправляет `workflow_dispatch` и не получает
+    `actions: write`: его завершение независимо обрабатывает
     `train-lifecycle` через `workflow_run: completed`.
     Production workflow требует, чтобы запуск относился к доверенному workflow и его определению из указанного `candidate_base_main_sha`, обработал точный head SHA как кандидата и
     завершился успешно, а затем проверяет тип выпуска, контрольную сумму
@@ -217,9 +225,10 @@ production-деплоя.
     проверяет, что точный финальный PR уже слит в `main`, и что терминальной
     записи нет, а затем добавляет нетерминальную запись
     `train_release_failed`. Запись содержит как минимум `train_id`,
-    `production_run_id`, SHA неудачного `main`, номер и head SHA финального PR,
-    стадию отказа и признак начала deployment; контрольная сумма manifest,
-    идентификатор deployment и результат отката сохраняются, когда применимы.
+    `production_run_id`, `production_run_attempt`, SHA неудачного `main`, номер
+    и head SHA финального PR, стадию отказа и признак начала deployment;
+    контрольная сумма manifest, идентификатор deployment и результат отката
+    сохраняются, когда применимы.
     Сбой до слияния финального PR не меняет состояние поезда и допускает повтор
     либо `abort`. Сбой после слияния, но до создания deployment, записывается с
     признаком `deployment_started=false` и результатом отката `not_applicable`.
@@ -255,16 +264,18 @@ production-деплоя.
 17. Если автоматический запуск `train-lifecycle` не состоялся либо завершился
     ошибкой после окончания production workflow, владелец сначала повторяет его
     безопасный запуск, а при недоступности такого повтора запускает операцию
-    `reconcile` с точными `train_id` и `production_run_id`. Под той же блокировкой
-    жизненного цикла обработчик заново получает и проверяет identity production
-    workflow, завершённый run, ref, head SHA, release manifest, deployment и его
-    результат. Затем он сам выводит единственно допустимый переход `close`,
-    `fail` либо `recover` и идемпотентно записывает отсутствующее событие или
-    подтверждает уже записанное. Ключ идемпотентности включает
-    `production_run_id` и вычисленную операцию. Инициатор, исходный production run
-    и запуск `reconcile` сохраняются в записи перехода. `reconcile` не принимает
-    желаемую операцию, флаг `force` или непроверенные данные, не разрешает
-    `abort` после начала deployment и не обходит требования
+    `reconcile` с точными `train_id`, `production_run_id` и
+    `production_run_attempt`. Под той же блокировкой жизненного цикла обработчик
+    через attempt-specific API заново получает и проверяет identity production
+    workflow, точную завершённую попытку, ref, head SHA, release manifest,
+    deployment и его результат. Затем он сам выводит единственно допустимый
+    переход `close`, `fail` либо `recover` и идемпотентно записывает отсутствующее
+    событие или подтверждает уже записанное. Ключ идемпотентности включает
+    `production_run_id`, `production_run_attempt` и вычисленную операцию.
+    Инициатор, пара исходного production run и пара запуска `reconcile`
+    сохраняются в записи перехода. `reconcile` не принимает желаемую операцию,
+    флаг `force` или непроверенные данные, не разрешает `abort` после начала
+    deployment и не обходит требования
     `train_release_failed` для recovery. Если доказательства отсутствуют,
     неоднозначны или временно недоступны, поезд остаётся активным, а повтор
     разрешён после восстановления источников данных. Прямая правка append-only

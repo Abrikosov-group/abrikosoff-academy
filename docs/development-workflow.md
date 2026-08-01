@@ -20,20 +20,23 @@ staging и production workflows имеют доступ только на чте
 через `workflow_dispatch`, и production workflow не отправляет их через API:
 завершение точно заданного production workflow запускает `train-lifecycle`
 событием `workflow_run: completed` из определения на default branch. Обработчик
-повторно получает через API workflow ID, run ID, head SHA, manifest и deployment
-и отклоняет иной workflow, ref либо несовпадение. `reconcile` принимает только
-точные `train_id` и `production_run_id`, не принимает желаемый результат и
-передаёт те же проверенные данные тому же обработчику переходов. Production
-workflow сохраняет read-разрешения, а право записи остаётся у одной служебной
-identity.
+повторно получает через API workflow ID, `run_id`, `run_attempt`, head SHA,
+manifest и deployment и отклоняет иной workflow, ref либо несовпадение. Любая
+ссылка на Actions-запуск в manifest, deployment и реестре состоит из пары
+`run_id` + `run_attempt`; один `run_id` не является доказательством конкретной
+попытки. `reconcile` принимает только точные `train_id`, `production_run_id` и
+`production_run_attempt`, не принимает желаемый результат и передаёт данные
+точной попытки тому же обработчику переходов. Production workflow сохраняет
+read-разрешения, а право записи остаётся у одной служебной identity.
 В операции `open` под блокировкой жизненного цикла workflow `train-lifecycle` генерирует уникальный `train_id`, создаёт точную `source_branch` от актуального `main`, автоматически
 применяет к ней точные branch protection rules и только после этого добавляет
-неизменяемую запись `train_opened` с отдельным `opened_from_main_sha`. Этот SHA
+неизменяемую запись `train_opened` с отдельными `opened_from_main_sha`,
+`lifecycle_run_id` и `lifecycle_run_attempt`. Этот SHA
 фиксирует только происхождение ветки при открытии поезда и не меняется после
 синхронизации hotfix или инфраструктурного PR.
-Существование записи без терминальной `train_closed`, `train_aborted` или `train_recovered` запрещает открыть второй поезд.
-Уже
-созданный текущий экземпляр до первого функционального слияния регистрируется
+Существование записи без терминальной `train_closed`, `train_aborted` или
+`train_recovered` запрещает открыть второй поезд. Уже созданный текущий
+экземпляр до первого функционального слияния регистрируется
 той же операцией `open` после проверки точного имени, происхождения от
 `opened_from_main_sha` и правил защиты.
 
@@ -358,13 +361,17 @@ Pull request можно перевести из чернового состоя�
    workflow из ветки кандидата. Он однократно собирает и публикует все
    выпускаемые образы, как минимум образ приложения и Telegram-egress. Полные
    имена образов с digest, `train_id`, точная `source_branch`, SHA кандидата, SHA
-   его Git-tree, `candidate_base_main_sha` и идентификатор запуска workflow
-   записываются в неизменяемый release manifest — артефакт этого конкретного
-   запуска, сохранённый механизмом, который гарантирует неизменяемость.
+   его Git-tree, `candidate_base_main_sha`, `candidate_build_run_id` и
+   `candidate_build_run_attempt` записываются в неизменяемый release manifest —
+   артефакт этой конкретной попытки, сохранённый механизмом, который гарантирует
+   неизменяемость.
 5. Staging развёртывается только из release manifest. Запись staging deployment
    сохраняет `train_id`, точную `source_branch`, SHA кандидата,
-   `candidate_base_main_sha`, идентификатор запуска, контрольную сумму manifest
-   и полный набор значений digest.
+   `candidate_base_main_sha`, `candidate_build_run_id`,
+   `candidate_build_run_attempt`, `release_manifest_artifact_id`,
+   `staging_run_id`, `staging_run_attempt`, контрольную сумму manifest и полный
+   набор значений digest. Artifact ID проверяется как принадлежащий указанной
+   попытке candidate-build; ссылка только по имени artifact запрещена.
 6. В staging выполняются миграции, полный CI, smoke-тесты, сквозные сценарии,
    проверка наблюдаемости и пользовательская приёмка. Проверяется также
    документированный откат.
@@ -394,8 +401,10 @@ Pull request можно перевести из чернового состоя�
    записи `train_opened` без терминальной `train_closed`, `train_aborted` или
    `train_recovered`, в release manifest и успешном staging deployment. Workflow
    получает head SHA этого PR и требует его точного совпадения с SHA deployment.
-10. По идентификатору запуска из staging deployment workflow получает release
-    manifest. Он требует, чтобы запуск относился к доверенному workflow и его
+10. По `release_manifest_artifact_id` и паре `candidate_build_run_id` +
+    `candidate_build_run_attempt` из staging deployment workflow получает
+    release manifest точной попытки и проверяет принадлежность artifact этой
+    попытке. Он требует, чтобы запуск относился к доверенному workflow и его
     определению из `candidate_base_main_sha`, обработал точный SHA кандидата и
     завершился успешно, а затем проверяет контрольную сумму, SHA кандидата и
     полный набор значений digest. SHA `main` непосредственно до слияния обязан
@@ -418,10 +427,11 @@ Pull request можно перевести из чернового состоя�
     `fail`. Под блокировкой она проверяет, что точный финальный PR уже слит в
     `main`, и что терминальной записи нет, а затем добавляет нетерминальную
     запись `train_release_failed`. Она содержит `train_id`,
-    `production_run_id`, SHA `main`, номер и head SHA финального PR, стадию
-    отказа и признак начала deployment; checksum manifest, идентификатор
-    deployment и результат отката добавляются, когда применимы. Сбой до слияния
-    финального PR оставляет поезд без изменения и допускает повтор либо `abort`.
+    `production_run_id`, `production_run_attempt`, SHA `main`, номер и head SHA
+    финального PR, стадию отказа и признак начала deployment; checksum manifest,
+    идентификатор deployment и результат отката добавляются, когда применимы.
+    Сбой до слияния финального PR оставляет поезд без изменения и допускает
+    повтор либо `abort`.
     Сбой после слияния до deployment фиксируется с
     `deployment_started=false` и результатом отката `not_applicable`.
 13. После успешного train-выпуска тот же обработчик `workflow_run` повторно
@@ -460,14 +470,16 @@ Pull request можно перевести из чернового состоя�
     разрешает открыть следующий поезд.
 16. Если автоматический запуск `train-lifecycle` после завершения production
     workflow не состоялся или завершился ошибкой, владелец повторяет безопасный
-    запуск либо вызывает `reconcile` с точными `train_id` и
-    `production_run_id`. Под общей блокировкой обработчик заново получает и
-    проверяет identity production workflow, завершённый run, ref, head SHA,
-    release manifest, deployment и его результат, после чего сам вычисляет
-    единственно допустимый `close`, `fail` или `recover`. Запись выполняется
-    идемпотентно по `production_run_id` и вычисленной операции; инициатор и оба
-    запуска сохраняются для аудита. Указать желаемый переход, применить `force`,
-    отменить поезд после начала deployment или обойти обязательную
+    запуск либо вызывает `reconcile` с точными `train_id`, `production_run_id` и
+    `production_run_attempt`. Под общей блокировкой обработчик через
+    attempt-specific API заново получает и проверяет identity production
+    workflow, точную завершённую попытку, ref, head SHA, release manifest,
+    deployment и его результат, после чего сам вычисляет единственно допустимый
+    `close`, `fail` или `recover`. Запись выполняется идемпотентно по паре
+    `production_run_id` + `production_run_attempt` и вычисленной операции;
+    инициатор, пара production run и пара запуска `reconcile` сохраняются для
+    аудита. Указать желаемый переход, применить `force`, отменить поезд после
+    начала deployment или обойти обязательную
     `train_release_failed` нельзя. При неполных, неоднозначных или недоступных
     доказательствах операция ничего не меняет и допускает безопасный повтор.
     Прямая правка append-only реестра запрещена.
