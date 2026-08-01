@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "claude-fable-5",
+  "autoMemoryEnabled": false,
+  "disableAllHooks": true,
+  "permissions": {
+    "defaultMode": "plan",
+    "allow": [],
+    "ask": [],
+    "deny": [
+      "*"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_AUTH_TOKEN": "",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+  }
+}

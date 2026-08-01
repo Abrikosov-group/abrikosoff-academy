@@ -1,0 +1,681 @@
+name: Тройное ИИ-ревью по подпискам
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-all-${{ github.repository }}-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  command:
+    name: Распознать команду ревью
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      value: ${{ steps.parse.outputs.value }}
+
+    steps:
+      - name: Нормализовать текст комментария
+        id: parse
+        shell: bash
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          shopt -s extglob
+
+          command="${COMMENT_BODY//$'\r'/}"
+          command="${command##+([[:space:]])}"
+          command="${command%%+([[:space:]])}"
+          case "${command}" in
+            /review-all)
+              echo "value=review-all" >> "${GITHUB_OUTPUT}"
+              ;;
+            /review-claude)
+              echo "value=review-claude" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              echo "value=ignore" >> "${GITHUB_OUTPUT}"
+              ;;
+          esac
+
+  dispatch-codex:
+    name: Запустить Codex
+    needs: command
+    if: needs.command.outputs.value == 'review-all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ secrets.REVIEW_DISPATCH_TOKEN }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Отправить идемпотентный запрос Codex
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Не настроен секрет REVIEW_DISPATCH_TOKEN"
+            exit 1
+          fi
+
+          dispatcher="$(gh api user --jq .login)"
+          gh api "repos/${REPOSITORY}" --jq .full_name > /dev/null
+          existing="$(gh api --paginate \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"${dispatcher}\" and .body == \"@codex review на русском языке: опубликуй итог, заголовки и все замечания на русском; идентификаторы и код оставь без перевода.\" and .id > ${COMMENT_ID}) | .id")"
+          if [[ -n "${existing}" ]]; then
+            echo "Запрос Codex уже существует: ${existing}"
+            exit 0
+          fi
+
+          echo "Диспетчер: ${dispatcher}"
+          gh api --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body='@codex review на русском языке: опубликуй итог, заголовки и все замечания на русском; идентификаторы и код оставь без перевода.' > /dev/null
+
+  dispatch-gemini:
+    name: Запустить Gemini
+    needs: command
+    if: needs.command.outputs.value == 'review-all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ secrets.REVIEW_DISPATCH_TOKEN }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Отправить идемпотентный запрос Gemini
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Не настроен секрет REVIEW_DISPATCH_TOKEN"
+            exit 1
+          fi
+
+          dispatcher="$(gh api user --jq .login)"
+          gh api "repos/${REPOSITORY}" --jq .full_name > /dev/null
+          existing="$(gh api --paginate \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"${dispatcher}\" and .body == \"/gemini review\" and .id > ${COMMENT_ID}) | .id")"
+          if [[ -n "${existing}" ]]; then
+            echo "Запрос Gemini уже существует: ${existing}"
+            exit 0
+          fi
+
+          echo "Диспетчер: ${dispatcher}"
+          gh api --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body='/gemini review' > /dev/null
+
+  acknowledge-review-all:
+    name: Подтвердить запуск Codex и Gemini
+    needs: [command, dispatch-codex, dispatch-gemini]
+    if: >-
+      always() &&
+      needs.command.outputs.value == 'review-all' &&
+      needs.dispatch-codex.result == 'success' &&
+      needs.dispatch-gemini.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Поставить подтверждающую реакцию
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh api \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --jq '.[] | select(.content == "rocket" and .user.login == "github-actions[bot]") | .id')"
+          if [[ -n "${existing}" ]]; then
+            exit 0
+          fi
+
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --raw-field content='rocket'
+
+  claude-review:
+    name: Ревью Claude по подписке
+    needs: command
+    if: >-
+      needs.command.outputs.value == 'review-all' ||
+      needs.command.outputs.value == 'review-claude'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      review_base64: ${{ steps.extract.outputs.review_base64 }}
+      actual_model: ${{ steps.extract.outputs.actual_model }}
+      reviewed_base_ref: ${{ steps.pr.outputs.base_ref }}
+      reviewed_base_sha: ${{ steps.pr.outputs.base_sha }}
+      reviewed_head_sha: ${{ steps.pr.outputs.head_sha }}
+      reviewed_merge_base_sha: ${{ steps.context.outputs.merge_base_sha }}
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    env:
+      # Пустые значения исключают случайный переход на платный Anthropic API.
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_AUTH_TOKEN: ""
+
+    steps:
+      - name: Проверить ранее опубликованное ревью Claude
+        id: existing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set -euo pipefail
+          marker="<!-- review-all:${COMMENT_ID}:claude -->"
+          existing="$(gh api --paginate \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id")"
+          if [[ -n "${existing}" ]]; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "Ревью Claude уже опубликовано: ${existing}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Проверить подписочный OAuth Claude
+        if: steps.existing.outputs.exists != 'true'
+        shell: bash
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            echo "::error::Не настроен подписочный секрет CLAUDE_CODE_OAUTH_TOKEN"
+            exit 1
+          fi
+
+      - name: Зафиксировать проверяемый снимок PR
+        if: steps.existing.outputs.exists != 'true'
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          TRUSTED_POLICY_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          base_repository="$(jq -er '.base.repo.full_name' <<< "${pr_json}")"
+          base_ref="$(jq -er '.base.ref' <<< "${pr_json}")"
+          base_sha="$(jq -er '.base.sha' <<< "${pr_json}")"
+          head_sha="$(jq -er '.head.sha' <<< "${pr_json}")"
+          metadata_file="${RUNNER_TEMP}/claude-pr-metadata.json"
+
+          if [[ "${base_repository}" != "${REPOSITORY}" ]]; then
+            echo "::error::Базовая ветка PR должна принадлежать проверяемому репозиторию"
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/${base_ref}" > /dev/null; then
+            echo "::error::GitHub вернул недопустимое имя базовой ветки"
+            exit 1
+          fi
+          if [[ ! "${base_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub вернул недопустимый base SHA"
+            exit 1
+          fi
+          if [[ ! "${head_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub вернул недопустимый head SHA"
+            exit 1
+          fi
+          if [[ ! "${TRUSTED_POLICY_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub вернул недопустимый SHA доверенного workflow"
+            exit 1
+          fi
+
+          jq -cer '
+            {
+              title,
+              body,
+              author: {login: .user.login},
+              baseRefName: .base.ref,
+              headRefName: .head.ref,
+              headRefOid: .head.sha,
+              url: .html_url
+            }
+          ' <<< "${pr_json}" > "${metadata_file}"
+
+          {
+            echo "base_ref=${base_ref}"
+            echo "base_sha=${base_sha}"
+            echo "head_sha=${head_sha}"
+            echo "trusted_policy_sha=${TRUSTED_POLICY_SHA}"
+            echo "metadata_file=${metadata_file}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Доверенный SHA политики: ${TRUSTED_POLICY_SHA}"
+          echo "Базовая ветка PR: ${base_ref}"
+          echo "Зафиксированный base SHA: ${base_sha}"
+          echo "Проверяемый head SHA: ${head_sha}"
+
+      - name: Получить доверенные правила ревью из SHA workflow
+        if: steps.existing.outputs.exists != 'true'
+        # Зафиксировано на actions/checkout v6.
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ steps.pr.outputs.trusted_policy_sha }}
+          path: _review_policy
+          sparse-checkout: |
+            .github/review
+          sparse-checkout-cone-mode: false
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Подготовить изолированный снимок PR
+        if: steps.existing.outputs.exists != 'true'
+        id: context
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          TRUSTED_POLICY_SHA: ${{ steps.pr.outputs.trusted_policy_sha }}
+          PR_METADATA_FILE: ${{ steps.pr.outputs.metadata_file }}
+          SNAPSHOT_REPO: ${{ github.workspace }}/_review_policy
+          TRUSTED_REVIEW_DIR: ${{ github.workspace }}/_review_policy/.github/review
+        run: |
+          set -euo pipefail
+
+          prompt_file="${RUNNER_TEMP}/claude-review-prompt.md"
+          prompt_template="${TRUSTED_REVIEW_DIR}/prompts/claude-fable-5-review.md"
+          settings_file="${TRUSTED_REVIEW_DIR}/claude-settings.json"
+          snapshot_base_ref="refs/remotes/review/pr-base"
+          snapshot_head_ref="refs/remotes/review/pr-head"
+
+          if [[ ! -f "${prompt_template}" ]]; then
+            echo "::error::Канонический промт Fable 5 не найден в base SHA"
+            exit 1
+          fi
+          if [[ ! -f "${settings_file}" ]]; then
+            echo "::error::Настройки Fable 5 не найдены в base SHA"
+            exit 1
+          fi
+          if [[ "${PR_METADATA_FILE}" != "${RUNNER_TEMP}/claude-pr-metadata.json" || ! -f "${PR_METADATA_FILE}" ]]; then
+            echo "::error::Метаданные исходного снимка PR не найдены"
+            exit 1
+          fi
+          checked_out_policy_sha="$(git -C "${SNAPSHOT_REPO}" rev-parse HEAD)"
+          if [[ "${checked_out_policy_sha}" != "${TRUSTED_POLICY_SHA}" ]]; then
+            echo "::error::Checkout не соответствует SHA доверенного workflow"
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/${BASE_REF}" > /dev/null; then
+            echo "::error::Недопустимое имя зафиксированной базовой ветки"
+            exit 1
+          fi
+
+          basic_auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          git -C "${SNAPSHOT_REPO}" \
+            -c "http.extraheader=AUTHORIZATION: basic ${basic_auth}" \
+            fetch --no-tags --force origin \
+            "+refs/heads/${BASE_REF}:${snapshot_base_ref}" \
+            "+refs/pull/${PR_NUMBER}/head:${snapshot_head_ref}"
+          unset basic_auth
+
+          fetched_base_sha="$(git -C "${SNAPSHOT_REPO}" rev-parse "${snapshot_base_ref}^{commit}")"
+          if [[ "${fetched_base_sha}" != "${BASE_SHA}" ]]; then
+            echo "::error::PR изменился до фиксации base SHA; ревью отменено"
+            exit 1
+          fi
+          fetched_head_sha="$(git -C "${SNAPSHOT_REPO}" rev-parse "${snapshot_head_ref}^{commit}")"
+          if [[ "${fetched_head_sha}" != "${HEAD_SHA}" ]]; then
+            echo "::error::PR изменился до фиксации head SHA; ревью отменено"
+            exit 1
+          fi
+          merge_base_sha="$(git -C "${SNAPSHOT_REPO}" merge-base "${BASE_SHA}" "${HEAD_SHA}")"
+          if [[ ! "${merge_base_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Не удалось определить корректный merge-base PR"
+            exit 1
+          fi
+
+          {
+            cat "${prompt_template}"
+            echo
+            echo '## Служебные значения оркестратора'
+            echo
+            printf "REPOSITORY: \`%s\`\n" "${REPOSITORY}"
+            printf "PR_NUMBER: \`%s\`\n" "${PR_NUMBER}"
+            printf "BASE_SHA: \`%s\`\n" "${BASE_SHA}"
+            printf "HEAD_SHA: \`%s\`\n" "${HEAD_SHA}"
+            printf "MERGE_BASE_SHA: \`%s\`\n" "${merge_base_sha}"
+            echo
+            echo '===== НАЧАЛО НЕДОВЕРЕННОГО СНИМКА ====='
+            echo '## Метаданные PR'
+            cat "${PR_METADATA_FILE}"
+            echo
+            echo '## Diff зафиксированного снимка PR'
+            git -C "${SNAPSHOT_REPO}" diff \
+              --no-ext-diff \
+              --binary \
+              --find-renames \
+              "${merge_base_sha}...${HEAD_SHA}" --
+            echo '===== КОНЕЦ НЕДОВЕРЕННОГО СНИМКА ====='
+          } > "${prompt_file}"
+
+          current_pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          current_base_ref="$(jq -er '.base.ref' <<< "${current_pr_json}")"
+          current_base_sha="$(jq -er '.base.sha' <<< "${current_pr_json}")"
+          current_head_sha="$(jq -er '.head.sha' <<< "${current_pr_json}")"
+          if [[ "${current_base_ref}" != "${BASE_REF}" ||
+                "${current_base_sha}" != "${BASE_SHA}" ||
+                "${current_head_sha}" != "${HEAD_SHA}" ]]; then
+            echo "::error::base/head PR изменились во время подготовки снимка; ревью отменено"
+            exit 1
+          fi
+
+          prompt_bytes="$(wc -c < "${prompt_file}" | tr -d '[:space:]')"
+          if (( prompt_bytes < 1 || prompt_bytes > 750000 )); then
+            echo "::error::Снимок PR имеет недопустимый размер: ${prompt_bytes} байт"
+            exit 1
+          fi
+
+          {
+            echo "prompt_file=${prompt_file}"
+            echo "settings_file=${settings_file}"
+            echo "merge_base_sha=${merge_base_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Выполнить независимое ревью Claude Fable 5
+        if: steps.existing.outputs.exists != 'true'
+        id: claude
+        # Зафиксировано на Claude Code Base Action из claude-code-action v1.0.183.
+        uses: anthropics/claude-code-action/base-action@be7b93b1907a4abad570368f3c74b6fe3807510b
+        env:
+          # Claude запускается вне checkout и не читает проектные CLAUDE.md/settings.
+          CLAUDE_WORKING_DIR: ${{ runner.temp }}
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt_file: ${{ steps.context.outputs.prompt_file }}
+          settings: ${{ steps.context.outputs.settings_file }}
+          show_full_output: false
+          claude_args: |
+            --model claude-fable-5
+            --fallback-model claude-opus-5
+            --effort max
+            --max-turns 1
+            --permission-mode plan
+            --tools=
+            --strict-mcp-config
+            --mcp-config '{"mcpServers":{}}'
+            --disable-slash-commands
+            --no-session-persistence
+            --no-chrome
+
+      - name: Безопасно извлечь итоговый текст Claude
+        if: >-
+          steps.existing.outputs.exists != 'true' &&
+          steps.claude.outputs.conclusion == 'success'
+        id: extract
+        shell: bash
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" || -n "${INPUT_CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            echo "::error::OAuth не должен быть доступен шагу извлечения результата"
+            exit 1
+          fi
+          if [[ "${EXECUTION_FILE}" != "${RUNNER_TEMP}/claude-execution-output.json" ]]; then
+            echo "::error::Получен неожиданный путь к журналу Claude"
+            exit 1
+          fi
+          if [[ ! -f "${EXECUTION_FILE}" ]]; then
+            echo "::error::Журнал выполнения Claude не найден"
+            exit 1
+          fi
+
+          if ! actual_model="$(jq -er '
+            [
+              .[]
+              | select(
+                  .type? == "assistant" and
+                  (.message.model? | type == "string") and
+                  (.message.model | length > 0)
+                )
+              | .message.model
+            ]
+            | unique
+            | if length == 1 then .[0] else empty end
+          ' "${EXECUTION_FILE}")"; then
+            echo "::error::Фактически использованную модель Claude определить невозможно"
+            exit 1
+          fi
+          case "${actual_model}" in
+            claude-fable-5|claude-opus-5)
+              ;;
+            *)
+              echo "::error::Неизвестная фактически использованная модель Claude: ${actual_model}"
+              exit 1
+              ;;
+          esac
+
+          review_file="${RUNNER_TEMP}/claude-review.txt"
+          jq -erj '
+            (
+              [
+                .[]
+                | select(
+                    .type? == "result" and
+                    (.result? | type == "string") and
+                    (.result | length > 0)
+                  )
+                | .result
+              ]
+              | last
+            ) // (
+              [
+                .[]
+                | select(
+                    .type? == "assistant" and
+                    (.message.content? | type == "array")
+                  )
+                | [
+                    .message.content[]
+                    | select(
+                        .type? == "text" and
+                        (.text? | type == "string")
+                      )
+                    | .text
+                  ]
+                | join("\n")
+                | select(length > 0)
+              ]
+              | last
+            )
+            | select(type == "string" and length > 0)
+          ' "${EXECUTION_FILE}" > "${review_file}"
+
+          bytes="$(wc -c < "${review_file}" | tr -d '[:space:]')"
+          if (( bytes < 1 || bytes > 60000 )); then
+            echo "::error::Недопустимый размер результата Claude: ${bytes} байт"
+            exit 1
+          fi
+
+          review_base64="$(base64 < "${review_file}" | tr -d '\n')"
+          echo "review_base64=${review_base64}" >> "${GITHUB_OUTPUT}"
+          echo "actual_model=${actual_model}" >> "${GITHUB_OUTPUT}"
+
+  publish-claude-review:
+    name: Опубликовать ревью Claude без OAuth
+    needs: [command, claude-review]
+    if: >-
+      always() &&
+      needs.claude-review.result == 'success' &&
+      (
+        needs.command.outputs.value == 'review-all' ||
+        needs.command.outputs.value == 'review-claude'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+      CLAUDE_RESULT_BASE64: ${{ needs.claude-review.outputs.review_base64 }}
+      ACTUAL_MODEL: ${{ needs.claude-review.outputs.actual_model }}
+      REVIEWED_BASE_REF: ${{ needs.claude-review.outputs.reviewed_base_ref }}
+      REVIEWED_BASE_SHA: ${{ needs.claude-review.outputs.reviewed_base_sha }}
+      REVIEWED_HEAD_SHA: ${{ needs.claude-review.outputs.reviewed_head_sha }}
+      REVIEWED_MERGE_BASE_SHA: ${{ needs.claude-review.outputs.reviewed_merge_base_sha }}
+
+    steps:
+      - name: Опубликовать безопасно извлечённый результат
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          marker="<!-- review-all:${COMMENT_ID}:claude -->"
+          existing="$(gh api --paginate \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id")"
+          if [[ -n "${existing}" ]]; then
+            echo "Ревью Claude уже опубликовано: ${existing}"
+            exit 0
+          fi
+
+          for reviewed_sha in \
+            "${REVIEWED_BASE_SHA}" \
+            "${REVIEWED_HEAD_SHA}" \
+            "${REVIEWED_MERGE_BASE_SHA}"; do
+            if [[ ! "${reviewed_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Отсутствует корректный SHA проверенного снимка PR"
+              exit 1
+            fi
+          done
+          case "${ACTUAL_MODEL}" in
+            claude-fable-5)
+              review_title='Ревью Claude Fable 5'
+              ;;
+            claude-opus-5)
+              review_title='Ревью Claude Opus 5 (fallback)'
+              ;;
+            *)
+              echo "::error::Неизвестная или отсутствующая фактически использованная модель Claude"
+              exit 1
+              ;;
+          esac
+
+          review_file="${RUNNER_TEMP}/claude-review.txt"
+          if ! printf '%s' "${CLAUDE_RESULT_BASE64}" | base64 --decode > "${review_file}" 2>/dev/null; then
+            if ! printf '%s' "${CLAUDE_RESULT_BASE64}" | base64 -D > "${review_file}" 2>/dev/null; then
+              echo "::error::Не удалось декодировать результат Claude"
+              exit 1
+            fi
+          fi
+          bytes="$(wc -c < "${review_file}" | tr -d '[:space:]')"
+          if (( bytes < 1 || bytes > 60000 )); then
+            echo "::error::Недопустимый размер результата Claude: ${bytes} байт"
+            exit 1
+          fi
+
+          body_file="${RUNNER_TEMP}/claude-review.md"
+          {
+            printf '## %s\n' "${review_title}"
+            echo "${marker}"
+            echo
+            echo '**Проверенный снимок PR:**'
+            printf -- "- Base: \`%s\`\n" "${REVIEWED_BASE_SHA}"
+            printf -- "- Merge base: \`%s\`\n" "${REVIEWED_MERGE_BASE_SHA}"
+            printf -- "- Head: \`%s\`\n" "${REVIEWED_HEAD_SHA}"
+            echo
+            cat "${review_file}"
+            echo
+          } > "${body_file}"
+
+          current_pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          current_base_ref="$(jq -er '.base.ref' <<< "${current_pr_json}")"
+          current_base_sha="$(jq -er '.base.sha' <<< "${current_pr_json}")"
+          current_head_sha="$(jq -er '.head.sha' <<< "${current_pr_json}")"
+          if [[ -z "${REVIEWED_BASE_REF}" ||
+                "${current_base_ref}" != "${REVIEWED_BASE_REF}" ||
+                "${current_base_sha}" != "${REVIEWED_BASE_SHA}" ||
+                "${current_head_sha}" != "${REVIEWED_HEAD_SHA}" ]]; then
+            echo "::error::base/head PR изменились после ревью; устаревший результат не опубликован"
+            exit 1
+          fi
+
+          gh pr comment "${PR_NUMBER}" \
+            --repo "${REPOSITORY}" \
+            --body-file "${body_file}"
+
+  acknowledge-claude-review:
+    name: Подтвердить отдельное ревью Claude
+    needs: [command, publish-claude-review]
+    if: >-
+      always() &&
+      needs.command.outputs.value == 'review-claude' &&
+      needs.publish-claude-review.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Поставить подтверждающую реакцию
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh api \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --jq '.[] | select(.content == "rocket" and .user.login == "github-actions[bot]") | .id')"
+          if [[ -n "${existing}" ]]; then
+            exit 0
+          fi
+
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --raw-field content='rocket'
