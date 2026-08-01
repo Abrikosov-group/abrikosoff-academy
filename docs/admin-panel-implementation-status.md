@@ -281,10 +281,11 @@ step-up. Отдельных маршрутов общего списка дос�
 2. доверенный staging workflow, его attempt-specific свидетельство, deployment,
    полный автоматический контур и приёмку точного замороженного SHA;
 3. PR-only классификатор, отдельный read-only шлюз release-свидетельств,
-   детерминированное закрепление точного успешного staging deployment при
-   повторных проверках и production promotion тех же digest без повторной сборки
-   с атомарной заменой действующего workflow для train-, hotfix- и
-   infrastructure-no-deploy путей;
+   проверку самой поздней Actions-попытки staging независимо от её результата,
+   candidate-scoped сериализацию staging и production, детерминированное
+   закрепление связанного с успешной последней попыткой staging deployment и
+   production promotion тех же digest без повторной сборки с атомарной заменой
+   действующего workflow для train-, hotfix- и infrastructure-no-deploy путей;
 4. закрытие поезда, фиксацию любого отказа, включая reconcile раннего сбоя до
    получения и проверки manifest либо создания production deployment,
    проверенный откат и recovery.
@@ -316,10 +317,11 @@ production-режима `operational`.
    candidate-build с доказательством неизменности защищённого release-контура и
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
    PR-only классификатор, отдельный read-only шлюз release-свидетельств,
-   детерминированное закрепление принятого staging deployment при повторных
-   проверках, promotion тех же digest без повторной сборки, fail-closed выпуск,
-   reconcile раннего сбоя до получения входных свидетельств либо создания
-   production deployment, откат и recovery.
+   проверку самой поздней staging-попытки независимо от её результата,
+   candidate-scoped сериализацию staging и production, детерминированное
+   закрепление связанного staging deployment, promotion тех же digest без
+   повторной сборки, fail-closed выпуск, reconcile раннего сбоя до получения
+   входных свидетельств либо создания production deployment, откат и recovery.
 3. **Email Identity в production.** Общий magic-link для учеников и
    администраторов, безопасный `link_method`, lifecycle методов, browser
    binding, GET/POST-split, delivery outbox, email adapter, worker и

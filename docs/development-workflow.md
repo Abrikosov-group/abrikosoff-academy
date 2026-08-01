@@ -394,6 +394,18 @@ Pull request можно перевести из чернового состоя�
    manifest и защищённого release-контура и полный набор значений digest. Каждый
    artifact ID проверяется как принадлежащий указанной точной попытке; ссылка
    только по имени artifact запрещена.
+   Staging-job и job-вызов доверенного reusable workflow production-критической
+   секции используют общую для репозитория concurrency-группу по `release_type`
+   и SHA кандидата с `queue: max` и `cancel-in-progress: false`. Вызов
+   получает ключ группы только из проверенных выходов предшествующих read-only
+   jobs; исходные значения `workflow_dispatch` ключом доверия не являются. Он
+   удерживает группу до завершения раздельных read-only проверки
+   release-свидетельств и зависимого deployment-job внутри reusable workflow;
+   их разрешения не объединяются. Production ждёт уже вставшие в эту очередь
+   staging-попытки, а более поздняя попытка не выполняется одновременно с
+   production-критической секцией. В начале staging-job проверяется отсутствие
+   production deployment точного SHA; после начала production новая попытка
+   отклоняется по принципу fail-closed.
 7. Из интеграционной ветки открывается финальный PR в `main`. Его head SHA
    обязан совпадать с SHA принятого staging-кандидата. Для этого SHA выполняется
    полный интеграционный раунд ревью; все замечания закрываются по обычным
@@ -419,15 +431,25 @@ Pull request можно перевести из чернового состоя�
 10. Train- и hotfix-кандидаты переходят в отдельный read-only job разрешения
     выпуска с `contents: read`, `pull-requests: read`, `actions: read`,
     `deployments: read` и `packages: read`. Он не получает write-разрешений и не
-    обращается к production Environment. Через Deployments API с полной
-    пагинацией он сначала получает все staging deployments фиксированных
-    environment и task, предварительного класса и точного head SHA PR, затем для
-    каждого получает актуальный статус. Отсутствие успешных записей останавливает
-    выпуск. Если успешных записей несколько, включая повторные staging-проверки,
-    job детерминированно выбирает самую позднюю по присвоенному GitHub значению
-    `created_at`, используя deployment ID для разрешения равенства, и закрепляет
-    точный `deployment_id` как неизменяемый вход текущего запуска. Более поздняя
-    конкурентная запись не меняет этот вход. Из выбранной записи по точным
+    обращается к production Environment. Уже внутри общей candidate-scoped
+    concurrency-группы он через Actions API с полной пагинацией получает все
+    запуски точного доверенного staging workflow для head SHA PR и каждую их
+    попытку через attempt-specific endpoint. Самая поздняя попытка определяется
+    по присвоенному GitHub `run_started_at`, при его равенстве — по `run_id`,
+    затем по `run_attempt`; отсутствующие или противоречивые данные останавливают
+    выпуск. Последняя попытка обязана
+    завершиться с `conclusion=success`: более поздние `queued`, `in_progress`,
+    `failure`, `cancelled`, `timed_out` и любые другие результаты, отличные от
+    success, блокируют выпуск независимо от более старого успеха.
+    Затем через Deployments API с полной пагинацией job получает все staging
+    deployments фиксированных environment и task, предварительного класса и
+    точного head SHA PR и актуальный статус каждого. Он требует ровно одну
+    успешную запись с `staging_run_id` и `staging_run_attempt` последней успешной
+    Actions-попытки. Успехи более старых попыток не создают неоднозначность;
+    отсутствие, дубликат или несовпадение записи останавливают выпуск без отката
+    к старому успеху. Job закрепляет точные `staging_run_id`,
+    `staging_run_attempt` и `deployment_id` как неизменяемый вход текущего
+    запуска. Из выбранной записи по точным
     `release_manifest_artifact_id`,
     `candidate_build_run_id` и `candidate_build_run_attempt` job получает
     release manifest и проверяет принадлежность artifact указанной попытке. Для
@@ -437,7 +459,8 @@ Pull request можно перевести из чернового состоя�
     записи `train_opened` без терминальной `train_closed`, `train_aborted` или
     `train_recovered`, в release manifest и успешном staging deployment. Workflow
     получает head SHA этого PR и требует его точного совпадения с SHA deployment.
-    Все последующие проверки относятся только к закреплённому `deployment_id`;
+    Все последующие проверки относятся только к закреплённым staging-попытке и
+    `deployment_id`;
     несовпадение останавливает выпуск без перехода к более старой записи. Для
     hotfix-кандидата manifest должен содержать `release_type=hotfix`, а head
     SHA — точно совпасть с SHA успешной сокращённой staging-проверки hotfix.
@@ -465,7 +488,9 @@ Pull request можно перевести из чернового состоя�
 12. Только зависимый job deployment получает минимально необходимые
     write-разрешения и обращается к production Environment. В production без
     повторной сборки развёртываются те же образы по digest из проверенного
-    release manifest. Workflow не отправляет `workflow_dispatch` и не получает
+    release manifest. Оба job остаются внутри удерживающего общую
+    candidate-scoped concurrency-группу вызова reusable workflow. Workflow не
+    отправляет `workflow_dispatch` и не получает
     `actions: write`: его завершение независимо обрабатывает `train-lifecycle`
     через `workflow_run: completed`.
 13. После слияния финального train-PR любой этап целевого production workflow,
