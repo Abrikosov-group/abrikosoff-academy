@@ -282,10 +282,13 @@ step-up. Отдельных маршрутов общего списка дос�
    полный автоматический контур и приёмку точного замороженного SHA;
 3. PR-only классификатор, отдельный read-only шлюз release-свидетельств,
    проверку самой поздней Actions-попытки staging независимо от её результата,
-   candidate-scoped сериализацию staging и production, детерминированное
-   закрепление связанного с успешной последней попыткой staging deployment и
-   production promotion тех же digest без повторной сборки с атомарной заменой
-   действующего workflow для train-, hotfix- и infrastructure-no-deploy путей;
+   глобальную сериализацию всех изменений единственного staging-окружения и
+   production-критической секции, детерминированное закрепление связанного с
+   успешной последней попыткой staging deployment, идемпотентный no-op с
+   lifecycle-восстановлением вместо повторного deployment уже успешно
+   выпущенной неизменяемой идентичности и production promotion тех же digest без
+   повторной сборки с атомарной заменой действующего workflow для train-,
+   hotfix- и infrastructure-no-deploy путей;
 4. закрытие поезда, фиксацию любого отказа, включая reconcile раннего сбоя до
    получения и проверки manifest либо создания production deployment,
    проверенный откат и recovery.
@@ -318,10 +321,13 @@ production-режима `operational`.
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
    PR-only классификатор, отдельный read-only шлюз release-свидетельств,
    проверку самой поздней staging-попытки независимо от её результата,
-   candidate-scoped сериализацию staging и production, детерминированное
-   закрепление связанного staging deployment, promotion тех же digest без
-   повторной сборки, fail-closed выпуск, reconcile раннего сбоя до получения
-   входных свидетельств либо создания production deployment, откат и recovery.
+   глобальную сериализацию всех изменений единственного staging-окружения и
+   production-критической секции, детерминированное закрепление связанного
+   staging deployment, идемпотентный no-op с lifecycle-восстановлением вместо
+   повторного deployment уже успешно выпущенной неизменяемой идентичности,
+   promotion тех же digest без повторной сборки, fail-closed выпуск, reconcile
+   раннего сбоя до получения входных свидетельств либо создания production
+   deployment, откат и recovery.
 3. **Email Identity в production.** Общий magic-link для учеников и
    администраторов, безопасный `link_method`, lifecycle методов, browser
    binding, GET/POST-split, delivery outbox, email adapter, worker и
