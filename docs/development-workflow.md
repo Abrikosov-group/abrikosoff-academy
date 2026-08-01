@@ -24,7 +24,7 @@ staging и production workflows имеют доступ только на чте
 conclusion, достигнутую стадию и требуемые на ней свидетельства: полученные и
 проверенные manifest и staging evidence, а после начала развёртывания —
 production deployment. Иной workflow, ref либо несовпадение отклоняются. Любая
-ссылка на Actions-запуск в manifest, deployment и реестре состоит из пары
+ссылка на запуск GitHub Actions в manifest, deployment и реестре состоит из пары
 `run_id` + `run_attempt`; один `run_id` не является доказательством конкретной
 попытки. `reconcile` принимает только точные `train_id`, `production_run_id` и
 `production_run_attempt`, не принимает желаемый результат и передаёт данные
@@ -419,10 +419,16 @@ Pull request можно перевести из чернового состоя�
 10. Train- и hotfix-кандидаты переходят в отдельный read-only job разрешения
     выпуска с `contents: read`, `pull-requests: read`, `actions: read`,
     `deployments: read` и `packages: read`. Он не получает write-разрешений и не
-    обращается к production Environment. Через Deployments API он сначала
-    находит ровно один успешный staging deployment предварительного класса для
-    head SHA PR; отсутствие или неоднозначность останавливает выпуск. Из этой
-    записи по точным `release_manifest_artifact_id`,
+    обращается к production Environment. Через Deployments API с полной
+    пагинацией он сначала получает все staging deployments фиксированных
+    environment и task, предварительного класса и точного head SHA PR, затем для
+    каждого получает актуальный статус. Отсутствие успешных записей останавливает
+    выпуск. Если успешных записей несколько, включая повторные staging-проверки,
+    job детерминированно выбирает самую позднюю по присвоенному GitHub значению
+    `created_at`, используя deployment ID для разрешения равенства, и закрепляет
+    точный `deployment_id` как неизменяемый вход текущего запуска. Более поздняя
+    конкурентная запись не меняет этот вход. Из выбранной записи по точным
+    `release_manifest_artifact_id`,
     `candidate_build_run_id` и `candidate_build_run_attempt` job получает
     release manifest и проверяет принадлежность artifact указанной попытке. Для
     train-кандидата manifest должен содержать `release_type=train`, а исходная
@@ -431,7 +437,9 @@ Pull request можно перевести из чернового состоя�
     записи `train_opened` без терминальной `train_closed`, `train_aborted` или
     `train_recovered`, в release manifest и успешном staging deployment. Workflow
     получает head SHA этого PR и требует его точного совпадения с SHA deployment.
-    Для hotfix-кандидата manifest должен содержать `release_type=hotfix`, а head
+    Все последующие проверки относятся только к закреплённому `deployment_id`;
+    несовпадение останавливает выпуск без перехода к более старой записи. Для
+    hotfix-кандидата manifest должен содержать `release_type=hotfix`, а head
     SHA — точно совпасть с SHA успешной сокращённой staging-проверки hotfix.
 11. Job разрешения выпуска по `staging_run_id` + `staging_run_attempt` через
     attempt-specific GitHub Actions API повторно получает точную попытку staging
@@ -498,7 +506,7 @@ Pull request можно перевести из чернового состоя�
     восстановленного `main`, контрольной суммой manifest, идентификатором
     deployment и набором digest и закрывает интеграционную ветку. Успешный
     обычный hotfix без `recovery_for_train_id` не меняет состояние поезда, а
-    ошибочное поле без соответствующей `train_release_failed` отклоняется.
+    ошибочное поле без соответствующей записи `train_release_failed` отклоняется.
     Неудачная или незавершённая попытка восстановления не снимает блокировку.
 16. Если поезд решено не выпускать, владелец может отменить его только до
     слияния финального PR в `main` и до начала production deployment. Для этого

@@ -49,9 +49,10 @@ production-деплоя.
    `run_attempt`, head SHA, conclusion, достигнутую стадию и требуемые на ней
    свидетельства: полученные и проверенные manifest и staging evidence, а после
    начала развёртывания — production deployment. Иной workflow, ref либо
-   несовпадающие данные отклоняются. Любая ссылка на GitHub Actions-запуск в manifest,
-   deployment и реестре состоит из пары `run_id` + `run_attempt`: `run_id` без
-   номера попытки не используется как доказательство или ключ идемпотентности.
+   несовпадающие данные отклоняются. Любая ссылка на запуск GitHub Actions в
+   manifest, deployment и реестре состоит из пары `run_id` + `run_attempt`:
+   `run_id` без номера попытки не используется как доказательство или ключ
+   идемпотентности.
    Операция `reconcile` принимает только точные `train_id`,
    `production_run_id` и `production_run_attempt`, не принимает желаемое
    состояние и направляет данные точной попытки в тот же обработчик переходов.
@@ -205,9 +206,15 @@ production-деплоя.
     отдельный job разрешения выпуска. Этот job получает минимальные
     `contents: read`, `pull-requests: read`, `actions: read`,
     `deployments: read` и `packages: read`, не получает write-разрешений и не
-    обращается к production Environment. Сначала он через Deployments API
-    находит ровно один успешный staging deployment предварительного класса для
-    head SHA PR; отсутствие или неоднозначность останавливает выпуск. Из этой
+    обращается к production Environment. Сначала он через Deployments API с
+    полной пагинацией получает все staging deployments фиксированных environment
+    и task, предварительного класса и точного head SHA PR, затем для каждого
+    получает актуальный статус. Отсутствие успешных записей останавливает выпуск.
+    Если успешных записей несколько, в том числе после повторной staging-проверки,
+    job детерминированно выбирает самую позднюю по присвоенному GitHub значению
+    `created_at`, используя deployment ID для разрешения равенства, и закрепляет
+    её точный `deployment_id` как неизменяемый вход текущего запуска. Более
+    поздняя конкурентная запись не меняет уже закреплённый вход. Из выбранной
     записи job получает release manifest по точным
     `release_manifest_artifact_id`, `candidate_build_run_id` и
     `candidate_build_run_attempt` из staging deployment. Для кандидата train он
@@ -216,7 +223,9 @@ production-деплоя.
     `train_aborted` или `train_recovered`; её `train_id` должен точно совпасть с
     `train_id` manifest и успешного полного staging deployment, а её
     `source_branch` — с исходной веткой PR и `source_branch` тех же manifest и
-    deployment. Head SHA PR должен точно совпасть с SHA этого deployment. Для
+    deployment. Head SHA PR должен точно совпасть с SHA этого deployment. Все
+    последующие проверки относятся только к закреплённому `deployment_id`;
+    несовпадение останавливает выпуск без перехода к более старой записи. Для
     кандидата hotfix он требует `release_type=hotfix` в manifest и точного
     совпадения head SHA с SHA успешной сокращённой staging-проверки hotfix.
     По `staging_run_id` + `staging_run_attempt` через
@@ -293,7 +302,7 @@ production-деплоя.
     восстановленного `main`, контрольной суммой manifest, идентификатором
     deployment и набором digest и закрывает интеграционную ветку. Успешный
     обычный hotfix без `recovery_for_train_id` не меняет состояние поезда, а
-    ошибочное поле без соответствующей `train_release_failed` отклоняется.
+    ошибочное поле без соответствующей записи `train_release_failed` отклоняется.
     Неудачный или незавершённый recovery-hotfix не создаёт терминальную запись и
     не снимает блокировку нового поезда.
 16. Незавершённый поезд можно отменить только до слияния его финального PR в
