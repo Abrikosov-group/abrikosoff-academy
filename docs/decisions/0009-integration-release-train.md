@@ -160,16 +160,20 @@ production-деплоя.
    его Git-tree, `candidate_base_main_sha`, `candidate_build_run_id` и
    `candidate_build_run_attempt` записываются в неизменяемый release manifest —
    артефакт этой конкретной попытки, сохранённый механизмом, который гарантирует
-   неизменяемость. Staging развёртывается только из этого manifest, а запись
-   staging deployment сохраняет `train_id`, `source_branch`, SHA кандидата,
+   неизменяемость. Доверенный staging workflow загружает своё определение и
+   управляющие скрипты из `candidate_base_main_sha` и развёртывает staging
+   только из этого manifest. Лишь после успешного завершения миграций, полного
+   автоматического контура, связной приёмки и проверки отката он создаёт
+   неизменяемое свидетельство staging и успешную запись staging deployment.
+   Они сохраняют `train_id`, `source_branch`, SHA кандидата,
    `candidate_base_main_sha`, `candidate_build_run_id`,
    `candidate_build_run_attempt`, `release_manifest_artifact_id`,
-   `staging_run_id`, `staging_run_attempt`, контрольные суммы manifest и
-   защищённого release-контура и все значения digest. Artifact ID обязан
-   принадлежать указанной попытке candidate-build; одно имя artifact не
-   является достаточной ссылкой. Любой новый коммит в кандидате или `main`
-   аннулирует кандидата и требует повторить синхронизацию, сборку и
-   staging-приёмку.
+   `staging_run_id`, `staging_run_attempt`, `staging_evidence_artifact_id`,
+   идентификатор deployment, контрольные суммы manifest и защищённого
+   release-контура и все значения digest. Каждый artifact ID обязан принадлежать
+   указанной точной попытке; одно имя artifact не является достаточной ссылкой.
+   Любой новый коммит в кандидате или `main` аннулирует кандидата и требует
+   повторить синхронизацию, сборку и staging-приёмку.
 10. После завершения этапов 0–4 карты реализации и успешной staging-приёмки
     создаётся финальный PR из точной `source_branch` единственного активного
     поезда в `main`. Его head SHA обязан совпадать с SHA принятого
@@ -203,7 +207,14 @@ production-деплоя.
     из staging deployment. Он не отправляет `workflow_dispatch` и не получает
     `actions: write`: его завершение независимо обрабатывает
     `train-lifecycle` через `workflow_run: completed`.
-    Production workflow требует, чтобы запуск относился к доверенному workflow,
+    Production workflow по `staging_run_id` + `staging_run_attempt` через
+    attempt-specific GitHub Actions API повторно получает точную попытку staging
+    и по `staging_evidence_artifact_id` — её неизменяемое свидетельство. Он
+    проверяет identity staging workflow, его
+    определение из `candidate_base_main_sha`, завершение с результатом success,
+    точный SHA кандидата, manifest, deployment, контрольные суммы и digest;
+    artifact свидетельства обязан принадлежать этой попытке. Затем production
+    workflow требует, чтобы candidate-build относился к доверенному workflow,
     его определению из указанного `candidate_base_main_sha` и доказательству
     неизменности защищённого release-контура, обработал точный head SHA как
     кандидата и завершился успешно, а затем проверяет тип выпуска, контрольные
@@ -217,11 +228,12 @@ production-деплоя.
     проверенного release manifest. После этого выполняются health-check,
     smoke-проверки ключевых сценариев и документированный контроль отката.
 13. Пока создание manifest, доказательство неизменности защищённого
-    release-контура, запись staging deployment и разрешение digest из нового
-    `main` SHA по принципу запрета при ошибке (fail-closed) не реализованы,
-    финальное слияние релизного поезда в `main` запрещено. Замена действующего
-    production workflow запрещена до одновременной готовности его train- и
-    hotfix-режимов и инфраструктурного no-deploy классификатора.
+    release-контура, attempt-specific проверка доверенного staging workflow,
+    неизменяемое свидетельство и запись staging deployment и разрешение digest
+    из нового `main` SHA по принципу запрета при ошибке (fail-closed) не
+    реализованы, финальное слияние релизного поезда в `main` запрещено. Замена
+    действующего production workflow запрещена до одновременной готовности его
+    train- и hotfix-режимов и инфраструктурного no-deploy классификатора.
 14. После успешного train-выпуска событие `workflow_run: completed` запускает
     `train-lifecycle`. После повторной проверки точного production run, manifest
     и успешного deployment обработчик выбирает операцию `close`. Под блокировкой

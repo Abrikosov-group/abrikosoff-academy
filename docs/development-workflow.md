@@ -378,17 +378,20 @@ Pull request можно перевести из чернового состоя�
    `candidate_build_run_attempt` записываются в неизменяемый release manifest —
    артефакт этой конкретной попытки, сохранённый механизмом, который гарантирует
    неизменяемость.
-5. Staging развёртывается только из release manifest. Запись staging deployment
-   сохраняет `train_id`, точную `source_branch`, SHA кандидата,
-   `candidate_base_main_sha`, `candidate_build_run_id`,
-   `candidate_build_run_attempt`, `release_manifest_artifact_id`,
-   `staging_run_id`, `staging_run_attempt`, контрольные суммы manifest и
-   защищённого release-контура и полный набор значений digest. Artifact ID
-   проверяется как принадлежащий указанной попытке candidate-build; ссылка
-   только по имени artifact запрещена.
+5. Доверенный staging workflow загружает своё определение и управляющие скрипты
+   из `candidate_base_main_sha`, получает release manifest точной попытки
+   candidate-build и развёртывает staging только из него.
 6. В staging выполняются миграции, полный CI, smoke-тесты, сквозные сценарии,
-   проверка наблюдаемости и пользовательская приёмка. Проверяется также
-   документированный откат.
+   проверка наблюдаемости, пользовательская приёмка и документированный откат.
+   Только после их успеха staging workflow создаёт неизменяемое свидетельство и
+   успешную запись staging deployment. Они сохраняют `train_id`, точную
+   `source_branch`, SHA кандидата, `candidate_base_main_sha`,
+   `candidate_build_run_id`, `candidate_build_run_attempt`,
+   `release_manifest_artifact_id`, `staging_run_id`, `staging_run_attempt`,
+   `staging_evidence_artifact_id`, идентификатор deployment, контрольные суммы
+   manifest и защищённого release-контура и полный набор значений digest. Каждый
+   artifact ID проверяется как принадлежащий указанной точной попытке; ссылка
+   только по имени artifact запрещена.
 7. Из интеграционной ветки открывается финальный PR в `main`. Его head SHA
    обязан совпадать с SHA принятого staging-кандидата. Для этого SHA выполняется
    полный интеграционный раунд ревью; все замечания закрываются по обычным
@@ -415,14 +418,22 @@ Pull request можно перевести из чернового состоя�
    записи `train_opened` без терминальной `train_closed`, `train_aborted` или
    `train_recovered`, в release manifest и успешном staging deployment. Workflow
    получает head SHA этого PR и требует его точного совпадения с SHA deployment.
-10. По `release_manifest_artifact_id` и паре `candidate_build_run_id` +
-    `candidate_build_run_attempt` из staging deployment workflow получает
-    release manifest точной попытки и проверяет принадлежность artifact этой
-    попытке. Он требует, чтобы запуск относился к доверенному workflow, его
-    определению из `candidate_base_main_sha` и доказательству неизменности
-    защищённого release-контура, обработал точный SHA кандидата и завершился
-    успешно, а затем проверяет контрольные суммы manifest и защищённых путей,
-    SHA кандидата и полный набор значений digest. SHA `main` непосредственно до
+10. Production workflow по `staging_run_id` + `staging_run_attempt` через
+    attempt-specific GitHub Actions API повторно получает точную попытку staging
+    и по `staging_evidence_artifact_id` — её неизменяемое свидетельство. Он
+    проверяет identity staging workflow, его
+    определение из `candidate_base_main_sha`, результат success, SHA кандидата,
+    manifest, deployment, контрольные суммы и digest и требует, чтобы artifact
+    свидетельства принадлежал этой попытке. По `release_manifest_artifact_id` и
+    паре `candidate_build_run_id` + `candidate_build_run_attempt` из staging
+    deployment он также получает release manifest точной попытки и проверяет
+    принадлежность artifact этой попытке. Production workflow требует, чтобы
+    запуск candidate-build относился к доверенному workflow, использовал его
+    определение из `candidate_base_main_sha`, содержал доказательство
+    неизменности защищённого release-контура, обработал точный SHA кандидата и
+    завершился успешно. Затем он проверяет контрольные суммы manifest и
+    защищённых путей, SHA кандидата и полный набор значений digest. SHA `main`
+    непосредственно до
     слияния обязан совпадать с `candidate_base_main_sha` из manifest, а Git-tree
     нового `main` SHA — с Git-tree head SHA PR. Исторический `opened_from_main_sha`
     используется только для проверки происхождения поезда и не сравнивается с
