@@ -175,11 +175,18 @@ production-деплоя.
    идентификатор deployment, контрольные суммы manifest и защищённого
    release-контура и все значения digest. Каждый artifact ID обязан принадлежать
    указанной точной попытке; одно имя artifact не является достаточной ссылкой.
-   Staging-job и job-вызов доверенного reusable workflow production-критической
-   секции используют общую для репозитория concurrency-группу по `release_type`
-   и SHA кандидата с `queue: max` и `cancel-in-progress: false`. Вызов
+   Целевой production workflow сохраняет отдельную глобальную workflow-level
+   concurrency-группу `production-release` с `queue: max` и
+   `cancel-in-progress: false`. Она не зависит от `release_type` или SHA и
+   удерживается от запуска классификатора до завершения workflow, включая
+   deployment и откат, поэтому production-выпуски разных кандидатов не могут
+   изменять общее окружение одновременно. Дополнительно staging-job и job-вызов
+   доверенного reusable workflow production-критической секции используют общую
+   для репозитория candidate-scoped concurrency-группу по `release_type` и SHA
+   кандидата с теми же `queue: max` и `cancel-in-progress: false`. Вызов
    получает ключ группы только из проверенных выходов предшествующих read-only
-   jobs; исходные значения `workflow_dispatch` ключом доверия не являются. Он
+   jobs; исходные значения `workflow_dispatch` ключом доверия не являются. Эта
+   вторая группа не заменяет глобальную production-сериализацию. Вызов
    удерживает группу до завершения содержащихся в reusable workflow раздельных
    read-only проверки release-свидетельств и зависимого deployment-job; их
    разрешения не объединяются. Поэтому production ждёт завершения всех

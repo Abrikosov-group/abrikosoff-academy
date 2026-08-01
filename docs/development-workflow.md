@@ -394,11 +394,18 @@ Pull request можно перевести из чернового состоя�
    manifest и защищённого release-контура и полный набор значений digest. Каждый
    artifact ID проверяется как принадлежащий указанной точной попытке; ссылка
    только по имени artifact запрещена.
-   Staging-job и job-вызов доверенного reusable workflow production-критической
-   секции используют общую для репозитория concurrency-группу по `release_type`
-   и SHA кандидата с `queue: max` и `cancel-in-progress: false`. Вызов
+   Целевой production workflow сохраняет отдельную глобальную workflow-level
+   concurrency-группу `production-release` с `queue: max` и
+   `cancel-in-progress: false`. Она не зависит от `release_type` или SHA и
+   удерживается от классификатора до завершения workflow, включая deployment и
+   откат. Поэтому production-выпуски разных кандидатов не могут одновременно
+   изменять общее окружение. Дополнительно staging-job и job-вызов доверенного
+   reusable workflow production-критической секции используют общую для
+   репозитория candidate-scoped concurrency-группу по `release_type` и SHA
+   кандидата с теми же `queue: max` и `cancel-in-progress: false`. Вызов
    получает ключ группы только из проверенных выходов предшествующих read-only
-   jobs; исходные значения `workflow_dispatch` ключом доверия не являются. Он
+   jobs; исходные значения `workflow_dispatch` ключом доверия не являются. Эта
+   вторая группа не заменяет глобальную production-сериализацию. Вызов
    удерживает группу до завершения раздельных read-only проверки
    release-свидетельств и зависимого deployment-job внутри reusable workflow;
    их разрешения не объединяются. Production ждёт уже вставшие в эту очередь
