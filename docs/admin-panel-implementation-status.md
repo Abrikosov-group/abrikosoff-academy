@@ -282,7 +282,8 @@ step-up. Отдельных маршрутов общего списка дос�
    полный автоматический контур и приёмку точного замороженного SHA;
 3. production promotion тех же digest без повторной сборки и атомарную замену
    действующего workflow с train-, hotfix- и infrastructure-no-deploy путями;
-4. закрытие поезда, фиксацию любого отказа, проверенный откат и recovery.
+4. закрытие поезда, фиксацию любого отказа, включая reconcile раннего сбоя до
+   создания manifest или deployment, проверенный откат и recovery.
 
 До production-реализации email необходимо зафиксировать:
 
@@ -310,8 +311,8 @@ production-режима `operational`.
 2. **Финальный шлюз выпуска.** До финального PR поезда в `main` реализовать
    candidate-build с доказательством неизменности защищённого release-контура и
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
-   promotion тех же digest без повторной сборки, fail-closed выпуск, откат и
-   recovery.
+   promotion тех же digest без повторной сборки, fail-closed выпуск, reconcile
+   раннего сбоя до создания артефактов, откат и recovery.
 3. **Email Identity в production.** Общий magic-link для учеников и
    администраторов, безопасный `link_method`, lifecycle методов, browser
    binding, GET/POST-split, delivery outbox, email adapter, worker и
