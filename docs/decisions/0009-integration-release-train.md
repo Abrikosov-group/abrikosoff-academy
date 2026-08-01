@@ -181,11 +181,11 @@ production-деплоя.
     поезда в `main`. Его head SHA обязан совпадать с SHA принятого
     staging-кандидата. PR проходит полный интеграционный раунд на этом SHA и
     требует отдельного разрешения владельца.
-11. Каждый push в `main` может запустить целевой workflow, но его первый job с
-    минимальными read-разрешениями через GitHub API находит ровно один связанный
-    слитый PR с базовой веткой `main`, получает сохранённый head SHA и до выдачи
-    `packages: write` либо обращения к production Environment выбирает ровно один
-    из трёх взаимоисключающих путей:
+11. Каждый push в `main` может запустить целевой workflow. Его первый
+    job-классификатор получает только `contents: read` и `pull-requests: read`,
+    через GitHub API находит ровно один связанный слитый PR с базовой веткой
+    `main`, получает сохранённый head SHA и только по данным PR выбирает один из
+    трёх предварительных взаимоисключающих классов:
     - инфраструктурный PR без deployment: он отдельно одобрен владельцем, явно
       помечен как инфраструктурный, а его изменённые файлы полностью входят в
       статический allowlist определений, вспомогательных скриптов, автоматических
@@ -194,28 +194,38 @@ production-деплоя.
       этот путь. Успешная классификация завершает workflow до сборки,
       публикации образов и production deployment, не меняет состояние поезда и
       сохраняет проверяемый итог no-op;
-    - `release_type=train`, ровно одна запись `train_opened` без терминальной
-      `train_closed`, `train_aborted` или `train_recovered`; её `train_id` точно
-      совпадает с `train_id` manifest и успешного полного staging deployment, а
-      её `source_branch` — с исходной веткой PR и `source_branch` тех же manifest
-      и deployment; head SHA точно совпадает с SHA этого deployment;
-    - исходная ветка вида `codex/hotfix-*`, `release_type=hotfix` и точное
-      совпадение head SHA с SHA успешной сокращённой staging-проверки hotfix.
+    - кандидат hotfix: исходная ветка PR имеет вид `codex/hotfix-*`;
+    - кандидат train: PR не имеет признаков инфраструктурного или hotfix-класса;
+      его исходная ветка и head SHA сохраняются для следующей проверки.
     Любая другая исходная ветка, файл вне инфраструктурного allowlist, смешение
-    признаков или несколько связанных PR останавливают workflow. Только пути
-    train и hotfix продолжаются: с минимальными read-разрешениями для contents,
-    pull-requests, actions, deployments и packages workflow получает release
-    manifest по точным `release_manifest_artifact_id`, `run_id` и `run_attempt`
-    из staging deployment. Он не отправляет `workflow_dispatch` и не получает
-    `actions: write`: его завершение независимо обрабатывает
-    `train-lifecycle` через `workflow_run: completed`.
-    Production workflow по `staging_run_id` + `staging_run_attempt` через
+    признаков или несколько связанных PR останавливают workflow. Результат
+    классификатора не является разрешением выпуска и не утверждает наличие
+    записи поезда, manifest либо staging deployment. Инфраструктурный класс
+    завершается проверяемым no-op. Только кандидаты train и hotfix передаются в
+    отдельный job разрешения выпуска. Этот job получает минимальные
+    `contents: read`, `pull-requests: read`, `actions: read`,
+    `deployments: read` и `packages: read`, не получает write-разрешений и не
+    обращается к production Environment. Сначала он через Deployments API
+    находит ровно один успешный staging deployment предварительного класса для
+    head SHA PR; отсутствие или неоднозначность останавливает выпуск. Из этой
+    записи job получает release manifest по точным
+    `release_manifest_artifact_id`, `candidate_build_run_id` и
+    `candidate_build_run_attempt` из staging deployment. Для кандидата train он
+    требует `release_type=train` в manifest
+    и ровно одну запись `train_opened` без терминальной `train_closed`,
+    `train_aborted` или `train_recovered`; её `train_id` должен точно совпасть с
+    `train_id` manifest и успешного полного staging deployment, а её
+    `source_branch` — с исходной веткой PR и `source_branch` тех же manifest и
+    deployment. Head SHA PR должен точно совпасть с SHA этого deployment. Для
+    кандидата hotfix он требует `release_type=hotfix` в manifest и точного
+    совпадения head SHA с SHA успешной сокращённой staging-проверки hotfix.
+    По `staging_run_id` + `staging_run_attempt` через
     attempt-specific GitHub Actions API повторно получает точную попытку staging
     и по `staging_evidence_artifact_id` — её неизменяемое свидетельство. Он
     проверяет identity staging workflow, его
     определение из `candidate_base_main_sha`, завершение с результатом success,
     точный SHA кандидата, manifest, deployment, контрольные суммы и digest;
-    artifact свидетельства обязан принадлежать этой попытке. Затем production
+    артефакт свидетельства должен принадлежать этой попытке. Затем production
     workflow требует, чтобы candidate-build относился к доверенному workflow,
     его определению из указанного `candidate_base_main_sha` и доказательству
     неизменности защищённого release-контура, обработал точный head SHA как
@@ -225,7 +235,13 @@ production-деплоя.
     manifest, а Git-tree нового `main` SHA — с Git-tree head SHA PR. Исторический
     `opened_from_main_sha` используется только для проверки происхождения
     поезда и не сравнивается с базой кандидата. Отсутствие, неоднозначность или
-    несовпадение любого значения останавливает выпуск.
+    несовпадение любого значения останавливает выпуск. Только успешный job
+    разрешения выпуска передаёт неизменяемые тип выпуска, SHA, идентификаторы
+    свидетельств и digest в отдельный зависимый job deployment. Лишь этот job
+    может получить минимально необходимые write-разрешения и обратиться к
+    production Environment. Production workflow не отправляет
+    `workflow_dispatch` и не получает `actions: write`: его завершение независимо
+    обрабатывает `train-lifecycle` через `workflow_run: completed`.
 12. В production без повторной сборки развёртываются те же образы по digest из
     проверенного release manifest. После этого выполняются health-check,
     smoke-проверки ключевых сценариев и документированный контроль отката.

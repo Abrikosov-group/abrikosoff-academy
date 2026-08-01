@@ -280,8 +280,9 @@ step-up. Отдельных маршрутов общего списка дос�
    доказательством неизменности workflow и управляющих файлов release-контура;
 2. доверенный staging workflow, его attempt-specific свидетельство, deployment,
    полный автоматический контур и приёмку точного замороженного SHA;
-3. production promotion тех же digest без повторной сборки и атомарную замену
-   действующего workflow с train-, hotfix- и infrastructure-no-deploy путями;
+3. PR-only классификатор, отдельный read-only шлюз release-свидетельств и
+   production promotion тех же digest без повторной сборки с атомарной заменой
+   действующего workflow для train-, hotfix- и infrastructure-no-deploy путей;
 4. закрытие поезда, фиксацию любого отказа, включая reconcile раннего сбоя до
    получения и проверки manifest либо создания production deployment,
    проверенный откат и recovery.
@@ -312,6 +313,7 @@ production-режима `operational`.
 2. **Финальный шлюз выпуска.** До финального PR поезда в `main` реализовать
    candidate-build с доказательством неизменности защищённого release-контура и
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
+   PR-only классификатор, отдельный read-only шлюз release-свидетельств,
    promotion тех же digest без повторной сборки, fail-closed выпуск, reconcile
    раннего сбоя до получения входных свидетельств либо создания production
    deployment, откат и recovery.

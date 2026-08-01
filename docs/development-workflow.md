@@ -403,34 +403,44 @@ Pull request можно перевести из чернового состоя�
    сливает финальный PR в `main`.
 9. Каждый push в `main` сначала проходит отдельный job-классификатор с
    минимальными `contents: read` и `pull-requests: read`. Через GitHub API он
-   требует ровно один связанный слитый PR с базовой веткой `main` и до выдачи
-   прав записи либо обращения к production Environment выбирает один путь.
+   требует ровно один связанный слитый PR с базовой веткой `main` и только по
+   данным PR выбирает предварительный класс: infrastructure-no-deploy,
+   train-кандидат либо hotfix-кандидат. Исходная ветка hotfix-кандидата имеет
+   вид `codex/hotfix-*`; PR без признаков infrastructure-no-deploy или hotfix
+   становится лишь предварительным train-кандидатом.
    Отдельно одобренный и явно помеченный инфраструктурный PR завершается как
    no-op без сборки и deployment, только если все его файлы входят в статический
    allowlist определений, вспомогательных скриптов, автоматических проверок и
    документации доверенных lifecycle-, build- и release-workflows; файл
-   приложения, миграций или runtime-контура приложения отклоняет этот путь. Для
-   двух deployment-режимов задаются минимальные разрешения
-   `contents: read`, `pull-requests: read`, `actions: read`, `deployments: read`
-   и `packages: read`. Workflow не отправляет `workflow_dispatch` и не получает
-   `actions: write`: его завершение независимо обрабатывает `train-lifecycle`
-   через `workflow_run: completed`. При `release_type=train` исходная ветка PR и
-   `train_id` должны точно совпасть с
-   соответствующими значениями `source_branch` и `train_id` в единственной
-   записи `train_opened` без терминальной `train_closed`, `train_aborted` или
-   `train_recovered`, в release manifest и успешном staging deployment. Workflow
-   получает head SHA этого PR и требует его точного совпадения с SHA deployment.
-10. Production workflow по `staging_run_id` + `staging_run_attempt` через
+   приложения, миграций или runtime-контура приложения отклоняет этот путь.
+   Смешанные или неоднозначные признаки также отклоняются. Предварительная
+   классификация не является разрешением выпуска и не проверяет manifest либо
+   staging deployment.
+10. Train- и hotfix-кандидаты переходят в отдельный read-only job разрешения
+    выпуска с `contents: read`, `pull-requests: read`, `actions: read`,
+    `deployments: read` и `packages: read`. Он не получает write-разрешений и не
+    обращается к production Environment. Через Deployments API он сначала
+    находит ровно один успешный staging deployment предварительного класса для
+    head SHA PR; отсутствие или неоднозначность останавливает выпуск. Из этой
+    записи по точным `release_manifest_artifact_id`,
+    `candidate_build_run_id` и `candidate_build_run_attempt` job получает
+    release manifest и проверяет принадлежность artifact указанной попытке. Для
+    train-кандидата manifest должен содержать `release_type=train`, а исходная
+    ветка PR и `train_id` — точно совпасть с соответствующими значениями
+    `source_branch` и `train_id` в единственной
+    записи `train_opened` без терминальной `train_closed`, `train_aborted` или
+    `train_recovered`, в release manifest и успешном staging deployment. Workflow
+    получает head SHA этого PR и требует его точного совпадения с SHA deployment.
+    Для hotfix-кандидата manifest должен содержать `release_type=hotfix`, а head
+    SHA — точно совпасть с SHA успешной сокращённой staging-проверки hotfix.
+11. Job разрешения выпуска по `staging_run_id` + `staging_run_attempt` через
     attempt-specific GitHub Actions API повторно получает точную попытку staging
     и по `staging_evidence_artifact_id` — её неизменяемое свидетельство. Он
     проверяет identity staging workflow, его
     определение из `candidate_base_main_sha`, результат success, SHA кандидата,
-    manifest, deployment, контрольные суммы и digest и требует, чтобы artifact
-    свидетельства принадлежал этой попытке. По `release_manifest_artifact_id` и
-    паре `candidate_build_run_id` + `candidate_build_run_attempt` из staging
-    deployment он также получает release manifest точной попытки и проверяет
-    принадлежность artifact этой попытке. Production workflow требует, чтобы
-    запуск candidate-build относился к доверенному workflow, использовал его
+    manifest, deployment, контрольные суммы и digest и требует, чтобы артефакт
+    свидетельства принадлежал этой попытке. Затем job требует, чтобы запуск
+    candidate-build относился к доверенному workflow, использовал его
     определение из `candidate_base_main_sha`, содержал доказательство
     неизменности защищённого release-контура, обработал точный SHA кандидата и
     завершился успешно. Затем он проверяет контрольные суммы manifest и
@@ -441,10 +451,16 @@ Pull request можно перевести из чернового состоя�
     используется только для проверки происхождения поезда и не сравнивается с
     базой кандидата. Так проверяется, что исходный код и release-конфигурация
     совпадают с прошедшим staging кандидатом. При отсутствии, неоднозначности или
-    несовпадении любого значения выпуск останавливается.
-11. В production без повторной сборки развёртываются те же образы по digest из
-    проверенного release manifest.
-12. После слияния финального train-PR любой этап целевого production workflow,
+    несовпадении любого значения выпуск останавливается. Только успешный job
+    разрешения выпуска передаёт неизменяемые тип выпуска, SHA, идентификаторы
+    свидетельств и digest в отдельный зависимый job deployment.
+12. Только зависимый job deployment получает минимально необходимые
+    write-разрешения и обращается к production Environment. В production без
+    повторной сборки развёртываются те же образы по digest из проверенного
+    release manifest. Workflow не отправляет `workflow_dispatch` и не получает
+    `actions: write`: его завершение независимо обрабатывает `train-lifecycle`
+    через `workflow_run: completed`.
+13. После слияния финального train-PR любой этап целевого production workflow,
     завершившийся ошибкой, отменой или тайм-аутом, приводит к операции `fail`:
     это включает проверку PR и manifest до создания deployment, миграции,
     развёртывание образов, health-check, smoke-проверки и откат. Workflow
@@ -462,13 +478,13 @@ Pull request можно перевести из чернового состоя�
     повтор либо `abort`.
     Сбой после слияния до deployment фиксируется с
     `deployment_started=false` и результатом отката `not_applicable`.
-13. После успешного train-выпуска тот же обработчик `workflow_run` повторно
+14. После успешного train-выпуска тот же обработчик `workflow_run` повторно
     проверяет точный production run, manifest и deployment и выбирает операцию
     `close`. Под блокировкой жизненного цикла она добавляет в append-only реестр
     неизменяемую запись `train_closed` для этого `train_id` и закрывает
     интеграционную ветку. Следующий поезд получает новый `train_id` и создаётся
     от нового `main`.
-14. Запись `train_release_failed` оставляет поезд активным и не разрешает открыть
+15. Запись `train_release_failed` оставляет поезд активным и не разрешает открыть
     следующий.
     После устранения причины допустим повторный выпуск того же manifest при неизменном `main`; успешный выпуск завершается обычной операцией `close`.
     Если требуется изменение кода или конфигурации, выпускается принятый
@@ -484,7 +500,7 @@ Pull request можно перевести из чернового состоя�
     обычный hotfix без `recovery_for_train_id` не меняет состояние поезда, а
     ошибочное поле без соответствующей `train_release_failed` отклоняется.
     Неудачная или незавершённая попытка восстановления не снимает блокировку.
-15. Если поезд решено не выпускать, владелец может отменить его только до
+16. Если поезд решено не выпускать, владелец может отменить его только до
     слияния финального PR в `main` и до начала production deployment. Для этого
     он выполняет отдельный подтверждённый запуск операции `abort` того же
     `train-lifecycle`. Под блокировкой жизненного цикла workflow через GitHub API
@@ -496,7 +512,7 @@ Pull request можно перевести из чернового состоя�
     После слияния финального PR `abort` всегда отклоняется; допустимы только
     проверенный повтор выпуска либо recovery-hotfix. Простое удаление ветки не
     разрешает открыть следующий поезд.
-16. Если автоматический запуск `train-lifecycle` после завершения production
+17. Если автоматический запуск `train-lifecycle` после завершения production
     workflow не состоялся или завершился ошибкой, владелец повторяет безопасный
     запуск либо вызывает `reconcile` с точными `train_id`, `production_run_id` и
     `production_run_attempt`. Под общей блокировкой обработчик через
