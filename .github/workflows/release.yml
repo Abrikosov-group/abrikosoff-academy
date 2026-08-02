@@ -18,8 +18,39 @@ env:
   TELEGRAM_EGRESS_IMAGE_NAME: ghcr.io/abrikosov-group/abrikosoff-academy-telegram-egress
 
 jobs:
+  classify:
+    name: Классифицировать production-выпуск
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pull_request_number: ${{ steps.classify.outputs.pull_request_number }}
+      release_class: ${{ steps.classify.outputs.release_class }}
+      should_deploy: ${{ steps.classify.outputs.should_deploy }}
+
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Подготовить Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+
+      - name: Проверить ref и связанный pull request
+        id: classify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-train/release-classifier.mjs
+
   build-telegram-egress:
     name: Собрать и опубликовать Telegram-egress
+    needs: classify
+    if: needs.classify.outputs.should_deploy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -73,6 +104,8 @@ jobs:
 
   build:
     name: Собрать и опубликовать образ
+    needs: classify
+    if: needs.classify.outputs.should_deploy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -125,7 +158,11 @@ jobs:
 
   deploy:
     name: Развернуть на московском сервере
-    needs: build
+    needs:
+      - build
+      - build-telegram-egress
+      - classify
+    if: needs.classify.outputs.should_deploy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
