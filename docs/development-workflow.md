@@ -33,8 +33,8 @@ production deployment. Иной workflow, ref либо несовпадение 
 точной попытки тому же обработчику переходов. Production workflow сохраняет
 read-разрешения, а право записи остаётся у одной служебной identity.
 
-В целевой операции `open` под блокировкой жизненного цикла workflow
-`train-lifecycle` генерирует уникальный `train_id`, создаёт точную
+Целевая операция `open` workflow `train-lifecycle` выполняется под блокировкой
+жизненного цикла. Она генерирует уникальный `train_id`, создаёт точную
 `source_branch` от актуального `main`, автоматически применяет к ней точные
 branch protection rules и только после этого добавляет неизменяемую запись
 `train_opened` с отдельными `opened_from_main_sha`, `lifecycle_run_id` и
