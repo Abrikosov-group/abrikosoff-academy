@@ -3,10 +3,13 @@ import test from "node:test";
 
 import {
   ACADEMY_REPOSITORY,
+  CURRENT_BOOTSTRAP_TRAIN,
   SOURCE_BRANCH_REQUIRED_CHECKS,
   TRAIN_OPEN_CONFIRMATION,
 } from "../../scripts/release-train/config.mjs";
+import { GitHubApiError } from "../../scripts/release-train/github-api.mjs";
 import {
+  ensureRegistry,
   productionEnvironmentUpdatePayload,
   registryBranchProtectionPayload,
   retainedEnvironmentProtections,
@@ -20,11 +23,27 @@ import {
   validateSourceBranchProtection,
   validateTrustedInvocation,
 } from "../../scripts/release-train/train-lifecycle.mjs";
+import { createTrainOpenedEvent } from "../../scripts/release-train/registry.mjs";
 
 const MAIN_SHA = "a".repeat(40);
 const SOURCE_SHA = "b".repeat(40);
 const TRAIN_ID = "11111111-1111-4111-8111-111111111111";
 const APP_SLUG = "abrikosoff-release-lifecycle";
+
+function trainOpenedEvent(overrides = {}) {
+  return createTrainOpenedEvent({
+    actorId: "123456",
+    actorLogin: "owner",
+    lifecycleRunAttempt: 1,
+    lifecycleRunId: "987654",
+    occurredAt: "2026-08-02T12:00:00.000Z",
+    openedFromMainSha: CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha,
+    registrySequence: 1,
+    sourceBranch: CURRENT_BOOTSTRAP_TRAIN.sourceBranch,
+    trainId: TRAIN_ID,
+    ...overrides,
+  });
+}
 
 function trustedEnv(overrides = {}) {
   return {
@@ -165,6 +184,107 @@ test("ветка реестра разрешает запись только о�
   assert.throws(
     () => validateRegistryBranchProtection(unsafe, APP_SLUG),
     { code: "REGISTRY_PROTECTION_USERS" },
+  );
+});
+
+test("повтор open восстанавливает защиту корректного пустого реестра", async () => {
+  const emptyRegistry = {
+    events: [],
+    headSha: "c".repeat(40),
+    headTreeSha: "d".repeat(40),
+    state: { activeTrain: null },
+  };
+  let applyCount = 0;
+  let loadCount = 0;
+
+  const result = await ensureRegistry({}, APP_SLUG, {
+    async applyBranchProtection(_api, branch, payload) {
+      applyCount += 1;
+      assert.equal(branch, "release-train-registry");
+      assert.deepEqual(payload.restrictions.apps, [APP_SLUG]);
+      return registryProtectionResponse();
+    },
+    async getBranchProtection() {
+      throw new GitHubApiError({
+        body: { message: "Not Found" },
+        method: "GET",
+        path: "/branches/release-train-registry/protection",
+        response: { headers: new Headers(), status: 404 },
+      });
+    },
+    async initializeRegistry() {
+      assert.fail("существующий реестр не должен инициализироваться повторно");
+    },
+    async loadRegistry() {
+      loadCount += 1;
+      return emptyRegistry;
+    },
+  });
+
+  assert.equal(result, emptyRegistry);
+  assert.equal(applyCount, 1);
+  assert.equal(loadCount, 2);
+});
+
+test("защита непустого реестра не исправляется автоматически", async () => {
+  let applyCount = 0;
+  const activeTrain = trainOpenedEvent();
+  const unsafe = registryProtectionResponse();
+  unsafe.allow_force_pushes.enabled = true;
+
+  await assert.rejects(
+    ensureRegistry({}, APP_SLUG, {
+      async applyBranchProtection() {
+        applyCount += 1;
+        return registryProtectionResponse();
+      },
+      async getBranchProtection() {
+        return unsafe;
+      },
+      async loadRegistry() {
+        return {
+          events: [activeTrain],
+          headSha: "c".repeat(40),
+          headTreeSha: "d".repeat(40),
+          state: { activeTrain },
+        };
+      },
+    }),
+    { code: "REGISTRY_PROTECTION_FORCE_PUSH" },
+  );
+  assert.equal(applyCount, 0);
+});
+
+test("восстановление защиты отклоняет изменение пустого реестра", async () => {
+  const original = {
+    events: [],
+    headSha: "c".repeat(40),
+    headTreeSha: "d".repeat(40),
+    state: { activeTrain: null },
+  };
+  let loadCount = 0;
+
+  await assert.rejects(
+    ensureRegistry({}, APP_SLUG, {
+      async applyBranchProtection() {
+        return registryProtectionResponse();
+      },
+      async getBranchProtection() {
+        throw new GitHubApiError({
+          body: { message: "Not Found" },
+          method: "GET",
+          path: "/branches/release-train-registry/protection",
+          response: { headers: new Headers(), status: 404 },
+        });
+      },
+      async loadRegistry() {
+        loadCount += 1;
+        return loadCount === 1
+          ? original
+          : { ...original, headSha: "e".repeat(40) };
+      },
+    }),
+    { code: "REGISTRY_CHANGED_DURING_PROTECTION_REPAIR" },
   );
 });
 
@@ -315,15 +435,21 @@ function orchestrationServices(trace, overrides = {}) {
         state: { activeTrain: null },
       };
     },
-    async getBranchProtection() {
-      trace.push("verify-source-protection");
-      return sourceProtectionResponse();
+    async getBranchProtection(_api, branch) {
+      trace.push(`verify-protection:${branch}`);
+      return branch === "release-train-registry"
+        ? registryProtectionResponse()
+        : sourceProtectionResponse();
     },
     async getRef(_api, branch) {
       trace.push(`ref:${branch}`);
       return {
         sha: branch === "main" ? MAIN_SHA : SOURCE_SHA,
       };
+    },
+    async loadRegistry() {
+      trace.push("load-registry");
+      return null;
     },
     async prepareSourceBranch() {
       trace.push("prepare-source");
@@ -371,6 +497,102 @@ test("ошибка production Environment не создаёт train_opened", asy
       skipOutput: true,
     }),
     /environment failed/,
+  );
+  assert.equal(trace.includes("append"), false);
+});
+
+test("повтор того же lifecycle run подтверждает уже записанный train_opened", async () => {
+  const trace = [];
+  const activeTrain = trainOpenedEvent();
+  const services = orchestrationServices(trace, {
+    async ensureRegistry() {
+      assert.fail("для подтверждения записанного события мутации не нужны");
+    },
+    async loadRegistry() {
+      trace.push("load-registry-active");
+      return {
+        events: [activeTrain],
+        headSha: "c".repeat(40),
+        headTreeSha: "d".repeat(40),
+        state: { activeTrain },
+      };
+    },
+  });
+
+  const result = await runTrainOpen(
+    trustedEnv({ GITHUB_RUN_ATTEMPT: "2" }),
+    {
+      api: {},
+      randomUUID() {
+        assert.fail("при подтверждении существующего события новый UUID не нужен");
+      },
+      services,
+      skipOutput: true,
+    },
+  );
+
+  assert.deepEqual(result, {
+    openedFromMainSha: CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha,
+    sourceBranch: CURRENT_BOOTSTRAP_TRAIN.sourceBranch,
+    sourceSha: CURRENT_BOOTSTRAP_TRAIN.expectedHeadSha,
+    trainId: TRAIN_ID,
+  });
+  assert.deepEqual(trace, [
+    "app-scope",
+    "load-registry-active",
+    "verify-protection:release-train-registry",
+    "load-registry-active",
+  ]);
+});
+
+test("активный поезд другого lifecycle run остаётся блокирующим", async () => {
+  const trace = [];
+  const activeTrain = trainOpenedEvent({ lifecycleRunId: "111111" });
+  const services = orchestrationServices(trace, {
+    async loadRegistry() {
+      return {
+        events: [activeTrain],
+        headSha: "c".repeat(40),
+        headTreeSha: "d".repeat(40),
+        state: { activeTrain },
+      };
+    },
+  });
+
+  await assert.rejects(
+    runTrainOpen(trustedEnv(), {
+      api: {},
+      randomUUID: () => TRAIN_ID,
+      services,
+      skipOutput: true,
+    }),
+    { code: "TRAIN_ALREADY_ACTIVE" },
+  );
+  assert.equal(trace.includes("append"), false);
+});
+
+test("событие того же lifecycle run с другим actor не подтверждается", async () => {
+  const trace = [];
+  const activeTrain = trainOpenedEvent({ actorId: "999999" });
+  const services = orchestrationServices(trace, {
+    async loadRegistry() {
+      return {
+        events: [activeTrain],
+        headSha: "c".repeat(40),
+        headTreeSha: "d".repeat(40),
+        state: { activeTrain },
+      };
+    },
+  });
+
+  await assert.rejects(
+    runTrainOpen(trustedEnv({ GITHUB_RUN_ATTEMPT: "2" }), {
+      api: {},
+      randomUUID: () => TRAIN_ID,
+      services,
+      skipOutput: true,
+    }),
+    { code: "TRAIN_OPEN_REPLAY_MISMATCH" },
   );
   assert.equal(trace.includes("append"), false);
 });

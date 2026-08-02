@@ -49,8 +49,10 @@ test("release сначала классифицирует main SHA и не ст�
   );
   assert.match(
     workflow,
-    /deploy:[\s\S]*?needs:\n\s+- build\n\s+- build-telegram-egress\n\s+- classify/,
+    /deploy:[\s\S]*?needs:\n\s+- build\n\s+- classify/,
   );
+  const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
+  assert.doesNotMatch(deployJob, /\n\s+- build-telegram-egress/);
   assert.match(workflow, /node scripts\/release-train\/release-classifier\.mjs/);
 });
 
@@ -59,6 +61,8 @@ test("CI публикует отдельный обязательный конт
   assert.match(workflow, /name: Начальный шлюз релизного поезда/);
   assert.match(workflow, /node --test tests\/release-train\/\*\.test\.mjs/);
   assert.match(workflow, /node --check "\$script"/);
+  const gateJob = workflow.slice(workflow.indexOf("  release-train-gate:"));
+  assert.match(gateJob, /persist-credentials: false/);
 });
 
 test("release-классификатор содержит явный ref guard и закрытый allowlist", async () => {

@@ -595,13 +595,49 @@ async function initializeRegistry(api, appSlug) {
   return loadRegistry(api);
 }
 
-async function ensureRegistry(api, appSlug) {
-  let registry = await loadRegistry(api);
+export async function ensureRegistry(api, appSlug, dependencies = {}) {
+  const services = {
+    applyBranchProtection,
+    getBranchProtection,
+    initializeRegistry,
+    loadRegistry,
+    ...dependencies,
+  };
+  let registry = await services.loadRegistry(api);
   if (!registry) {
-    registry = await initializeRegistry(api, appSlug);
+    registry = await services.initializeRegistry(api, appSlug);
+  } else if (registry.events.length === 0) {
+    let protection;
+    try {
+      protection = await services.getBranchProtection(api, REGISTRY_BRANCH);
+      validateRegistryBranchProtection(protection, appSlug);
+    } catch (error) {
+      const repairable =
+        (error instanceof GitHubApiError && error.status === 404) ||
+        (error instanceof ReleaseGateError &&
+          error.code.startsWith("REGISTRY_PROTECTION_"));
+      if (!repairable) {
+        throw error;
+      }
+      protection = await services.applyBranchProtection(
+        api,
+        REGISTRY_BRANCH,
+        registryBranchProtectionPayload(appSlug),
+      );
+      validateRegistryBranchProtection(protection, appSlug);
+      const verified = await services.loadRegistry(api);
+      assertGate(
+        verified?.headSha === registry.headSha &&
+          verified.events.length === 0 &&
+          verified.state.activeTrain === null,
+        "REGISTRY_CHANGED_DURING_PROTECTION_REPAIR",
+        "Пустой реестр изменился во время восстановления защиты",
+      );
+      registry = verified;
+    }
   } else {
     validateRegistryBranchProtection(
-      await getBranchProtection(api, REGISTRY_BRANCH),
+      await services.getBranchProtection(api, REGISTRY_BRANCH),
       appSlug,
     );
   }
@@ -906,6 +942,28 @@ async function appendOpenedEvent(api, registry, event) {
   return verified;
 }
 
+function recoveredOpenResult(registry, invocation) {
+  const activeTrain = registry?.state.activeTrain;
+  if (!activeTrain || activeTrain.lifecycle_run_id !== invocation.lifecycleRunId) {
+    return null;
+  }
+  assertGate(
+    activeTrain.lifecycle_run_attempt <= invocation.lifecycleRunAttempt &&
+      activeTrain.actor_id === invocation.actorId &&
+      activeTrain.source_branch === CURRENT_BOOTSTRAP_TRAIN.sourceBranch &&
+      activeTrain.opened_from_main_sha ===
+        CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha,
+    "TRAIN_OPEN_REPLAY_MISMATCH",
+    "Существующая запись этого lifecycle run не совпадает с доверенным open",
+  );
+  return {
+    openedFromMainSha: activeTrain.opened_from_main_sha,
+    sourceBranch: activeTrain.source_branch,
+    sourceSha: CURRENT_BOOTSTRAP_TRAIN.expectedHeadSha,
+    trainId: activeTrain.train_id,
+  };
+}
+
 async function writeLifecycleResult(result, env) {
   assertGate(env.GITHUB_OUTPUT, "GITHUB_OUTPUT_MISSING", "GITHUB_OUTPUT не задан");
   await appendFile(
@@ -946,13 +1004,6 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
       repository: env.GITHUB_REPOSITORY,
       token: env.TRAIN_LIFECYCLE_TOKEN,
     });
-  const uuid = dependencies.randomUUID?.() ?? randomUUID();
-  assertGate(
-    UUID_PATTERN.test(uuid),
-    "TRAIN_ID_INVALID",
-    "Генератор не вернул допустимый UUID для train_id",
-  );
-
   const services = {
     appendOpenedEvent,
     applyBranchProtection,
@@ -961,11 +1012,37 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
     ensureRegistry,
     getBranchProtection,
     getRef,
+    loadRegistry,
     prepareSourceBranch,
     ...dependencies.services,
   };
 
   await services.assertAppRepositoryScope(api);
+  const observedRegistry = await services.loadRegistry(api);
+  if (observedRegistry?.state.activeTrain) {
+    validateRegistryBranchProtection(
+      await services.getBranchProtection(api, REGISTRY_BRANCH),
+      invocation.appSlug,
+    );
+    const verifiedRegistry = await services.loadRegistry(api);
+    assertGate(
+      verifiedRegistry?.headSha === observedRegistry.headSha,
+      "REGISTRY_CHANGED_DURING_OPEN_RECOVERY",
+      "Реестр изменился во время подтверждения существующего train_opened",
+    );
+    const observedResult = recoveredOpenResult(verifiedRegistry, invocation);
+    if (observedResult) {
+      if (!dependencies.skipOutput) {
+        await writeLifecycleResult(observedResult, env);
+      }
+      return observedResult;
+    }
+    throw new ReleaseGateError(
+      "TRAIN_ALREADY_ACTIVE",
+      `Уже активен поезд ${verifiedRegistry.state.activeTrain?.train_id ?? "<неизвестно>"}`,
+    );
+  }
+
   const mainRef = await services.getRef(api, DEFAULT_BRANCH);
   assertGate(
     mainRef.sha === invocation.mainSha,
@@ -974,10 +1051,24 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
   );
 
   const registry = await services.ensureRegistry(api, invocation.appSlug);
+  const concurrentResult = recoveredOpenResult(registry, invocation);
+  if (concurrentResult) {
+    if (!dependencies.skipOutput) {
+      await writeLifecycleResult(concurrentResult, env);
+    }
+    return concurrentResult;
+  }
   assertGate(
     registry.state.activeTrain === null,
     "TRAIN_ALREADY_ACTIVE",
     `Уже активен поезд ${registry.state.activeTrain?.train_id ?? "<неизвестно>"}`,
+  );
+
+  const uuid = dependencies.randomUUID?.() ?? randomUUID();
+  assertGate(
+    UUID_PATTERN.test(uuid),
+    "TRAIN_ID_INVALID",
+    "Генератор не вернул допустимый UUID для train_id",
   );
 
   await services.configureProductionEnvironment(api);
