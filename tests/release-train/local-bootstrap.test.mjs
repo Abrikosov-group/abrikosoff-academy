@@ -654,6 +654,64 @@ test("ошибка lifecycle не отменяет отзыв созданног
   assert.equal(revoked, true);
 });
 
+test("двойной сбой сохраняет ошибки проверки и отзыва installation token", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const raw = Buffer.from("sensitive-private-key-material");
+  const primaryError = new Error("verify failed");
+  const revocationError = new Error("revoke failed");
+  await assert.rejects(
+    runLocalBootstrap(
+      {
+        confirmation: null,
+        mode: "verify",
+        privateKeyPath: "/private/key.pem",
+      },
+      {
+        async createScopedInstallationToken() {
+          return tokenResponse();
+        },
+        currentTime: NOW,
+        async inspectOwnerPlatformContext() {
+          return {
+            actorId: CURRENT_LIFECYCLE_OWNER_ID,
+            actorLogin: "Etogerman",
+            platformContext: {
+              defaultBranch: "main",
+              organizationPlan: "team",
+              repository: ACADEMY_REPOSITORY,
+              repositoryVisibility: "private",
+            },
+          };
+        },
+        async inspectTrustedCheckout() {
+          return {
+            gitDirectory: "/repo/.git",
+            mainSha: MAIN_SHA,
+            repositoryRoot: "/repo",
+          };
+        },
+        installationApi: {},
+        async readPrivateKeyFile() {
+          return { privateKey, raw };
+        },
+        async revokeInstallationToken() {
+          throw revocationError;
+        },
+        async verifyScopedToken() {
+          throw primaryError;
+        },
+      },
+    ),
+    (error) => {
+      assert.equal(error.code, "LOCAL_INSTALLATION_TOKEN_REVOCATION_FAILED");
+      assert.ok(error.cause instanceof AggregateError);
+      assert.deepEqual(error.cause.errors, [primaryError, revocationError]);
+      return true;
+    },
+  );
+  assert.deepEqual(raw, Buffer.alloc(raw.length));
+});
+
 test("private key с групповым чтением отклоняется", async () => {
   const root = await mkdtemp(join(tmpdir(), "academy-train-key-"));
   const path = join(root, "app.pem");

@@ -834,12 +834,18 @@ export async function runLocalBootstrap(options, dependencies = {}) {
         installationApi,
       );
     } catch (error) {
+      const cause = primaryError
+        ? new AggregateError(
+            [primaryError, error],
+            "Основная операция и отзыв installation token завершились ошибкой",
+          )
+        : error;
       throw new ReleaseGateError(
         "LOCAL_INSTALLATION_TOKEN_REVOCATION_FAILED",
         primaryError
           ? `Installation token не отозван после ошибки ${primaryError.code ?? primaryError.name ?? "unknown"}`
           : "Installation token не отозван после завершения локального шлюза",
-        { cause: error },
+        { cause },
       );
     }
   }

@@ -41,8 +41,10 @@ test("train-lifecycle на Team/private не получает private key и о�
   assert.match(workflow, /docs\/operations\/release-train\.md/);
   assert.equal((workflow.match(/exit 1/g) ?? []).length, 2);
   assert.match(lifecycle, /ACTIONS_LIFECYCLE_DISABLED/);
+  const directRunIndex = lifecycle.indexOf("if (isDirectRun)");
+  assert.notEqual(directRunIndex, -1, "Не найден прямой CLI-вход lifecycle");
   assert.doesNotMatch(
-    lifecycle.slice(lifecycle.indexOf("if (isDirectRun)")),
+    lifecycle.slice(directRunIndex),
     /runTrainOpen\(/,
   );
 });
