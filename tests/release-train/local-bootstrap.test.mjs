@@ -33,8 +33,10 @@ import {
   runLocalBootstrap,
   validateAppIdentity,
   validateAppInstallation,
+  validateEnvironmentBranchPolicyMode,
   validateInstallationTokenResponse,
   validateOwnerPlatformResponses,
+  verifyScopedToken,
 } from "../../scripts/release-train/local-bootstrap.mjs";
 
 const MAIN_SHA = "a".repeat(40);
@@ -358,6 +360,90 @@ test("App и installation принимаются только с точной id
   );
 });
 
+test("production Environment допускает только два взаимоисключающих branch-policy режима", () => {
+  assert.equal(
+    validateEnvironmentBranchPolicyMode({
+      deployment_branch_policy: {
+        custom_branch_policies: false,
+        protected_branches: true,
+      },
+    }),
+    "protected",
+  );
+  assert.equal(
+    validateEnvironmentBranchPolicyMode({
+      deployment_branch_policy: {
+        custom_branch_policies: true,
+        protected_branches: false,
+      },
+    }),
+    "custom",
+  );
+  for (const deploymentBranchPolicy of [
+    undefined,
+    { custom_branch_policies: false, protected_branches: false },
+    { custom_branch_policies: true, protected_branches: true },
+  ]) {
+    assert.throws(
+      () =>
+        validateEnvironmentBranchPolicyMode({
+          deployment_branch_policy: deploymentBranchPolicy,
+        }),
+      { code: "LOCAL_ENVIRONMENT_BRANCH_MODE_INVALID" },
+    );
+  }
+});
+
+test("scope-проверка читает список policies только в custom-режиме", async () => {
+  const requests = [];
+  const environmentPath = `/repos/${ACADEMY_REPOSITORY}/environments/${PRODUCTION_ENVIRONMENT}`;
+  const policiesPath =
+    `${environmentPath}/deployment-branch-policies?per_page=1&page=1`;
+  const api = {
+    repoPath(path) {
+      return `/repos/${ACADEMY_REPOSITORY}${path}`;
+    },
+    async request(path) {
+      requests.push(path);
+      if (path === "/installation/repositories?per_page=100") {
+        return {
+          data: {
+            repositories: [{ full_name: ACADEMY_REPOSITORY }],
+            total_count: 1,
+          },
+        };
+      }
+      if (path === `/repos/${ACADEMY_REPOSITORY}/git/ref/heads/main`) {
+        return {
+          data: {
+            object: { sha: MAIN_SHA },
+            ref: "refs/heads/main",
+          },
+        };
+      }
+      if (path === environmentPath) {
+        return {
+          data: {
+            deployment_branch_policy: {
+              custom_branch_policies: true,
+              protected_branches: false,
+            },
+            name: PRODUCTION_ENVIRONMENT,
+          },
+        };
+      }
+      if (path === policiesPath) {
+        return { data: { branch_policies: [] } };
+      }
+      assert.fail(`неожиданный API path ${path}`);
+    },
+  };
+
+  await verifyScopedToken(api, MAIN_SHA);
+
+  assert.equal(requests.includes(policiesPath), true);
+});
+
 test("installation token запрашивается только для одного repo и минимальных прав", async () => {
   const requests = [];
   const responseByPath = new Map([
@@ -501,13 +587,15 @@ test("verify не создаёт operation state и всегда отзывае�
             };
           }
           if (path === environmentPath) {
-            return { data: { name: PRODUCTION_ENVIRONMENT } };
-          }
-          if (
-            path ===
-            `${environmentPath}/deployment-branch-policies?per_page=1&page=1`
-          ) {
-            return { data: { branch_policies: [] } };
+            return {
+              data: {
+                deployment_branch_policy: {
+                  custom_branch_policies: false,
+                  protected_branches: true,
+                },
+                name: PRODUCTION_ENVIRONMENT,
+              },
+            };
           }
           assert.fail(`неожиданный API path ${path}`);
         },
@@ -527,7 +615,6 @@ test("verify не создаёт operation state и всегда отзывае�
     "/installation/repositories?per_page=100",
     `/repos/${ACADEMY_REPOSITORY}/git/ref/heads/main`,
     environmentPath,
-    `${environmentPath}/deployment-branch-policies?per_page=1&page=1`,
   ]);
   assert.deepEqual(raw, Buffer.alloc(raw.length));
 });
