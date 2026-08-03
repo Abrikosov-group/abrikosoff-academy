@@ -116,6 +116,16 @@ Workflow дополнительно сужает installation token до `Action
 4. завершить job классификации успешно;
 5. пропустить оба job сборки образов и job production deployment.
 
+Endpoint связи коммита с PR
+`GET /repos/{owner}/{repo}/commits/{sha}/pulls` возвращает сокращённые
+карточки и не обязан включать `merge_commit_sha`. Классификатор использует из
+этого ответа только номер связанного слитого PR, затем получает полную карточку
+через `GET /repos/{owner}/{repo}/pulls/{number}`. Точный merge SHA проверяется
+отдельным GraphQL-запросом по полю `PullRequest.mergeCommit.oid`, потому что в
+REST API версии `2026-03-10` поле `merge_commit_sha` отсутствует и в полной
+карточке. Только согласованные REST- и GraphQL-ответы подтверждают merge SHA,
+базовую и исходную ветки, репозиторий и метку.
+
 Проверка через GitHub CLI:
 
 ```bash

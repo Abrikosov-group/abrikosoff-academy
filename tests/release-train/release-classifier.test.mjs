@@ -29,6 +29,32 @@ function pullRequest(overrides = {}) {
   };
 }
 
+function associatedPullRequest(overrides = {}) {
+  const fullPullRequest = pullRequest(overrides);
+  return {
+    base: fullPullRequest.base,
+    merged_at: fullPullRequest.merged_at,
+    number: fullPullRequest.number,
+  };
+}
+
+function graphQlPullRequest(overrides = {}) {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          baseRefName: "main",
+          mergeCommit: { oid: SHA },
+          merged: true,
+          mergedAt: "2026-08-02T12:00:00Z",
+          number: 40,
+          ...overrides,
+        },
+      },
+    },
+  };
+}
+
 test("production-выпуск отклоняет ref, отличный от main", () => {
   assert.throws(
     () =>
@@ -152,12 +178,111 @@ test("номер связанного PR обязан быть положите�
   );
 });
 
+test("поиск связанного PR догружает полную карточку по номеру", async () => {
+  const paths = [];
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path) {
+      paths.push(path);
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return { data: [associatedPullRequest()] };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        return { data: pullRequest({ merge_commit_sha: undefined }) };
+      }
+      assert.equal(path, "/graphql");
+      return { data: graphQlPullRequest() };
+    },
+  };
+
+  const found = await findMergedPullRequest({
+    api,
+    sha: SHA,
+    sleep(resolve) {
+      resolve();
+    },
+  });
+
+  assert.equal(found.merge_commit_sha, SHA);
+  assert.deepEqual(paths, [
+    `/repos/${REPOSITORY}/commits/${SHA}/pulls?per_page=100`,
+    `/repos/${REPOSITORY}/pulls/40`,
+    "/graphql",
+  ]);
+});
+
+test("поиск связанного PR не доверяет merge SHA сокращённого ответа", async () => {
+  let detailRequests = 0;
+  let sleeps = 0;
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path) {
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return {
+          data: [
+            {
+              ...associatedPullRequest(),
+              merge_commit_sha: SHA,
+            },
+          ],
+        };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        detailRequests += 1;
+        return { data: pullRequest() };
+      }
+      return {
+        data: graphQlPullRequest({ mergeCommit: { oid: "b".repeat(40) } }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    findMergedPullRequest({
+      api,
+      sha: SHA,
+      sleep(resolve) {
+        sleeps += 1;
+        resolve();
+      },
+    }),
+    { code: "RELEASE_PR_NOT_FOUND" },
+  );
+
+  assert.equal(detailRequests, 6);
+  assert.equal(sleeps, 5);
+});
+
+test("ошибка GraphQL при проверке merge SHA закрывает выпуск", async () => {
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path) {
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return { data: [associatedPullRequest()] };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        return { data: pullRequest({ merge_commit_sha: undefined }) };
+      }
+      return {
+        data: {
+          errors: [{ message: "merge commit unavailable" }],
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    findMergedPullRequest({ api, sha: SHA }),
+    { code: "RELEASE_PR_GRAPHQL_ERROR" },
+  );
+});
+
 test("поиск связанного PR повторяет временную ошибку API", async () => {
   let requests = 0;
   const delays = [];
   const api = {
     repoPath: (path) => `/repos/${REPOSITORY}${path}`,
-    async request() {
+    async request(path) {
       requests += 1;
       if (requests === 1) {
         throw new GitHubApiError({
@@ -167,7 +292,13 @@ test("поиск связанного PR повторяет временную �
           response: { headers: new Headers(), status: 503 },
         });
       }
-      return { data: [pullRequest()] };
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return { data: [associatedPullRequest()] };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        return { data: pullRequest() };
+      }
+      return { data: graphQlPullRequest() };
     },
   };
   const found = await findMergedPullRequest({
@@ -179,8 +310,76 @@ test("поиск связанного PR повторяет временную �
     },
   });
   assert.equal(found.number, 40);
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
   assert.deepEqual(delays, [0]);
+});
+
+test("поиск связанного PR повторяет временную ошибку полной карточки", async () => {
+  let detailRequests = 0;
+  const delays = [];
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path) {
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return { data: [associatedPullRequest()] };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        detailRequests += 1;
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40` && detailRequests === 1) {
+        throw new GitHubApiError({
+          body: { message: "temporary" },
+          method: "GET",
+          path,
+          response: { headers: new Headers(), status: 503 },
+        });
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        return { data: pullRequest() };
+      }
+      return { data: graphQlPullRequest() };
+    },
+  };
+
+  const found = await findMergedPullRequest({
+    api,
+    sha: SHA,
+    sleep(resolve, delay) {
+      delays.push(delay);
+      resolve();
+    },
+  });
+
+  assert.equal(found.number, 40);
+  assert.equal(detailRequests, 2);
+  assert.deepEqual(delays, [0]);
+});
+
+test("поиск связанного PR отклоняет две полные карточки одного merge SHA", async () => {
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path, options = {}) {
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return {
+          data: [
+            associatedPullRequest(),
+            associatedPullRequest({ number: 41 }),
+          ],
+        };
+      }
+      if (path !== "/graphql") {
+        const number = Number(path.split("/").at(-1));
+        return { data: pullRequest({ number }) };
+      }
+      const number = options.body.variables.number;
+      return { data: graphQlPullRequest({ number }) };
+    },
+  };
+
+  await assert.rejects(
+    findMergedPullRequest({ api, sha: SHA }),
+    { code: "RELEASE_PR_AMBIGUOUS" },
+  );
 });
 
 test("поиск связанного PR повторяет транспортный сбой GitHub API", async () => {
@@ -188,12 +387,21 @@ test("поиск связанного PR повторяет транспортн
   const delays = [];
   const api = new GitHubApi({
     apiUrl: "https://github.example.test",
-    fetchImpl: async () => {
+    fetchImpl: async (url, options) => {
       requests += 1;
       if (requests === 1) {
         throw new TypeError("fetch failed");
       }
-      return new Response(JSON.stringify([pullRequest()]), { status: 200 });
+      let data;
+      if (url.includes(`/commits/${SHA}/pulls`)) {
+        data = [associatedPullRequest()];
+      } else if (url.endsWith("/graphql")) {
+        const request = JSON.parse(options.body);
+        data = graphQlPullRequest({ number: request.variables.number });
+      } else {
+        data = pullRequest();
+      }
+      return new Response(JSON.stringify(data), { status: 200 });
     },
     repository: REPOSITORY,
     token: "test-token",
@@ -209,7 +417,7 @@ test("поиск связанного PR повторяет транспортн
   });
 
   assert.equal(found.number, 40);
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
   assert.deepEqual(delays, [0]);
 });
 
@@ -218,7 +426,7 @@ test("поиск связанного PR повторяет обрыв чтен�
   const delays = [];
   const api = new GitHubApi({
     apiUrl: "https://github.example.test",
-    fetchImpl: async () => {
+    fetchImpl: async (url, options) => {
       requests += 1;
       if (requests === 1) {
         return new Response(
@@ -230,7 +438,16 @@ test("поиск связанного PR повторяет обрыв чтен�
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify([pullRequest()]), { status: 200 });
+      let data;
+      if (url.includes(`/commits/${SHA}/pulls`)) {
+        data = [associatedPullRequest()];
+      } else if (url.endsWith("/graphql")) {
+        const request = JSON.parse(options.body);
+        data = graphQlPullRequest({ number: request.variables.number });
+      } else {
+        data = pullRequest();
+      }
+      return new Response(JSON.stringify(data), { status: 200 });
     },
     repository: REPOSITORY,
     token: "test-token",
@@ -246,7 +463,7 @@ test("поиск связанного PR повторяет обрыв чтен�
   });
 
   assert.equal(found.number, 40);
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
   assert.deepEqual(delays, [0]);
 });
 

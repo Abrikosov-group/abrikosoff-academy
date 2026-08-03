@@ -27,6 +27,25 @@ const FILE_STATUSES = new Set([
   "renamed",
   "unchanged",
 ]);
+const PULL_REQUEST_MERGE_COMMIT_QUERY = `
+  query ReleasePullRequestMergeCommit(
+    $owner: String!
+    $name: String!
+    $number: Int!
+  ) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        baseRefName
+        mergeCommit {
+          oid
+        }
+        merged
+        mergedAt
+        number
+      }
+    }
+  }
+`;
 
 function hasLabel(pullRequest, label) {
   return (pullRequest.labels ?? []).some((item) => item?.name === label);
@@ -34,6 +53,69 @@ function hasLabel(pullRequest, label) {
 
 function isSameRepositoryHead(pullRequest, repository) {
   return pullRequest.head?.repo?.full_name === repository;
+}
+
+function requirePullRequestNumber(pullRequest) {
+  assertGate(
+    Number.isSafeInteger(pullRequest?.number) && pullRequest.number > 0,
+    "RELEASE_PR_NUMBER_INVALID",
+    "Связанный PR не содержит допустимый номер",
+  );
+  return pullRequest.number;
+}
+
+async function getPullRequestMergeCommitSha({ api, pullRequestNumber }) {
+  const [owner, name] = ACADEMY_REPOSITORY.split("/");
+  const response = await api.request("/graphql", {
+    body: {
+      query: PULL_REQUEST_MERGE_COMMIT_QUERY,
+      variables: { name, number: pullRequestNumber, owner },
+    },
+    method: "POST",
+  });
+  const responseBody = response.data;
+  assertGate(
+    responseBody && typeof responseBody === "object" && !Array.isArray(responseBody),
+    "RELEASE_PR_GRAPHQL_RESPONSE_INVALID",
+    `GitHub GraphQL вернул некорректный ответ для PR #${pullRequestNumber}`,
+  );
+  assertGate(
+    responseBody.errors === undefined ||
+      responseBody.errors === null ||
+      (Array.isArray(responseBody.errors) && responseBody.errors.length === 0),
+    "RELEASE_PR_GRAPHQL_ERROR",
+    `GitHub GraphQL не подтвердил merge-коммит PR #${pullRequestNumber}`,
+  );
+
+  const pullRequest = responseBody.data?.repository?.pullRequest;
+  assertGate(
+    pullRequest && typeof pullRequest === "object" && !Array.isArray(pullRequest),
+    "RELEASE_PR_GRAPHQL_RESPONSE_INVALID",
+    `GitHub GraphQL не вернул PR #${pullRequestNumber}`,
+  );
+  assertGate(
+    pullRequest.number === pullRequestNumber,
+    "RELEASE_PR_NUMBER_MISMATCH",
+    `GraphQL-карточка связанного PR #${pullRequestNumber} содержит другой номер`,
+  );
+  assertGate(
+    pullRequest.merged === true && pullRequest.mergedAt,
+    "RELEASE_PR_NOT_MERGED",
+    `GraphQL-карточка PR #${pullRequestNumber} не подтверждает слияние`,
+  );
+  assertGate(
+    pullRequest.baseRefName === DEFAULT_BRANCH,
+    "RELEASE_PR_BASE_REJECTED",
+    `GraphQL-карточка PR #${pullRequestNumber} не направлена в ${DEFAULT_BRANCH}`,
+  );
+
+  const mergeCommitSha = pullRequest.mergeCommit?.oid;
+  assertGate(
+    typeof mergeCommitSha === "string" && /^[0-9a-f]{40}$/.test(mergeCommitSha),
+    "RELEASE_PR_MERGE_COMMIT_INVALID",
+    `GitHub GraphQL не вернул допустимый merge SHA PR #${pullRequestNumber}`,
+  );
+  return mergeCommitSha;
 }
 
 export function validateReleaseInvocation({ eventName, ref, repository, sha }) {
@@ -99,11 +181,7 @@ export function validateInfrastructureFiles(files) {
 }
 
 export function classifyMergedPullRequest({ files, pullRequest, repository, sha }) {
-  assertGate(
-    Number.isSafeInteger(pullRequest?.number) && pullRequest.number > 0,
-    "RELEASE_PR_NUMBER_INVALID",
-    "Связанный PR не содержит допустимый номер",
-  );
+  requirePullRequestNumber(pullRequest);
   assertGate(pullRequest?.merged_at, "RELEASE_PR_NOT_MERGED", "Связанный PR не слит");
   assertGate(
     pullRequest.base?.ref === DEFAULT_BRANCH,
@@ -203,11 +281,67 @@ function isRetryableApiError(error) {
 
 export async function findMergedPullRequest({ api, sha, sleep = globalThis.setTimeout }) {
   for (let attemptIndex = 0; attemptIndex < MAX_RELEASE_PR_LOOKUP_ATTEMPTS; attemptIndex += 1) {
-    let response;
+    let candidates;
     try {
-      response = await api.request(
+      const response = await api.request(
         api.repoPath(`/commits/${encodeURIComponent(sha)}/pulls?per_page=100`),
       );
+      assertGate(
+        Array.isArray(response.data),
+        "RELEASE_PR_RESPONSE_INVALID",
+        "GitHub API вернул не список связанных PR",
+      );
+
+      const associatedNumbers = [];
+      const seenNumbers = new Set();
+      for (const pullRequest of response.data) {
+        if (!pullRequest?.merged_at || pullRequest.base?.ref !== DEFAULT_BRANCH) {
+          continue;
+        }
+
+        const pullRequestNumber = requirePullRequestNumber(pullRequest);
+        assertGate(
+          !seenNumbers.has(pullRequestNumber),
+          "RELEASE_PR_ASSOCIATION_DUPLICATED",
+          `GitHub API повторил связанный PR #${pullRequestNumber}`,
+        );
+        seenNumbers.add(pullRequestNumber);
+        associatedNumbers.push(pullRequestNumber);
+      }
+
+      candidates = [];
+      for (const pullRequestNumber of associatedNumbers) {
+        const detailsResponse = await api.request(
+          api.repoPath(`/pulls/${pullRequestNumber}`),
+        );
+        const pullRequest = detailsResponse.data;
+        assertGate(
+          pullRequest && typeof pullRequest === "object" && !Array.isArray(pullRequest),
+          "RELEASE_PR_RESPONSE_INVALID",
+          `GitHub API вернул некорректную карточку PR #${pullRequestNumber}`,
+        );
+        assertGate(
+          pullRequest.number === pullRequestNumber,
+          "RELEASE_PR_NUMBER_MISMATCH",
+          `Карточка связанного PR #${pullRequestNumber} содержит другой номер`,
+        );
+
+        const verifiedPullRequest = {
+          ...pullRequest,
+          merge_commit_sha: await getPullRequestMergeCommitSha({
+            api,
+            pullRequestNumber,
+          }),
+        };
+
+        if (
+          verifiedPullRequest.merged_at &&
+          verifiedPullRequest.base?.ref === DEFAULT_BRANCH &&
+          verifiedPullRequest.merge_commit_sha === sha
+        ) {
+          candidates.push(verifiedPullRequest);
+        }
+      }
     } catch (error) {
       if (!isRetryableApiError(error) || attemptIndex === MAX_RELEASE_PR_LOOKUP_ATTEMPTS - 1) {
         throw error;
@@ -215,14 +349,6 @@ export async function findMergedPullRequest({ api, sha, sleep = globalThis.setTi
       await new Promise((resolve) => sleep(resolve, retryDelayMs({ attemptIndex, error })));
       continue;
     }
-
-    assertGate(Array.isArray(response.data), "RELEASE_PR_RESPONSE_INVALID", "GitHub API вернул не список PR");
-    const candidates = response.data.filter(
-      (pullRequest) =>
-        pullRequest?.merged_at &&
-        pullRequest.base?.ref === DEFAULT_BRANCH &&
-        pullRequest.merge_commit_sha === sha,
-    );
 
     assertGate(
       candidates.length <= 1,

@@ -88,6 +88,8 @@ test("release-классификатор содержит явный ref guard �
   const config = await read("scripts/release-train/config.mjs");
   assert.match(classifier, /ref === `refs\/heads\/\$\{DEFAULT_BRANCH\}`/);
   assert.match(classifier, /INFRASTRUCTURE_NO_DEPLOY_PATHS\.has\(file\.filename\)/);
+  assert.match(classifier, /api\.request\("\/graphql"/);
+  assert.match(classifier, /mergeCommit \{\s+oid/);
   assert.match(classifier, /pullRequest\.merge_commit_sha === sha/);
   assert.match(config, /"release:infrastructure-no-deploy"/);
   assert.doesNotMatch(config, /src\/\*\*/);
