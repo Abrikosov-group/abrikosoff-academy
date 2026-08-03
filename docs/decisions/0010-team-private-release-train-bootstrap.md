@@ -59,11 +59,11 @@ append-only аудит.
      `administration:write`, `contents:write`, `metadata:read`.
 4. Installation token создаётся официальным App API только для
    `abrikosoff-academy` и с минимальными правами текущей операции:
-   `administration:write`, `contents:write` и неотключаемым `metadata:read`.
-   Installation может дополнительно иметь `actions:read` для целевого
-   lifecycle, но локальный token это право не запрашивает. Формат и длина token
-   не считаются стабильным контрактом. Ответ повторно проверяется, token никогда
-   не выводится и отзывается через API после успеха либо ошибки.
+   `actions:read`, `administration:write`, `contents:write` и неотключаемым
+   `metadata:read`. `actions:read` необходимо для чтения production Environment
+   и deployment branch policies до их безопасного изменения. Формат и длина
+   token не считаются стабильным контрактом. Ответ повторно проверяется, token
+   никогда не выводится и отзывается через API после успеха либо ошибки.
 5. До получения token локальная команда атомарно сохраняет в `.git` стабильный
    UUID операции. Повтор использует тот же UUID. Файл содержит только
    несекретные audit-данные, имеет права `0600` и привязан к точным владельцу,

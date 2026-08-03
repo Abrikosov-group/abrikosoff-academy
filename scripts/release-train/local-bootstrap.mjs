@@ -27,6 +27,7 @@ import {
   GITHUB_ORGANIZATION,
   LIFECYCLE_INVOCATION_KINDS,
   LOCAL_BOOTSTRAP_STATE_FILE,
+  PRODUCTION_ENVIRONMENT,
   TRAIN_OPEN_CONFIRMATION,
 } from "./config.mjs";
 import { ReleaseGateError, assertGate, formatGateError } from "./errors.mjs";
@@ -44,11 +45,13 @@ const EXPECTED_INSTALLATION_PERMISSIONS = Object.freeze({
   metadata: "read",
 });
 const EXPECTED_TOKEN_PERMISSIONS = Object.freeze({
+  actions: "read",
   administration: "write",
   contents: "write",
   metadata: "read",
 });
 const REQUESTED_TOKEN_PERMISSIONS = Object.freeze({
+  actions: "read",
   administration: "write",
   contents: "write",
 });
@@ -684,6 +687,23 @@ async function verifyScopedToken(api, mainSha) {
       main.data?.object?.sha === mainSha,
     "TRUST_MAIN_MOVED",
     "Удалённый main изменился после локальной проверки",
+  );
+  const environmentPath = api.repoPath(
+    `/environments/${PRODUCTION_ENVIRONMENT}`,
+  );
+  const environment = await api.request(environmentPath);
+  assertGate(
+    environment.data?.name === PRODUCTION_ENVIRONMENT,
+    "LOCAL_PRODUCTION_ENVIRONMENT_INVALID",
+    "GitHub API не подтвердил production Environment",
+  );
+  const policies = await api.request(
+    `${environmentPath}/deployment-branch-policies?per_page=1&page=1`,
+  );
+  assertGate(
+    Array.isArray(policies.data?.branch_policies),
+    "LOCAL_ENVIRONMENT_POLICIES_INVALID",
+    "GitHub API не подтвердил доступ к deployment branch policies",
   );
 }
 

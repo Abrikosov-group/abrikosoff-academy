@@ -21,6 +21,7 @@ import {
   ACADEMY_REPOSITORY,
   CURRENT_LIFECYCLE_APP,
   CURRENT_LIFECYCLE_OWNER_ID,
+  PRODUCTION_ENVIRONMENT,
   TRAIN_OPEN_CONFIRMATION,
 } from "../../scripts/release-train/config.mjs";
 import {
@@ -74,6 +75,7 @@ function tokenResponse(overrides = {}) {
   return {
     expires_at: new Date(NOW + 60 * 60 * 1_000).toISOString(),
     permissions: {
+      actions: "read",
       administration: "write",
       contents: "write",
     },
@@ -341,6 +343,19 @@ test("App и installation принимаются только с точной id
       ),
     { code: "LOCAL_INSTALLATION_TOKEN_SCOPE_INVALID" },
   );
+  assert.throws(
+    () =>
+      validateInstallationTokenResponse(
+        tokenResponse({
+          permissions: {
+            administration: "write",
+            contents: "write",
+          },
+        }),
+        NOW,
+      ),
+    { code: "LOCAL_INSTALLATION_TOKEN_PERMISSIONS_INVALID" },
+  );
 });
 
 test("installation token запрашивается только для одного repo и минимальных прав", async () => {
@@ -374,6 +389,7 @@ test("installation token запрашивается только для одно
   assert.equal(response.token, "test-installation-token-value-12345");
   assert.deepEqual(JSON.parse(requests[2].body), {
     permissions: {
+      actions: "read",
       administration: "write",
       contents: "write",
     },
@@ -427,6 +443,8 @@ test("verify не создаёт operation state и всегда отзывае�
   const raw = Buffer.from("sensitive-private-key-material");
   let operationCalls = 0;
   let revokeCalls = 0;
+  const verifyRequests = [];
+  const environmentPath = `/repos/${ACADEMY_REPOSITORY}/environments/${PRODUCTION_ENVIRONMENT}`;
   const result = await runLocalBootstrap(
     {
       confirmation: null,
@@ -460,19 +478,57 @@ test("verify не создаёт operation state и всегда отзывае�
           repositoryRoot: "/repo",
         };
       },
-      installationApi: {},
+      installationApi: {
+        repoPath(path) {
+          return `/repos/${ACADEMY_REPOSITORY}${path}`;
+        },
+        async request(path) {
+          verifyRequests.push(path);
+          if (path === "/installation/repositories?per_page=100") {
+            return {
+              data: {
+                repositories: [{ full_name: ACADEMY_REPOSITORY }],
+                total_count: 1,
+              },
+            };
+          }
+          if (path === `/repos/${ACADEMY_REPOSITORY}/git/ref/heads/main`) {
+            return {
+              data: {
+                object: { sha: MAIN_SHA },
+                ref: "refs/heads/main",
+              },
+            };
+          }
+          if (path === environmentPath) {
+            return { data: { name: PRODUCTION_ENVIRONMENT } };
+          }
+          if (
+            path ===
+            `${environmentPath}/deployment-branch-policies?per_page=1&page=1`
+          ) {
+            return { data: { branch_policies: [] } };
+          }
+          assert.fail(`неожиданный API path ${path}`);
+        },
+      },
       async readPrivateKeyFile() {
         return { privateKey, raw };
       },
       async revokeInstallationToken() {
         revokeCalls += 1;
       },
-      async verifyScopedToken() {},
     },
   );
   assert.equal(result.mode, "verify");
   assert.equal(operationCalls, 0);
   assert.equal(revokeCalls, 1);
+  assert.deepEqual(verifyRequests, [
+    "/installation/repositories?per_page=100",
+    `/repos/${ACADEMY_REPOSITORY}/git/ref/heads/main`,
+    environmentPath,
+    `${environmentPath}/deployment-branch-policies?per_page=1&page=1`,
+  ]);
   assert.deepEqual(raw, Buffer.alloc(raw.length));
 });
 
