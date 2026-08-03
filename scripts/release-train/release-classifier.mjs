@@ -295,10 +295,6 @@ export async function findMergedPullRequest({ api, sha, sleep = globalThis.setTi
       const associatedNumbers = [];
       const seenNumbers = new Set();
       for (const pullRequest of response.data) {
-        if (!pullRequest?.merged_at || pullRequest.base?.ref !== DEFAULT_BRANCH) {
-          continue;
-        }
-
         const pullRequestNumber = requirePullRequestNumber(pullRequest);
         assertGate(
           !seenNumbers.has(pullRequestNumber),
@@ -326,6 +322,10 @@ export async function findMergedPullRequest({ api, sha, sleep = globalThis.setTi
           `Карточка связанного PR #${pullRequestNumber} содержит другой номер`,
         );
 
+        if (!pullRequest.merged_at || pullRequest.base?.ref !== DEFAULT_BRANCH) {
+          continue;
+        }
+
         const verifiedPullRequest = {
           ...pullRequest,
           merge_commit_sha: await getPullRequestMergeCommitSha({
@@ -334,11 +334,7 @@ export async function findMergedPullRequest({ api, sha, sleep = globalThis.setTi
           }),
         };
 
-        if (
-          verifiedPullRequest.merged_at &&
-          verifiedPullRequest.base?.ref === DEFAULT_BRANCH &&
-          verifiedPullRequest.merge_commit_sha === sha
-        ) {
+        if (verifiedPullRequest.merge_commit_sha === sha) {
           candidates.push(verifiedPullRequest);
         }
       }

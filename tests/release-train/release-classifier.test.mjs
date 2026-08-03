@@ -178,14 +178,14 @@ test("номер связанного PR обязан быть положите�
   );
 });
 
-test("поиск связанного PR догружает полную карточку по номеру", async () => {
+test("поиск связанного PR использует из сокращённого ответа только номер", async () => {
   const paths = [];
   const api = {
     repoPath: (path) => `/repos/${REPOSITORY}${path}`,
     async request(path) {
       paths.push(path);
       if (path.includes(`/commits/${SHA}/pulls`)) {
-        return { data: [associatedPullRequest()] };
+        return { data: [{ number: 40 }] };
       }
       if (path === `/repos/${REPOSITORY}/pulls/40`) {
         return { data: pullRequest({ merge_commit_sha: undefined }) };
@@ -209,6 +209,47 @@ test("поиск связанного PR догружает полную кар�
     `/repos/${REPOSITORY}/pulls/40`,
     "/graphql",
   ]);
+});
+
+test("поиск проверяет merged и base по полной карточке до GraphQL", async () => {
+  const graphQlNumbers = [];
+  const api = {
+    repoPath: (path) => `/repos/${REPOSITORY}${path}`,
+    async request(path, options = {}) {
+      if (path.includes(`/commits/${SHA}/pulls`)) {
+        return {
+          data: [{ number: 40 }, { number: 41 }, { number: 42 }],
+        };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/40`) {
+        return { data: pullRequest({ merged_at: null }) };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/41`) {
+        return {
+          data: pullRequest({ base: { ref: "integration" }, number: 41 }),
+        };
+      }
+      if (path === `/repos/${REPOSITORY}/pulls/42`) {
+        return { data: pullRequest({ number: 42 }) };
+      }
+
+      assert.equal(path, "/graphql");
+      const number = options.body.variables.number;
+      graphQlNumbers.push(number);
+      return { data: graphQlPullRequest({ number }) };
+    },
+  };
+
+  const found = await findMergedPullRequest({
+    api,
+    sha: SHA,
+    sleep(resolve) {
+      resolve();
+    },
+  });
+
+  assert.equal(found.number, 42);
+  assert.deepEqual(graphQlNumbers, [42]);
 });
 
 test("поиск связанного PR не доверяет merge SHA сокращённого ответа", async () => {
