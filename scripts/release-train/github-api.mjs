@@ -80,6 +80,7 @@ export class GitHubApi {
 
     const requestBody = body === undefined ? undefined : JSON.stringify(body);
     let response;
+    let text;
     try {
       response = await this.fetchImpl(`${this.apiUrl}${path}`, {
         body: requestBody,
@@ -91,10 +92,10 @@ export class GitHubApi {
         },
         method,
       });
+      text = await response.text();
     } catch (cause) {
       throw new GitHubTransportError({ cause, method, path });
     }
-    const text = await response.text();
     const data = parseResponseBody(text);
 
     if (!expectedStatuses.includes(response.status)) {

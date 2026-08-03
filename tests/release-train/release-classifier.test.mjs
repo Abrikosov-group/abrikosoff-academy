@@ -213,6 +213,43 @@ test("поиск связанного PR повторяет транспортн
   assert.deepEqual(delays, [0]);
 });
 
+test("поиск связанного PR повторяет обрыв чтения ответа GitHub API", async () => {
+  let requests = 0;
+  const delays = [];
+  const api = new GitHubApi({
+    apiUrl: "https://github.example.test",
+    fetchImpl: async () => {
+      requests += 1;
+      if (requests === 1) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError("body failed"));
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([pullRequest()]), { status: 200 });
+    },
+    repository: REPOSITORY,
+    token: "test-token",
+  });
+
+  const found = await findMergedPullRequest({
+    api,
+    sha: SHA,
+    sleep(resolve, delay) {
+      delays.push(delay);
+      resolve();
+    },
+  });
+
+  assert.equal(found.number, 40);
+  assert.equal(requests, 2);
+  assert.deepEqual(delays, [0]);
+});
+
 test("rate-limit delay учитывает Retry-After", () => {
   const error = new GitHubApiError({
     body: { message: "rate limited" },

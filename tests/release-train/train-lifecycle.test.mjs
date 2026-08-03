@@ -170,6 +170,39 @@ test("payload защиты ветки требует PR, четыре CI и не
   });
 });
 
+test("защита ветки поезда требует явного отключения опасных параметров", () => {
+  const disabledFields = [
+    ["required_linear_history", "SOURCE_PROTECTION_LINEAR"],
+    ["allow_force_pushes", "SOURCE_PROTECTION_FORCE_PUSH"],
+    ["allow_deletions", "SOURCE_PROTECTION_DELETE"],
+    ["lock_branch", "SOURCE_PROTECTION_LOCK"],
+    ["allow_fork_syncing", "SOURCE_PROTECTION_FORK_SYNC"],
+  ];
+
+  for (const [field, code] of disabledFields) {
+    const missing = sourceProtectionResponse();
+    delete missing[field];
+    assert.throws(() => validateSourceBranchProtection(missing), { code });
+
+    const nullValue = sourceProtectionResponse();
+    nullValue[field] = null;
+    assert.throws(() => validateSourceBranchProtection(nullValue), { code });
+  }
+});
+
+test("отсутствующий PR-bypass допустим, а некорректный тип отклоняется", () => {
+  const omitted = sourceProtectionResponse();
+  delete omitted.required_pull_request_reviews.bypass_pull_request_allowances;
+  assert.doesNotThrow(() => validateSourceBranchProtection(omitted));
+
+  const malformed = sourceProtectionResponse();
+  malformed.required_pull_request_reviews.bypass_pull_request_allowances =
+    "unknown";
+  assert.throws(() => validateSourceBranchProtection(malformed), {
+    code: "SOURCE_PROTECTION_BYPASS",
+  });
+});
+
 test("ветка реестра разрешает запись только отдельному GitHub App", () => {
   const payload = registryBranchProtectionPayload(APP_SLUG);
   assert.deepEqual(payload.restrictions.apps, [APP_SLUG]);
@@ -185,6 +218,35 @@ test("ветка реестра разрешает запись только о�
     () => validateRegistryBranchProtection(unsafe, APP_SLUG),
     { code: "REGISTRY_PROTECTION_USERS" },
   );
+});
+
+test("защита реестра требует явного отключения неприменимых параметров", () => {
+  const disabledFields = [
+    ["allow_force_pushes", "REGISTRY_PROTECTION_FORCE_PUSH"],
+    ["allow_deletions", "REGISTRY_PROTECTION_DELETE"],
+    [
+      "required_conversation_resolution",
+      "REGISTRY_PROTECTION_CONVERSATIONS",
+    ],
+    ["lock_branch", "REGISTRY_PROTECTION_LOCK"],
+    ["allow_fork_syncing", "REGISTRY_PROTECTION_FORK_SYNC"],
+  ];
+
+  for (const [field, code] of disabledFields) {
+    const missing = registryProtectionResponse();
+    delete missing[field];
+    assert.throws(
+      () => validateRegistryBranchProtection(missing, APP_SLUG),
+      { code },
+    );
+
+    const nullValue = registryProtectionResponse();
+    nullValue[field] = null;
+    assert.throws(
+      () => validateRegistryBranchProtection(nullValue, APP_SLUG),
+      { code },
+    );
+  }
 });
 
 test("повтор open восстанавливает защиту корректного пустого реестра", async () => {

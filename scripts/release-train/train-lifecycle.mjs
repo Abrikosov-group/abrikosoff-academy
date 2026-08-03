@@ -44,9 +44,16 @@ function enabled(value) {
   return value?.enabled === true;
 }
 
+function disabled(value) {
+  return value?.enabled === false;
+}
+
 function actorListEmpty(value) {
-  if (!value || typeof value !== "object") {
+  if (value === null || value === undefined) {
     return true;
+  }
+  if (typeof value !== "object") {
+    return false;
   }
   return ["apps", "teams", "users"].every(
     (key) => Array.isArray(value[key]) && value[key].length === 0,
@@ -171,12 +178,12 @@ export function validateSourceBranchProtection(protection) {
   assertGate(actorListEmpty(reviews.bypass_pull_request_allowances), "SOURCE_PROTECTION_BYPASS", "Обнаружен PR-bypass для ветки поезда");
   assertGate(protection?.restrictions === null, "SOURCE_PROTECTION_RESTRICTIONS", "Push restrictions ветки поезда отличаются от контракта");
   assertGate(enabled(protection?.required_conversation_resolution), "SOURCE_PROTECTION_CONVERSATIONS", "Не требуется закрытие обсуждений");
-  assertGate(!enabled(protection?.required_linear_history), "SOURCE_PROTECTION_LINEAR", "Линейная история блокирует обязательные sync merge-коммиты");
-  assertGate(!enabled(protection?.allow_force_pushes), "SOURCE_PROTECTION_FORCE_PUSH", "Force-push разрешён");
-  assertGate(!enabled(protection?.allow_deletions), "SOURCE_PROTECTION_DELETE", "Удаление ветки разрешено");
+  assertGate(disabled(protection?.required_linear_history), "SOURCE_PROTECTION_LINEAR", "Линейная история блокирует обязательные sync merge-коммиты");
+  assertGate(disabled(protection?.allow_force_pushes), "SOURCE_PROTECTION_FORCE_PUSH", "Force-push разрешён");
+  assertGate(disabled(protection?.allow_deletions), "SOURCE_PROTECTION_DELETE", "Удаление ветки разрешено");
   assertGate(enabled(protection?.block_creations), "SOURCE_PROTECTION_CREATION", "Повторное создание защищённой ветки не заблокировано");
-  assertGate(!enabled(protection?.lock_branch), "SOURCE_PROTECTION_LOCK", "Ветка ошибочно заблокирована для PR-слияний");
-  assertGate(!enabled(protection?.allow_fork_syncing), "SOURCE_PROTECTION_FORK_SYNC", "Fork syncing неожиданно разрешён");
+  assertGate(disabled(protection?.lock_branch), "SOURCE_PROTECTION_LOCK", "Ветка ошибочно заблокирована для PR-слияний");
+  assertGate(disabled(protection?.allow_fork_syncing), "SOURCE_PROTECTION_FORK_SYNC", "Fork syncing неожиданно разрешён");
   return protection;
 }
 
@@ -185,12 +192,12 @@ export function validateRegistryBranchProtection(protection, appSlug) {
   assertGate(protection?.required_status_checks === null, "REGISTRY_PROTECTION_CHECKS", "Реестр не должен зависеть от CI ветки данных");
   assertGate(protection?.required_pull_request_reviews === null, "REGISTRY_PROTECTION_PR", "Реестр должен изменяться только служебным App, без PR");
   assertGate(enabled(protection?.required_linear_history), "REGISTRY_PROTECTION_LINEAR", "Реестр не требует линейную историю");
-  assertGate(!enabled(protection?.allow_force_pushes), "REGISTRY_PROTECTION_FORCE_PUSH", "Force-push в реестр разрешён");
-  assertGate(!enabled(protection?.allow_deletions), "REGISTRY_PROTECTION_DELETE", "Удаление реестра разрешено");
+  assertGate(disabled(protection?.allow_force_pushes), "REGISTRY_PROTECTION_FORCE_PUSH", "Force-push в реестр разрешён");
+  assertGate(disabled(protection?.allow_deletions), "REGISTRY_PROTECTION_DELETE", "Удаление реестра разрешено");
   assertGate(enabled(protection?.block_creations), "REGISTRY_PROTECTION_CREATION", "Повторное создание ветки реестра не заблокировано");
-  assertGate(!enabled(protection?.required_conversation_resolution), "REGISTRY_PROTECTION_CONVERSATIONS", "Реестр ошибочно зависит от PR-обсуждений");
-  assertGate(!enabled(protection?.lock_branch), "REGISTRY_PROTECTION_LOCK", "Ветка реестра заблокирована для служебной записи");
-  assertGate(!enabled(protection?.allow_fork_syncing), "REGISTRY_PROTECTION_FORK_SYNC", "Fork syncing реестра неожиданно разрешён");
+  assertGate(disabled(protection?.required_conversation_resolution), "REGISTRY_PROTECTION_CONVERSATIONS", "Реестр ошибочно зависит от PR-обсуждений");
+  assertGate(disabled(protection?.lock_branch), "REGISTRY_PROTECTION_LOCK", "Ветка реестра заблокирована для служебной записи");
+  assertGate(disabled(protection?.allow_fork_syncing), "REGISTRY_PROTECTION_FORK_SYNC", "Fork syncing реестра неожиданно разрешён");
   const restrictions = protection?.restrictions;
   assertGate(restrictions && typeof restrictions === "object", "REGISTRY_PROTECTION_RESTRICTIONS", "У реестра отсутствуют push restrictions");
   assertGate(Array.isArray(restrictions.users) && restrictions.users.length === 0, "REGISTRY_PROTECTION_USERS", "Пользователь может писать в реестр");
