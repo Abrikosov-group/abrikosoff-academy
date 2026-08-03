@@ -4,6 +4,10 @@ import test from "node:test";
 import {
   ACADEMY_REPOSITORY,
   CURRENT_BOOTSTRAP_TRAIN,
+  CURRENT_LIFECYCLE_APP,
+  CURRENT_LIFECYCLE_OWNER_ID,
+  ENVIRONMENT_ADMIN_BYPASS_POLICIES,
+  LIFECYCLE_INVOCATION_KINDS,
   SOURCE_BRANCH_REQUIRED_CHECKS,
   TRAIN_OPEN_CONFIRMATION,
 } from "../../scripts/release-train/config.mjs";
@@ -14,9 +18,11 @@ import {
   registryBranchProtectionPayload,
   retainedEnvironmentProtections,
   runTrainOpen,
+  runLocalTrainOpen,
   sourceBranchProtectionPayload,
   validateEnvironment,
   validateEnvironmentProtectionsPreserved,
+  validateLocalOwnerInvocation,
   validatePreTokenInvocation,
   validateRegistryBranchProtection,
   validateRegistryTreeEntries,
@@ -34,8 +40,13 @@ function trainOpenedEvent(overrides = {}) {
   return createTrainOpenedEvent({
     actorId: "123456",
     actorLogin: "owner",
-    lifecycleRunAttempt: 1,
-    lifecycleRunId: "987654",
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.GITHUB_ACTIONS,
+      run_attempt: 1,
+      run_id: "987654",
+    },
     occurredAt: "2026-08-02T12:00:00.000Z",
     openedFromMainSha: CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha,
     registrySequence: 1,
@@ -151,6 +162,43 @@ test("trusted invocation привязан к main, владельцу и точ�
         trustedEnv({ TRAIN_LIFECYCLE_TOKEN: undefined }),
       ),
     { code: "LIFECYCLE_TOKEN_MISSING" },
+  );
+});
+
+test("локальный invocation принимает только зафиксированного владельца и Team/private", () => {
+  const invocation = {
+    actorId: CURRENT_LIFECYCLE_OWNER_ID,
+    actorLogin: "Etogerman",
+    appSlug: CURRENT_LIFECYCLE_APP.slug,
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER,
+      operation_id: "33333333-3333-4333-8333-333333333333",
+    },
+    mainSha: MAIN_SHA,
+    platformContext: {
+      defaultBranch: "main",
+      organizationPlan: "team",
+      repository: ACADEMY_REPOSITORY,
+      repositoryVisibility: "private",
+    },
+  };
+  assert.equal(validateLocalOwnerInvocation(invocation), invocation);
+  assert.throws(
+    () => validateLocalOwnerInvocation({ ...invocation, actorId: "999" }),
+    { code: "TRUST_OWNER_MISMATCH" },
+  );
+  assert.throws(
+    () =>
+      validateLocalOwnerInvocation({
+        ...invocation,
+        platformContext: {
+          ...invocation.platformContext,
+          organizationPlan: "enterprise",
+        },
+      }),
+    { code: "TEAM_PRIVATE_PLAN_MISMATCH" },
   );
 });
 
@@ -399,6 +447,54 @@ test("production Environment допускает только main и запре�
   );
 });
 
+test("Team/private-профиль принимает неизбежный admin bypass только локально", () => {
+  const environment = {
+    can_admins_bypass: true,
+    deployment_branch_policy: {
+      custom_branch_policies: true,
+      protected_branches: false,
+    },
+    name: "production",
+  };
+  const context = {
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    platformContext: {
+      defaultBranch: "main",
+      organizationPlan: "team",
+      repository: ACADEMY_REPOSITORY,
+      repositoryVisibility: "private",
+    },
+  };
+  assert.doesNotThrow(() =>
+    validateEnvironment(
+      environment,
+      [{ name: "main", type: "branch" }],
+      context,
+    ),
+  );
+  assert.throws(
+    () =>
+      validateEnvironment(environment, [{ name: "main", type: "branch" }], {
+        ...context,
+        platformContext: {
+          ...context.platformContext,
+          repositoryVisibility: "public",
+        },
+      }),
+    { code: "TEAM_PRIVATE_REPOSITORY_MISMATCH" },
+  );
+  assert.throws(
+    () =>
+      validateEnvironment(
+        { ...environment, can_admins_bypass: false },
+        [{ name: "main", type: "branch" }],
+        context,
+      ),
+    { code: "TEAM_PRIVATE_ADMIN_BYPASS_STATE_MISMATCH" },
+  );
+});
+
 test("изменение branch policy сохраняет wait timer и required reviewers", () => {
   const before = {
     protection_rules: [
@@ -542,6 +638,55 @@ test("train_opened записывается последним после пов
   assert.ok(trace.lastIndexOf("ref:main") < trace.indexOf("append"));
 });
 
+test("локальный open пишет честное происхождение операции и Team/private-политику", async () => {
+  const trace = [];
+  const invocation = {
+    actorId: CURRENT_LIFECYCLE_OWNER_ID,
+    actorLogin: "Etogerman",
+    appSlug: CURRENT_LIFECYCLE_APP.slug,
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER,
+      operation_id: "33333333-3333-4333-8333-333333333333",
+    },
+    mainSha: MAIN_SHA,
+    platformContext: {
+      defaultBranch: "main",
+      organizationPlan: "team",
+      repository: ACADEMY_REPOSITORY,
+      repositoryVisibility: "private",
+    },
+  };
+  const services = orchestrationServices(trace, {
+    async appendOpenedEvent(_api, _registry, event) {
+      trace.push("append");
+      assert.deepEqual(event.lifecycle_invocation, invocation.lifecycleInvocation);
+      assert.equal(
+        event.environment_admin_bypass_policy,
+        ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+      );
+    },
+    async configureProductionEnvironment(_api, context) {
+      trace.push("environment");
+      assert.deepEqual(context, {
+        environmentAdminBypassPolicy:
+          ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+        platformContext: invocation.platformContext,
+      });
+    },
+  });
+
+  const result = await runLocalTrainOpen(invocation, {
+    api: {},
+    now: () => "2026-08-03T12:00:00.000Z",
+    randomUUID: () => TRAIN_ID,
+    services,
+  });
+  assert.equal(result.trainId, TRAIN_ID);
+  assert.equal(trace.at(-1), "append");
+});
+
 test("ошибка production Environment не создаёт train_opened", async () => {
   const trace = [];
   const services = orchestrationServices(trace, {
@@ -609,7 +754,13 @@ test("повтор того же lifecycle run подтверждает уже �
 
 test("активный поезд другого lifecycle run остаётся блокирующим", async () => {
   const trace = [];
-  const activeTrain = trainOpenedEvent({ lifecycleRunId: "111111" });
+  const activeTrain = trainOpenedEvent({
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.GITHUB_ACTIONS,
+      run_attempt: 1,
+      run_id: "111111",
+    },
+  });
   const services = orchestrationServices(trace, {
     async loadRegistry() {
       return {

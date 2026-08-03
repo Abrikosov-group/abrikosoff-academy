@@ -1,4 +1,6 @@
 import {
+  ENVIRONMENT_ADMIN_BYPASS_POLICIES,
+  LIFECYCLE_INVOCATION_KINDS,
   REGISTRY_METADATA,
   REGISTRY_METADATA_PATH,
   REGISTRY_SCHEMA_VERSION,
@@ -11,6 +13,9 @@ const EVENT_PATH_PATTERN = /^events\/(\d{8})-([a-z_]+)-([0-9a-f-]{36})\.json$/;
 const SOURCE_BRANCH_PATTERN =
   /^codex\/(?:admin-operational-mvp|train-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 const KNOWN_EVENTS = new Set(["train_opened"]);
+const KNOWN_ENVIRONMENT_POLICIES = new Set(
+  Object.values(ENVIRONMENT_ADMIN_BYPASS_POLICIES),
+);
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -48,16 +53,27 @@ function assertCommonEvent(event) {
     "REGISTRY_EVENT_TIME_INVALID",
     "occurred_at должен быть UTC-временем ISO 8601",
   );
+  validateLifecycleInvocation(event.lifecycle_invocation);
   assertGate(
-    typeof event.lifecycle_run_id === "string" && /^\d+$/.test(event.lifecycle_run_id),
-    "REGISTRY_RUN_ID_INVALID",
-    "lifecycle_run_id должен быть строкой цифр",
+    KNOWN_ENVIRONMENT_POLICIES.has(event.environment_admin_bypass_policy),
+    "REGISTRY_ENVIRONMENT_POLICY_INVALID",
+    "Политика административного обхода Environment неизвестна",
   );
-  assertGate(
-    Number.isSafeInteger(event.lifecycle_run_attempt) && event.lifecycle_run_attempt > 0,
-    "REGISTRY_RUN_ATTEMPT_INVALID",
-    "lifecycle_run_attempt должен быть положительным целым числом",
-  );
+  if (event.lifecycle_invocation.kind === LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER) {
+    assertGate(
+      event.environment_admin_bypass_policy ===
+        ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+      "REGISTRY_INVOCATION_POLICY_MISMATCH",
+      "Локальная операция владельца должна фиксировать Team/private-профиль",
+    );
+  } else {
+    assertGate(
+      event.environment_admin_bypass_policy ===
+        ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN,
+      "REGISTRY_INVOCATION_POLICY_MISMATCH",
+      "GitHub Actions lifecycle не может принимать административный обход",
+    );
+  }
   assertGate(
     typeof event.actor_id === "string" && /^\d+$/.test(event.actor_id),
     "REGISTRY_ACTOR_ID_INVALID",
@@ -68,6 +84,52 @@ function assertCommonEvent(event) {
     "REGISTRY_ACTOR_LOGIN_INVALID",
     "actor_login имеет недопустимый формат",
   );
+}
+
+export function validateLifecycleInvocation(invocation) {
+  assertGate(
+    isPlainObject(invocation),
+    "REGISTRY_INVOCATION_INVALID",
+    "Происхождение lifecycle-операции должно быть объектом",
+  );
+  if (invocation.kind === LIFECYCLE_INVOCATION_KINDS.GITHUB_ACTIONS) {
+    assertExactKeys(
+      invocation,
+      ["kind", "run_attempt", "run_id"],
+      "REGISTRY_INVOCATION_FIELDS_INVALID",
+      "GitHub Actions lifecycle invocation",
+    );
+    assertGate(
+      typeof invocation.run_id === "string" && /^\d+$/.test(invocation.run_id),
+      "REGISTRY_RUN_ID_INVALID",
+      "run_id должен быть строкой цифр",
+    );
+    assertGate(
+      Number.isSafeInteger(invocation.run_attempt) &&
+        invocation.run_attempt > 0,
+      "REGISTRY_RUN_ATTEMPT_INVALID",
+      "run_attempt должен быть положительным целым числом",
+    );
+    return invocation;
+  }
+
+  assertGate(
+    invocation.kind === LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER,
+    "REGISTRY_INVOCATION_KIND_INVALID",
+    "Неизвестный вид происхождения lifecycle-операции",
+  );
+  assertExactKeys(
+    invocation,
+    ["kind", "operation_id"],
+    "REGISTRY_INVOCATION_FIELDS_INVALID",
+    "Локальная lifecycle invocation",
+  );
+  assertGate(
+    UUID_PATTERN.test(invocation.operation_id ?? ""),
+    "REGISTRY_OPERATION_ID_INVALID",
+    "operation_id локальной операции должен быть UUID",
+  );
+  return invocation;
 }
 
 export function validateRegistryMetadata(metadata) {
@@ -95,9 +157,9 @@ export function validateRegistryEvent(event) {
     [
       "actor_id",
       "actor_login",
+      "environment_admin_bypass_policy",
       "event",
-      "lifecycle_run_attempt",
-      "lifecycle_run_id",
+      "lifecycle_invocation",
       "occurred_at",
       "opened_from_main_sha",
       "registry_sequence",
@@ -151,8 +213,8 @@ export function canonicalJson(value) {
 export function createTrainOpenedEvent({
   actorId,
   actorLogin,
-  lifecycleRunAttempt,
-  lifecycleRunId,
+  environmentAdminBypassPolicy,
+  lifecycleInvocation,
   occurredAt,
   openedFromMainSha,
   registrySequence,
@@ -162,9 +224,9 @@ export function createTrainOpenedEvent({
   return validateRegistryEvent({
     actor_id: actorId,
     actor_login: actorLogin,
+    environment_admin_bypass_policy: environmentAdminBypassPolicy,
     event: "train_opened",
-    lifecycle_run_attempt: lifecycleRunAttempt,
-    lifecycle_run_id: lifecycleRunId,
+    lifecycle_invocation: { ...lifecycleInvocation },
     occurred_at: occurredAt,
     opened_from_main_sha: openedFromMainSha,
     registry_sequence: registrySequence,

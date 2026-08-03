@@ -27,32 +27,24 @@ function topLevelSectionKeys(source, sectionName) {
   return keys;
 }
 
-test("train-lifecycle загружается из main и предоставляет только ручной open", async () => {
+test("train-lifecycle на Team/private не получает private key и останавливается", async () => {
   const workflow = await read(".github/workflows/train-lifecycle.yml");
+  const lifecycle = await read("scripts/release-train/train-lifecycle.mjs");
   assert.deepEqual(topLevelSectionKeys(workflow, "on"), ["workflow_dispatch"]);
   assert.doesNotMatch(workflow, /create_new/);
-  assert.match(workflow, /TRAIN_OPEN_MODE: register_existing/);
   assert.match(workflow, /group: production-release/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /environment: release-train-lifecycle/);
-  assert.match(workflow, /node-version: 24\.18\.0/);
-  assert.match(workflow, /persist-credentials: false/);
-  assert.match(
-    workflow,
-    /actions\/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1/,
+  assert.doesNotMatch(workflow, /environment:/);
+  assert.doesNotMatch(workflow, /create-github-app-token/);
+  assert.doesNotMatch(workflow, /PRIVATE_KEY|private-key|secrets\./);
+  assert.match(workflow, /GitHub Team\/private/);
+  assert.match(workflow, /docs\/operations\/release-train\.md/);
+  assert.equal((workflow.match(/exit 1/g) ?? []).length, 2);
+  assert.match(lifecycle, /ACTIONS_LIFECYCLE_DISABLED/);
+  assert.doesNotMatch(
+    lifecycle.slice(lifecycle.indexOf("if (isDirectRun)")),
+    /runTrainOpen\(/,
   );
-  assert.match(workflow, /client-id: \$\{\{ vars\.TRAIN_LIFECYCLE_APP_CLIENT_ID \}\}/);
-  assert.doesNotMatch(workflow, /\n\s+app-id:/);
-  assert.match(workflow, /permission-administration: write/);
-  assert.match(workflow, /permission-actions: read/);
-  assert.match(workflow, /permission-contents: write/);
-  assert.match(workflow, /TRAIN_LIFECYCLE_TOKEN: \$\{\{ steps\.lifecycle-token\.outputs\.token \}\}/);
-  const preflightIndex = workflow.indexOf(
-    "node scripts/release-train/train-lifecycle.mjs --preflight",
-  );
-  const tokenIndex = workflow.indexOf("actions/create-github-app-token@");
-  assert.ok(preflightIndex >= 0 && preflightIndex < tokenIndex);
-  assert.doesNotMatch(workflow, /environment:\n\s+name: production/);
 });
 
 test("release сначала классифицирует main SHA и не строит infrastructure PR", async () => {

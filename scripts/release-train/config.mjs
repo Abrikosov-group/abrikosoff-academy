@@ -1,11 +1,35 @@
 export const GITHUB_API_VERSION = "2026-03-10";
 export const ACADEMY_REPOSITORY = "Abrikosov-group/abrikosoff-academy";
+export const ACADEMY_REPOSITORY_NAME = "abrikosoff-academy";
+export const GITHUB_ORGANIZATION = "Abrikosov-group";
 export const DEFAULT_BRANCH = "main";
 export const PRODUCTION_ENVIRONMENT = "production";
 export const REGISTRY_BRANCH = "release-train-registry";
 export const REGISTRY_METADATA_PATH = "registry.json";
-export const REGISTRY_SCHEMA_VERSION = 1;
+export const REGISTRY_SCHEMA_VERSION = 2;
 export const GITHUB_ACTIONS_APP_ID = 15368;
+
+export const CURRENT_LIFECYCLE_APP = Object.freeze({
+  clientId: "Iv23lihDWOdXtSQ50Lt7",
+  id: 4473722,
+  owner: GITHUB_ORGANIZATION,
+  slug: "abrikosoff-academy-train",
+});
+
+export const CURRENT_LIFECYCLE_OWNER_ID = "224131170";
+
+export const ENVIRONMENT_ADMIN_BYPASS_POLICIES = Object.freeze({
+  FORBIDDEN: "admin_bypass_forbidden",
+  TEAM_PRIVATE_LOCAL_OWNER: "github_team_private_local_owner",
+});
+
+export const LIFECYCLE_INVOCATION_KINDS = Object.freeze({
+  GITHUB_ACTIONS: "github_actions",
+  LOCAL_OWNER: "local_owner",
+});
+
+export const LOCAL_BOOTSTRAP_STATE_FILE =
+  "abrikosoff-release-train-bootstrap.json";
 
 export const CURRENT_BOOTSTRAP_TRAIN = Object.freeze({
   expectedHeadSha: "bb6e69adeefe59aa31ddb7e118d6c685074f4dd1",
@@ -45,15 +69,18 @@ export const INFRASTRUCTURE_NO_DEPLOY_PATHS = Object.freeze(
     "README.md",
     "docs/admin-panel-implementation-status.md",
     "docs/decisions/0009-integration-release-train.md",
+    "docs/decisions/0010-team-private-release-train-bootstrap.md",
     "docs/development-workflow.md",
     "docs/operations/release-train.md",
     "scripts/release-train/config.mjs",
     "scripts/release-train/errors.mjs",
     "scripts/release-train/github-api.mjs",
+    "scripts/release-train/local-bootstrap.mjs",
     "scripts/release-train/registry.mjs",
     "scripts/release-train/release-classifier.mjs",
     "scripts/release-train/train-lifecycle.mjs",
     "tests/release-train/registry.test.mjs",
+    "tests/release-train/local-bootstrap.test.mjs",
     "tests/release-train/release-classifier.test.mjs",
     "tests/release-train/train-lifecycle.test.mjs",
     "tests/release-train/workflow-contract.test.mjs",

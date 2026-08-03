@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { REGISTRY_METADATA } from "../../scripts/release-train/config.mjs";
+import {
+  ENVIRONMENT_ADMIN_BYPASS_POLICIES,
+  LIFECYCLE_INVOCATION_KINDS,
+  REGISTRY_METADATA,
+} from "../../scripts/release-train/config.mjs";
 import {
   canonicalJson,
   createTrainOpenedEvent,
@@ -20,8 +24,13 @@ function openedEvent({ sequence = 1, trainId = TRAIN_ID } = {}) {
   return createTrainOpenedEvent({
     actorId: "123456",
     actorLogin: "owner",
-    lifecycleRunAttempt: 1,
-    lifecycleRunId: "987654",
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.GITHUB_ACTIONS,
+      run_attempt: 1,
+      run_id: "987654",
+    },
     occurredAt: "2026-08-02T12:00:00.000Z",
     openedFromMainSha: MAIN_SHA,
     registrySequence: sequence,
@@ -49,6 +58,44 @@ test("train_opened получает детерминированный путь 
     `events/00000001-train_opened-${TRAIN_ID}.json`,
   );
   assert.equal(canonicalJson(event), `${JSON.stringify(event)}\n`);
+});
+
+test("локальный train_opened фиксирует operation ID без выдуманного Actions run", () => {
+  const event = createTrainOpenedEvent({
+    actorId: "123456",
+    actorLogin: "owner",
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER,
+      operation_id: "33333333-3333-4333-8333-333333333333",
+    },
+    occurredAt: "2026-08-03T12:00:00.000Z",
+    openedFromMainSha: MAIN_SHA,
+    registrySequence: 1,
+    sourceBranch: "codex/admin-operational-mvp",
+    trainId: TRAIN_ID,
+  });
+
+  assert.equal(event.lifecycle_invocation.kind, "local_owner");
+  assert.equal("lifecycle_run_id" in event, false);
+  assert.throws(
+    () =>
+      createTrainOpenedEvent({
+        ...event,
+        actorId: event.actor_id,
+        actorLogin: event.actor_login,
+        environmentAdminBypassPolicy:
+          ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN,
+        lifecycleInvocation: event.lifecycle_invocation,
+        occurredAt: event.occurred_at,
+        openedFromMainSha: event.opened_from_main_sha,
+        registrySequence: event.registry_sequence,
+        sourceBranch: event.source_branch,
+        trainId: event.train_id,
+      }),
+    { code: "REGISTRY_INVOCATION_POLICY_MISMATCH" },
+  );
 });
 
 test("реестр запрещает два одновременно активных поезда", () => {
