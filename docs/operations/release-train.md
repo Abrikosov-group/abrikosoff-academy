@@ -1,358 +1,303 @@
-# Начальный шлюз релизного поезда
+# Начальный шлюз интеграционного релизного поезда
 
-Эта инструкция вводит в действие только начальный шлюз ADR-0009: доставляет
-доверенные workflow в `main`, запрещает случайный production-выпуск
-инфраструктурного PR, ограничивает production Environment, защищает точную
-интеграционную ветку и регистрирует один активный поезд в append-only реестре.
+Инструкция относится только к одноразовой регистрации существующей ветки
+`codex/admin-operational-mvp` операцией `register_existing`. Она реализует
+начальную часть [ADR-0009](../decisions/0009-integration-release-train.md) с
+Team/private-уточнением
+[ADR-0010](../decisions/0010-team-private-release-train-bootstrap.md).
 
-Инструкция не выполняет финальный выпуск. Candidate-build, staging, release
-manifest, promotion образов по digest и переходы `abort`, `close`, `fail`,
-`recover`, `reconcile` входят в отдельный финальный шлюз.
+Операции `create_new`, `abort`, `close`, `fail`, `recover`, `reconcile`,
+candidate-build, staging, manifest и production promotion этой инструкцией не
+реализуются. Успешный `open` не разрешает финальный production-выпуск.
 
-## 1. Границы полномочий
+## 1. Почему шлюз выполняется локально
 
-- Слияние PR, создание GitHub App, изменение Environment и Actions secrets
-  выполняет только владелец репозитория.
-- Разработчик готовит и проверяет код, но не сливает PR и не запускает `open`
-  без отдельного решения владельца.
-- `train-lifecycle` загружается только из `main` и до создания installation
-  token проверяет репозиторий, ref, точный workflow SHA, GitHub actor ID,
-  повторного инициатора и текст подтверждения; после создания token эти гейты
-  проверяются повторно перед любой мутацией.
-- Для записи используется installation token отдельного GitHub App. Обычный
-  `GITHUB_TOKEN` не может писать в реестр или менять защиты.
-- Запись `train_opened` создаётся последним шагом. Любой предшествующий отказ
-  оставляет поезд неактивным.
+Репозиторий Академии является private-репозиторием организации на GitHub Team.
+Deployment branch policies для него доступны, но GitHub не предоставляет
+настройку запрета административного обхода Environment. Поэтому API возвращает
+`can_admins_bypass: true`, а private key в Environment мог бы быть получен
+изменённым workflow после принудительного обхода.
 
-## 2. Что должно быть готово до слияния инфраструктурного PR
+Принятый профиль:
 
-1. В PR изменяются только пути из закрытого
-   `INFRASTRUCTURE_NO_DEPLOY_PATHS` в
-   `scripts/release-train/config.mjs`.
-2. PR имеет точную метку `release:infrastructure-no-deploy` до слияния.
-3. Точный head SHA прошёл CI, независимое ревью, внешний ИИ-review и Copilot
-   review; все применимые обсуждения закрыты.
-4. `node --test tests/release-train/*.test.mjs`, `npm run check`,
-   `npm run test:e2e` и `npm run audit:production` успешны локально.
-5. Владелец проверил, что PR направлен в `main` и не содержит функциональных
-   изменений приложения.
+- private key остаётся только на локальной машине владельца;
+- `.github/workflows/train-lifecycle.yml` не получает Environment, secret или
+  App token и всегда завершается безопасным отказом;
+- локальный процесс создаёт GitHub App JWT и installation token только в
+  памяти;
+- token ограничивается одним репозиторием и правами текущей операции
+  `actions:read`, `administration:write`, `contents:write`, `metadata:read`;
+  `actions:read` используется только для чтения production Environment и его
+  deployment branch policies; после операции token отзывается;
+- все удалённые мутации выполняет служебный GitHub App, а не пользовательский
+  token владельца;
+- неизбежный `can_admins_bypass: true` принимается только точным локальным
+  профилем `github_team_private_local_owner` и сохраняется в append-only аудите.
 
-Метка является частью fail-closed классификации уже слитого PR. Если её нет,
-release workflow завершится ошибкой до сборки и deployment. Это безопасный
-отказ, но он потребует отдельного исправляющего инфраструктурного PR.
+Это не технический запрет действий злонамеренного владельца организации.
+Владелец и его локальная машина входят в явную границу доверия до перехода на
+Enterprise либо внешний OIDC-bound secret broker.
 
-## 3. Отдельный GitHub App
+## 2. Защитные инварианты
 
-В организации создаётся новый GitHub App, предназначенный только для
-`train-lifecycle`.
+- Команда запускается только из корня чистого `main`.
+- Перед token выполняется `git fetch`; локальный `HEAD` обязан совпасть с
+  `origin/main`.
+- `origin` обязан указывать на
+  `Abrikosov-group/abrikosoff-academy`.
+- GitHub CLI обязан быть авторизован как пользователь с ID `224131170`, с
+  активной ролью `admin` в `Abrikosov-group`.
+- Организация обязана иметь план `team`, репозиторий — visibility `private`,
+  default branch — `main`.
+- Принимается только GitHub App:
+  - App ID `4473722`;
+  - Client ID `Iv23lihDWOdXtSQ50Lt7`;
+  - slug `abrikosoff-academy-train`;
+  - владелец `Abrikosov-group`.
+- Installation обязана быть активной, без webhook events, только для выбранных
+  репозиториев и с точными permissions:
+  `actions:read`, `administration:write`, `contents:write`, `metadata:read`.
+- Installation token запрашивается только для `abrikosoff-academy`.
+- PEM обязан быть обычным RSA-файлом не короче 2048 бит, принадлежать текущему
+  системному пользователю и не иметь прав группы или остальных пользователей.
+- Стабильный `operation_id` сохраняется в `.git` до получения token и
+  повторно используется после прерывания.
+- Production Environment после операции разрешает deployment только из точной
+  ветки `main`; wait timer и required reviewers, если платформа когда-либо их
+  вернёт, сохраняются.
+- Ветка поезда защищается с `enforce_admins`, обязательными PR, четырьмя точными
+  CI-контекстами, закрытием обсуждений, запретом force-push и удаления.
+- Append-only реестр разрешает push только служебному App.
+- `train_opened` записывается последним, после повторной проверки `main`, source
+  head и обеих branch protection.
+- Любое несовпадение завершает операцию без `train_opened`.
 
-Настройки приложения:
+## 3. Предварительное состояние GitHub App
 
-- webhooks отключены;
-- repository permission `Actions`: `Read-only`;
-- repository permission `Administration`: `Read and write`;
-- repository permission `Contents`: `Read and write`;
-- остальные изменяющие permissions не выдаются;
-- установка выполняется только в `Abrikosov-group` и только для репозитория
-  `abrikosoff-academy`;
-- private key создаётся отдельно и не сохраняется в репозитории.
+App должен быть установлен только на репозиторий
+`Abrikosov-group/abrikosoff-academy`. В настройках App ожидаются:
 
-Перед добавлением ключа владелец создаёт отдельный Environment
-`release-train-lifecycle`:
+| Область | Уровень |
+|---|---|
+| Actions | Read-only |
+| Administration | Read and write |
+| Contents | Read and write |
+| Metadata | Read-only |
+| Webhook events | ни одного |
 
-- deployment branch policy — custom, ровно одна ветка `main`;
-- административный обход protection rules отключён;
-- секреты и переменные этого Environment не дублируются на уровне репозитория.
-
-Job `open` всегда ссылается на этот Environment. Workflow из другой ветки не
-получит private key ещё до запуска пользовательского кода, поэтому проверка
-`GITHUB_REF` внутри скрипта является дополнительной, а не единственной границей
-доверия.
-
-В settings Environment `release-train-lifecycle` добавляются:
-
-| Вид | Имя | Значение |
-|---|---|---|
-| Variable | `TRAIN_LIFECYCLE_APP_CLIENT_ID` | Client ID созданного GitHub App |
-| Variable | `TRAIN_LIFECYCLE_OWNER_ID` | неизменяемый числовой GitHub user ID владельца |
-| Secret | `TRAIN_LIFECYCLE_APP_PRIVATE_KEY` | полный PEM private key GitHub App |
-
-Граница проверяется read-only командами:
-
-```bash
-gh api \
-  repos/Abrikosov-group/abrikosoff-academy/environments/release-train-lifecycle \
-  --jq '{name, can_admins_bypass, deployment_branch_policy}'
-
-gh api \
-  'repos/Abrikosov-group/abrikosoff-academy/environments/release-train-lifecycle/deployment-branch-policies?per_page=100' \
-  --jq '.branch_policies | map({id, name, type})'
-```
-
-Ожидаются `can_admins_bypass: false`, custom policy и ровно одна запись
-`{name: "main", type: "branch"}`.
-
-Числовой ID владельца можно получить read-only командой:
+Private key создаётся на странице App один раз и сохраняется вне репозитория.
+Файл нельзя добавлять в `.env`, GitHub secret, облачный диск, Git, сообщение или
+журнал. Перед использованием:
 
 ```bash
-gh api /user --jq '.id'
+chmod 600 /absolute/path/abrikosoff-academy-train.private-key.pem
 ```
 
-Workflow дополнительно сужает installation token до `Actions: read`,
-`Administration: write` и `Contents: write`. Код проверяет, что token видит
-ровно один репозиторий —
-`Abrikosov-group/abrikosoff-academy`. Несовпадение завершает `open` без записи
-`train_opened`.
+Environment `release-train-lifecycle`, созданный во время первоначальной
+настройки, не является границей секрета на GitHub Team/private. В нём не должно
+быть `TRAIN_LIFECYCLE_APP_PRIVATE_KEY`; workflow его не использует. Удаление
+самого Environment выполняется только отдельным явным решением владельца и не
+нужно для локального `open`.
 
-## 4. Слияние без production deployment
+## 4. Что проверяет режим `--verify`
 
-Слияние выполняет владелец. После него workflow
-`Выпуск production-версии` должен:
+`--verify` не меняет refs, protections, Environment или реестр. Он:
 
-1. найти ровно один связанный слитый PR для нового SHA `main`;
-2. подтвердить базу `main`, тот же репозиторий, merge SHA, точную метку и полный
-   список изменённых и предыдущих путей;
-3. вернуть класс `infrastructure-no-deploy`;
-4. завершить job классификации успешно;
-5. пропустить оба job сборки образов и job production deployment.
+1. проверяет локальный checkout и заново получает `origin/main`;
+2. проверяет GitHub CLI identity, роль владельца, plan и visibility;
+3. проверяет права и криптографический тип PEM;
+4. подписывает RS256 JWT с временем жизни девять минут;
+5. проверяет точную App identity и installation;
+6. создаёт installation token для одного репозитория и минимальных прав;
+7. повторно проверяет scope token и SHA удалённого `main`;
+8. подтверждает чтение production Environment и deployment branch policies;
+9. отзывает installation token;
+10. не создаёт локальный operation state.
 
-Endpoint связи коммита с PR
-`GET /repos/{owner}/{repo}/commits/{sha}/pulls` возвращает сокращённые
-карточки и не обязан включать `merge_commit_sha`. Классификатор использует из
-этого ответа только номер связанного слитого PR, затем получает полную карточку
-через `GET /repos/{owner}/{repo}/pulls/{number}`. Точный merge SHA проверяется
-отдельным GraphQL-запросом по полю `PullRequest.mergeCommit.oid`, потому что в
-REST API версии `2026-03-10` поле `merge_commit_sha` отсутствует и в полной
-карточке. Только согласованные REST- и GraphQL-ответы подтверждают merge SHA,
-базовую и исходную ветки, репозиторий и метку.
-
-Проверка через GitHub CLI:
+Запускать команду можно только после того, как содержащий её инфраструктурный
+PR принят владельцем в `main`, а локальный `main` синхронизирован. Из корня
+репозитория:
 
 ```bash
-gh run list --workflow release.yml --branch main --limit 3
-gh run view RUN_ID
+node scripts/release-train/local-bootstrap.mjs \
+  --verify \
+  --private-key /absolute/path/abrikosoff-academy-train.private-key.pem
 ```
 
-В summary ожидаются класс `infrastructure-no-deploy` и сообщение, что сборка и
-deployment пропущены. Любой запущенный build, опубликованный новый образ или
-production deployment означает провал приёмки; `open` в этом случае не
-запускается.
+Успешная строка содержит только репозиторий, SHA и slug App. JWT, installation
+token и private key не выводятся.
 
-## 5. Отключение административного обхода Environment
+## 5. Локальный `open`
 
-GitHub REST API позволяет управлять deployment branch policy, но используемый
-контракт API не предоставляет поле для отключения административного обхода.
-Поэтому владелец один раз вручную открывает настройки Environment
-`production` и отключает возможность администраторам обходить protection
-rules.
-
-После изменения нужно убедиться, что API возвращает `false`:
+Перед изменяющим запуском владелец повторно проверяет:
 
 ```bash
-gh api \
-  repos/Abrikosov-group/abrikosoff-academy/environments/production \
-  --jq '{name, can_admins_bypass, deployment_branch_policy}'
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+gh api user --jq '{id,login}'
+gh api orgs/Abrikosov-group --jq '{login,plan:.plan.name}'
+gh api repos/Abrikosov-group/abrikosoff-academy \
+  --jq '{full_name,visibility,default_branch}'
 ```
 
-Если `can_admins_bypass` не равно `false`, `train-lifecycle` остановится до
-изменения Environment, защиты интеграционной ветки и записи реестра.
+Ожидаются чистый `main`, два одинаковых SHA, user ID `224131170`, plan `team`,
+visibility `private` и default branch `main`.
 
-## 6. Регистрация существующего поезда
-
-Текущий экземпляр регистрируется только в режиме `register_existing`.
-Код принимает единственную пару:
-
-- `source_branch`: `codex/admin-operational-mvp`;
-- ожидаемый head до регистрации:
-  `bb6e69adeefe59aa31ddb7e118d6c685074f4dd1`;
-- `opened_from_main_sha`:
-  `cb7cca60d11f22ec18aa1751ec607ab30f6b3787`.
-
-Перед запуском владелец проверяет отсутствие других активных запусков
-`train-lifecycle`, затем выполняет:
+После успешного `--verify` запускается ровно одна команда:
 
 ```bash
-gh workflow run train-lifecycle.yml \
-  --ref main \
-  -f confirmation='ОТКРЫТЬ РЕЛИЗНЫЙ ПОЕЗД'
+node scripts/release-train/local-bootstrap.mjs \
+  --open \
+  --private-key /absolute/path/abrikosoff-academy-train.private-key.pem \
+  --confirmation "ОТКРЫТЬ РЕЛИЗНЫЙ ПОЕЗД"
 ```
 
-Полученный run отслеживается до терминального результата:
+До удалённых мутаций команда атомарно создаёт:
 
-```bash
-gh run list --workflow train-lifecycle.yml --branch main --limit 3
-gh run watch RUN_ID --exit-status
-gh run view RUN_ID
+```text
+.git/abrikosoff-release-train-bootstrap.json
 ```
 
-Операция использует ту же repository-wide concurrency-группу
-`production-release`, что и действующий release workflow. Поэтому изменение
-production Environment и production-выпуск не выполняются одновременно. Под
-этой блокировкой операция:
+Файл имеет права `0600` и содержит только несекретные поля: schema version,
+репозиторий, режим, App ID, actor, точный SHA `main`, UTC-время и стабильный
+UUID операции. Его не удаляют между повторами одного `open`.
 
-1. повторно проверяет доверенный контекст запуска и scope служебного App;
-2. создаёт либо полностью перечитывает append-only реестр;
-3. отклоняет второй активный поезд;
-4. требует уже отключённый admin bypass;
-5. сохраняет существующие wait timer и required reviewers, отклоняет неизвестный
-   тип protection rule и оставляет у production Environment ровно одну branch
-   policy `main`;
-6. проверяет Git-происхождение существующей ветки;
-7. применяет и повторно читает точную branch protection;
-8. повторно проверяет неизменность head ветки и `main`;
-9. последним шагом добавляет `train_opened` и перечитывает всю историю реестра.
+Далее общий lifecycle:
 
-Повторный успешный `open` запрещён наличием активного поезда. Это не
-идемпотентный no-op: второй запуск должен завершиться кодом
-`TRAIN_ALREADY_ACTIVE` и ничего не изменить.
+1. подтверждает scope installation token;
+2. читает реестр и останавливается при другом активном поезде;
+3. повторно проверяет удалённый `main`;
+4. создаёт пустой append-only реестр либо проверяет существующий;
+5. подтверждает Team/private-профиль production Environment;
+6. сохраняет существующие protection rules и включает custom branch policy;
+7. удаляет все deployment branch policies, кроме точной `main`, либо создаёт
+   её;
+8. проверяет точные происхождение и head существующей source branch;
+9. применяет и перечитывает точную branch protection source branch;
+10. повторно проверяет неизменность source head и `main`;
+11. добавляет `train_opened` схемы 2 с
+    `lifecycle_invocation.kind=local_owner`, стабильным `operation_id` и
+    `environment_admin_bypass_policy=github_team_private_local_owner`;
+12. перечитывает всю append-only историю;
+13. отзывает installation token.
 
-## 7. Проверка четырёх условий начального шлюза
+Повтор с тем же локальным state после потери ответа возвращает уже созданный
+`train_id`, если actor, operation ID, source branch, opened-from SHA и политика
+совпадают. Другой operation ID не может подтвердить активный поезд.
 
-### 7.1. Production Environment
+## 6. Доказательная проверка после `open`
+
+### 6.1. Production Environment
 
 ```bash
 gh api \
   repos/Abrikosov-group/abrikosoff-academy/environments/production \
-  --jq '{can_admins_bypass, deployment_branch_policy}'
+  --jq '{name,can_admins_bypass,deployment_branch_policy}'
 
 gh api \
   'repos/Abrikosov-group/abrikosoff-academy/environments/production/deployment-branch-policies?per_page=100' \
-  --jq '.branch_policies | map({id, name, type})'
+  --jq '.branch_policies | map({id,name,type})'
 ```
 
-Ожидается:
+Ожидаются:
 
-- `can_admins_bypass: false`;
-- `protected_branches: false`;
-- `custom_branch_policies: true`;
+- `can_admins_bypass: true` — задокументированное ограничение Team/private, а
+  не выполненный исходный запрет;
+- `custom_branch_policies: true` и `protected_branches: false`;
 - ровно одна policy `{name: "main", type: "branch"}`.
 
-### 7.2. Защита точной интеграционной ветки
+### 6.2. Source branch
 
 ```bash
 gh api \
   'repos/Abrikosov-group/abrikosoff-academy/branches/codex%2Fadmin-operational-mvp/protection'
 ```
 
-Ожидаются:
+Проверяются `enforce_admins`, PR requirement, strict status checks, четыре
+точных контекста GitHub Actions, conversation resolution, запрет bypass,
+force-push, deletion и recreation.
 
-- `enforce_admins.enabled: true`;
-- pull request обязателен, approvals могут оставаться `0`;
-- stale approvals сбрасываются, bypass actors отсутствуют;
-- обязательны четыре точных CI-контекста из
-  `SOURCE_BRANCH_REQUIRED_CHECKS`, каждый от GitHub Actions App ID `15368`;
-- required checks работают в strict-режиме;
-- обсуждения должны быть закрыты;
-- force-push и удаление запрещены;
-- linear history отключена, потому что sync PR сохраняет merge-коммит из
-  актуального `main`.
-
-### 7.3. Append-only реестр
+### 6.3. Append-only реестр
 
 ```bash
 gh api \
   repos/Abrikosov-group/abrikosoff-academy/git/ref/heads/release-train-registry \
-  --jq '{ref, sha: .object.sha}'
+  --jq '{ref,sha:.object.sha}'
 
 gh api \
   repos/Abrikosov-group/abrikosoff-academy/branches/release-train-registry/protection
 ```
 
-Корневой коммит отдельной ветки содержит только `registry.json`. Каждый
-следующий однородительский коммит добавляет ровно один новый файл
-`events/NNNNNNNN-*.json`, не меняя предыдущие blob. Push разрешён только
-служебному GitHub App; force-push, удаление и нелинейная история запрещены.
+Ветка обязана иметь линейную историю без force-push и удаления, а push
+restrictions — ровно один App `abrikosoff-academy-train`. В дереве ожидаются
+канонический `registry.json` схемы 2 и ровно одно событие `train_opened`.
+Событие должно содержать:
 
-В первом event должны совпадать `train_id`, точная `source_branch`,
-`opened_from_main_sha`, `lifecycle_run_id`, `lifecycle_run_attempt`, actor и UTC
-время. Прямое редактирование или удаление ветки реестра запрещено.
+- точные `train_id`, `source_branch`, `opened_from_main_sha`;
+- owner actor ID и текущий login;
+- UTC `occurred_at`;
+- `lifecycle_invocation.kind=local_owner` и UUID `operation_id`;
+- `environment_admin_bypass_policy=github_team_private_local_owner`.
 
-### 7.4. Активный шаблон PR
+### 6.4. Отсутствие deployment
 
-После появления шаблона в `main` новый PR должен автоматически содержать поля:
+Начальный `open` не запускает release workflow и не создаёт production
+deployment. После него `/api/health` и production SHA не должны измениться.
 
-- базовая ветка;
-- тип поставки;
-- актуальная базовая ветка в чек-листе готовности.
+## 7. Ошибки и безопасный повтор
 
-Уже открытые PR не обновляются автоматически. Их описание приводится к шаблону
-вручную до нового полного раунда ревью.
+- Отказ до `train_opened` не создаёт активный поезд. Устраняется первопричина,
+  затем повторяется та же команда с сохранённым локальным state.
+- Если пустой реестр создан, но его protection не применён, повтор может
+  восстановить protection только пока в реестре нет событий и head не изменён.
+- Protection непустого реестра автоматически не ремонтируется: требуется
+  расследование.
+- Если `train_opened` уже записан, повтор с тем же operation ID подтверждает
+  результат без второй записи.
+- Несовпадение локального state с новым SHA `main` закрывает повтор. Перед
+  удалением или заменой state сначала вручную доказывается отсутствие
+  `train_opened` для его operation ID.
+- Ошибка отзыва installation token считается ошибкой шлюза. Не выводя token,
+  владелец проверяет App audit, при необходимости отзывает private key; сам
+  installation token в любом случае ограничен одним часом.
+- После успешного `train_opened` удалять реестр, source branch или локальную
+  запись ради «отмены» нельзя. Для отмены нужна ещё не реализованная операция
+  `abort` из финального lifecycle.
 
-## 8. Синхронизация инфраструктурного PR в поезд
+## 8. Локальные проверки пакета до PR
 
-После успешного `open` новый `main` должен быть включён в историю текущей
-интеграционной ветки отдельным sync PR. Прямой push запрещён.
-
-Перед подготовкой sync PR проверяется, что репозиторий разрешает merge-коммиты:
-
-```bash
-gh api \
-  repos/Abrikosov-group/abrikosoff-academy \
-  --jq '.allow_merge_commit'
-```
-
-Ожидается `true`. Если настройка изменилась, синхронизация останавливается до
-решения владельца: подменять обязательный merge-коммит squash, rebase или
-cherry-pick нельзя.
-
-Исходная sync-ветка создаётся от `codex/admin-operational-mvp`, после чего в неё
-merge-коммитом включается точный актуальный `origin/main`. Squash, rebase и
-cherry-pick для этой синхронизации не применяются. После CI и ревью PR
-направляется в `codex/admin-operational-mvp`; слияние выполняет владелец методом
-merge commit.
-
-После слияния проверяется инвариант:
+Изменение самого шлюза проверяется из feature-ветки, но `--verify` и `--open`
+из неё не запускаются: команды требуют точный `main`.
 
 ```bash
-git fetch origin main codex/admin-operational-mvp
-git merge-base --is-ancestor \
-  origin/main \
-  origin/codex/admin-operational-mvp
+node --check scripts/release-train/local-bootstrap.mjs
+node --test tests/release-train/*.test.mjs
+npm run check
+npm run test:e2e
+npm run audit:production
 ```
 
-Нулевой код подтверждает, что инфраструктурный `main` является предком
-текущего кандидата.
+PR этого пакета является инфраструктурным, использует метку
+`release:infrastructure-no-deploy`, проходит полный раунд ревью и сливается
+только владельцем. Успешная классификация должна пропустить build и deployment.
 
-## 9. Отказы и восстановление начального open
+## 9. Критерий готовности начального шлюза
 
-- Отказ до `train_opened` не создаёт активный поезд. Исправляется первопричина,
-  затем весь `open` запускается повторно.
-- Если ветка реестра создана с корректным единственным metadata-коммитом, но
-  установка её защиты не завершилась, повторный `open` применяет точный контракт
-  защиты и повторно проверяет, что пустой реестр не изменился. Непустой реестр с
-  неверной защитой автоматически не исправляется: это отдельный инцидент.
-- Если `train_opened` уже записан, но workflow потерял ответ при контрольном
-  чтении, повтор того же GitHub Actions run с тем же `run_id` подтверждает
-  существующую запись и возвращает исходный результат. Новый `workflow_dispatch`
-  с другим `run_id` остаётся заблокированным как второй `open`.
-- Для `register_existing` исходная интеграционная ветка не создаётся и при
-  отказе не удаляется.
-- Создание нового поезда (`create_new`) этим начальным workflow намеренно не
-  предоставляется. Оно добавляется только вместе с полным проверенным
-  жизненным циклом в отдельном пакете.
-- После успешного `train_opened` удалять реестр или ветку для «отмены» нельзя.
-  До реализации проверенного `abort` поезд остаётся активным. Поэтому `open`
-  запускается только после полной технической приёмки начального шлюза и
-  решения продолжать текущий поезд.
-- Если Environment, branch protection или реестр после успешного `open`
-  отличаются от контракта, функциональные слияния останавливаются до
-  расследования; данные вручную не «подправляются».
+Начальный шлюз можно признать действующим только после отдельного подтверждения
+владельца, когда одновременно:
 
-## 10. Критерий завершения
+1. пакет ADR-0010 принят в `main` без deployment;
+2. `--verify` завершён успешно на точном актуальном `main`;
+3. `--open` завершён успешно и installation token отозван;
+4. production Environment содержит только точную policy `main`, а неизбежный
+   admin bypass явно зафиксирован как Team/private-риск;
+5. source branch имеет точную защиту;
+6. append-only реестр схемы 2 содержит ровно один активный `train_opened` с
+   локальным operation ID;
+7. новый PR автоматически получает шаблон из default branch;
+8. production SHA и deployments не изменились.
 
-Начальный шлюз считается действующим только когда одновременно доказаны:
-
-1. инфраструктурный PR принят в `main`, а его release run завершился как
-   `infrastructure-no-deploy` без сборки и deployment;
-2. production Environment допускает только `main` и не имеет admin bypass;
-3. `codex/admin-operational-mvp` защищена точными правилами, применимыми к
-   администраторам;
-4. append-only реестр содержит ровно один активный `train_opened` для этой
-   ветки;
-5. новый PR получает шаблон из default-ветки;
-6. инфраструктурный `main` синхронизирован в ветку поезда через проверенный
-   merge PR.
-
-До выполнения всех пунктов новый функциональный пакет не сливается в
-интеграционную ветку. Даже после их выполнения финальный PR поезда в `main`
-остаётся запрещён до отдельного финального шлюза выпуска.
+До выполнения всех пунктов карта реализации сохраняет статус «реализовано
+локально, внешняя приёмка не выполнена», а функциональные слияния в source
+branch остаются заблокированы.

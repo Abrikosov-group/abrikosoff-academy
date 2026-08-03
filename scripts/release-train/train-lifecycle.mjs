@@ -5,7 +5,11 @@ import { pathToFileURL } from "node:url";
 import {
   ACADEMY_REPOSITORY,
   CURRENT_BOOTSTRAP_TRAIN,
+  CURRENT_LIFECYCLE_APP,
+  CURRENT_LIFECYCLE_OWNER_ID,
   DEFAULT_BRANCH,
+  ENVIRONMENT_ADMIN_BYPASS_POLICIES,
+  LIFECYCLE_INVOCATION_KINDS,
   MAX_GITHUB_PAGES,
   MAX_REGISTRY_COMMITS,
   PRODUCTION_ENVIRONMENT,
@@ -23,6 +27,7 @@ import {
   eventPath,
   validateAppendOnlyHistory,
   validateEventFiles,
+  validateLifecycleInvocation,
   validateRegistryEvents,
   validateRegistryMetadata,
 } from "./registry.mjs";
@@ -283,8 +288,13 @@ export function validatePreTokenInvocation(env) {
   return {
     actorId: env.GITHUB_ACTOR_ID,
     actorLogin: env.GITHUB_ACTOR,
-    lifecycleRunAttempt: Number(env.GITHUB_RUN_ATTEMPT),
-    lifecycleRunId: env.GITHUB_RUN_ID,
+    environmentAdminBypassPolicy:
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN,
+    lifecycleInvocation: {
+      kind: LIFECYCLE_INVOCATION_KINDS.GITHUB_ACTIONS,
+      run_attempt: Number(env.GITHUB_RUN_ATTEMPT),
+      run_id: env.GITHUB_RUN_ID,
+    },
     mainSha: env.GITHUB_SHA,
   };
 }
@@ -307,6 +317,61 @@ export function validateTrustedInvocation(env) {
     ...invocation,
     appSlug: env.TRAIN_LIFECYCLE_APP_SLUG,
   };
+}
+
+export function validateTeamPrivatePlatformContext(context) {
+  assertGate(
+    context?.organizationPlan === "team",
+    "TEAM_PRIVATE_PLAN_MISMATCH",
+    "Локальный профиль разрешён только для организации на плане GitHub Team",
+  );
+  assertGate(
+    context?.repository === ACADEMY_REPOSITORY &&
+      context?.repositoryVisibility === "private" &&
+      context?.defaultBranch === DEFAULT_BRANCH,
+    "TEAM_PRIVATE_REPOSITORY_MISMATCH",
+    "Локальный профиль разрешён только для private-репозитория Академии с main по умолчанию",
+  );
+  return context;
+}
+
+export function validateLocalOwnerInvocation(invocation) {
+  assertGate(
+    invocation?.actorId === CURRENT_LIFECYCLE_OWNER_ID,
+    "TRUST_OWNER_MISMATCH",
+    "Локальный lifecycle запущен не зафиксированным владельцем",
+  );
+  assertGate(
+    typeof invocation?.actorLogin === "string" &&
+      /^[A-Za-z0-9-]{1,39}$/.test(invocation.actorLogin),
+    "TRUST_ACTOR_INVALID",
+    "GitHub actor локальной операции имеет недопустимый формат",
+  );
+  assertGate(
+    SHA_PATTERN.test(invocation?.mainSha ?? ""),
+    "TRUST_MAIN_SHA_INVALID",
+    "Локальная операция не привязана к точному SHA main",
+  );
+  assertGate(
+    invocation?.appSlug === CURRENT_LIFECYCLE_APP.slug,
+    "LIFECYCLE_APP_SLUG_INVALID",
+    "Локальная операция использует не тот служебный GitHub App",
+  );
+  assertGate(
+    invocation?.environmentAdminBypassPolicy ===
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    "ENVIRONMENT_ADMIN_BYPASS_POLICY_INVALID",
+    "Локальная операция не содержит точный Team/private-профиль",
+  );
+  validateLifecycleInvocation(invocation?.lifecycleInvocation);
+  assertGate(
+    invocation.lifecycleInvocation.kind ===
+      LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER,
+    "TRUST_INVOCATION_KIND_INVALID",
+    "Локальный шлюз принимает только происхождение local_owner",
+  );
+  validateTeamPrivatePlatformContext(invocation.platformContext);
+  return invocation;
 }
 
 async function getRef(api, branch, { allowMissing = false } = {}) {
@@ -676,17 +741,41 @@ async function listEnvironmentBranchPolicies(api) {
   );
 }
 
-export function validateEnvironment(environment, policies) {
+function validateEnvironmentAdminBypass(environment, context) {
+  const policy =
+    context?.environmentAdminBypassPolicy ??
+    ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN;
+  if (policy === ENVIRONMENT_ADMIN_BYPASS_POLICIES.FORBIDDEN) {
+    assertGate(
+      environment?.can_admins_bypass === false,
+      "ENVIRONMENT_ADMIN_BYPASS_ENABLED",
+      "Для production Environment не отключён административный обход",
+    );
+    return policy;
+  }
+
+  assertGate(
+    policy ===
+      ENVIRONMENT_ADMIN_BYPASS_POLICIES.TEAM_PRIVATE_LOCAL_OWNER,
+    "ENVIRONMENT_ADMIN_BYPASS_POLICY_INVALID",
+    "Неизвестная политика административного обхода Environment",
+  );
+  validateTeamPrivatePlatformContext(context?.platformContext);
+  assertGate(
+    environment?.can_admins_bypass === true,
+    "TEAM_PRIVATE_ADMIN_BYPASS_STATE_MISMATCH",
+    "Team/private-профиль ожидает недоступное для отключения значение admin bypass",
+  );
+  return policy;
+}
+
+export function validateEnvironment(environment, policies, context = {}) {
   assertGate(
     environment?.name === PRODUCTION_ENVIRONMENT,
     "ENVIRONMENT_INVALID",
     "GitHub API вернул не production Environment",
   );
-  assertGate(
-    environment.can_admins_bypass === false,
-    "ENVIRONMENT_ADMIN_BYPASS_ENABLED",
-    "Для production Environment не отключён административный обход",
-  );
+  validateEnvironmentAdminBypass(environment, context);
   assertGate(
     environment.deployment_branch_policy?.protected_branches === false &&
       environment.deployment_branch_policy?.custom_branch_policies === true,
@@ -813,15 +902,11 @@ export function validateEnvironmentProtectionsPreserved(before, after) {
   return after;
 }
 
-async function configureProductionEnvironment(api) {
+async function configureProductionEnvironment(api, context = {}) {
   const before = await api.request(
     api.repoPath(`/environments/${PRODUCTION_ENVIRONMENT}`),
   );
-  assertGate(
-    before.data?.can_admins_bypass === false,
-    "ENVIRONMENT_ADMIN_BYPASS_ENABLED",
-    "Сначала владелец должен отключить административный обход production Environment",
-  );
+  validateEnvironmentAdminBypass(before.data, context);
 
   const updatePayload = productionEnvironmentUpdatePayload(before.data);
 
@@ -868,7 +953,7 @@ async function configureProductionEnvironment(api) {
     api.repoPath(`/environments/${PRODUCTION_ENVIRONMENT}`),
   );
   const afterPolicies = await listEnvironmentBranchPolicies(api);
-  validateEnvironment(after.data, afterPolicies);
+  validateEnvironment(after.data, afterPolicies, context);
   validateEnvironmentProtectionsPreserved(before.data, after.data);
 }
 
@@ -949,17 +1034,39 @@ async function appendOpenedEvent(api, registry, event) {
   return verified;
 }
 
+function sameLifecycleInvocation(recorded, current) {
+  validateLifecycleInvocation(recorded);
+  validateLifecycleInvocation(current);
+  if (recorded.kind !== current.kind) {
+    return false;
+  }
+  if (recorded.kind === LIFECYCLE_INVOCATION_KINDS.LOCAL_OWNER) {
+    return recorded.operation_id === current.operation_id;
+  }
+  return (
+    recorded.run_id === current.run_id &&
+    recorded.run_attempt <= current.run_attempt
+  );
+}
+
 function recoveredOpenResult(registry, invocation) {
   const activeTrain = registry?.state.activeTrain;
-  if (!activeTrain || activeTrain.lifecycle_run_id !== invocation.lifecycleRunId) {
+  if (
+    !activeTrain ||
+    !sameLifecycleInvocation(
+      activeTrain.lifecycle_invocation,
+      invocation.lifecycleInvocation,
+    )
+  ) {
     return null;
   }
   assertGate(
-    activeTrain.lifecycle_run_attempt <= invocation.lifecycleRunAttempt &&
-      activeTrain.actor_id === invocation.actorId &&
+    activeTrain.actor_id === invocation.actorId &&
       activeTrain.source_branch === CURRENT_BOOTSTRAP_TRAIN.sourceBranch &&
       activeTrain.opened_from_main_sha ===
-        CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha,
+        CURRENT_BOOTSTRAP_TRAIN.openedFromMainSha &&
+      activeTrain.environment_admin_bypass_policy ===
+        invocation.environmentAdminBypassPolicy,
     "TRAIN_OPEN_REPLAY_MISMATCH",
     "Существующая запись этого lifecycle run не совпадает с доверенным open",
   );
@@ -1002,8 +1109,7 @@ async function writeLifecycleResult(result, env) {
   }
 }
 
-export async function runTrainOpen(env = process.env, dependencies = {}) {
-  const invocation = validateTrustedInvocation(env);
+async function executeTrainOpen({ env, invocation }, dependencies = {}) {
   const api =
     dependencies.api ??
     new GitHubApi({
@@ -1078,7 +1184,11 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
     "Генератор не вернул допустимый UUID для train_id",
   );
 
-  await services.configureProductionEnvironment(api);
+  await services.configureProductionEnvironment(api, {
+    environmentAdminBypassPolicy:
+      invocation.environmentAdminBypassPolicy,
+    platformContext: invocation.platformContext,
+  });
   const source = await services.prepareSourceBranch({
     api,
     mainSha: invocation.mainSha,
@@ -1109,8 +1219,9 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
   const event = createTrainOpenedEvent({
     actorId: invocation.actorId,
     actorLogin: invocation.actorLogin,
-    lifecycleRunAttempt: invocation.lifecycleRunAttempt,
-    lifecycleRunId: invocation.lifecycleRunId,
+    environmentAdminBypassPolicy:
+      invocation.environmentAdminBypassPolicy,
+    lifecycleInvocation: invocation.lifecycleInvocation,
     occurredAt: dependencies.now?.() ?? new Date().toISOString(),
     openedFromMainSha: source.openedFromMainSha,
     registrySequence: registry.events.length + 1,
@@ -1131,23 +1242,30 @@ export async function runTrainOpen(env = process.env, dependencies = {}) {
   return result;
 }
 
+export async function runTrainOpen(env = process.env, dependencies = {}) {
+  return executeTrainOpen(
+    { env, invocation: validateTrustedInvocation(env) },
+    dependencies,
+  );
+}
+
+export async function runLocalTrainOpen(invocation, dependencies = {}) {
+  return executeTrainOpen(
+    { env: {}, invocation: validateLocalOwnerInvocation(invocation) },
+    { ...dependencies, skipOutput: true },
+  );
+}
+
 const isDirectRun =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  const args = process.argv.slice(2);
-  const execution = Promise.resolve().then(() => {
-    if (args.length === 1 && args[0] === "--preflight") {
-      return validatePreTokenInvocation(process.env);
-    }
-    assertGate(
-      args.length === 0,
-      "LIFECYCLE_ARGUMENTS_INVALID",
-      "Допустим только аргумент --preflight",
-    );
-    return runTrainOpen();
-  });
-  execution.catch((error) => {
+  Promise.reject(
+    new ReleaseGateError(
+      "ACTIONS_LIFECYCLE_DISABLED",
+      "Actions lifecycle отключён для GitHub Team/private; используйте локальный шлюз по runbook",
+    ),
+  ).catch((error) => {
     console.error(formatGateError(error));
     process.exitCode = 1;
   });

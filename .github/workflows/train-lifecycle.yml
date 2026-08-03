@@ -16,52 +16,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  open:
-    name: Открыть релизный поезд
+  team-private-guard:
+    name: Остановить недоступный Actions-шлюз
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: release-train-lifecycle
+    timeout-minutes: 2
 
     steps:
-      - name: Получить доверенный код из main
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Подготовить Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.18.0
-
-      - name: Проверить доверенный контекст до выдачи token
+      - name: Закрыть небезопасный путь к private key
         env:
-          GITHUB_ACTOR_ID: ${{ github.actor_id }}
-          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           TRAIN_CONFIRMATION: ${{ inputs.confirmation }}
-          TRAIN_LIFECYCLE_OWNER_ID: ${{ vars.TRAIN_LIFECYCLE_OWNER_ID }}
-          TRAIN_OPEN_MODE: register_existing
-        run: node scripts/release-train/train-lifecycle.mjs --preflight
-
-      - name: Создать ограниченный token служебного GitHub App
-        id: lifecycle-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.TRAIN_LIFECYCLE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.TRAIN_LIFECYCLE_APP_PRIVATE_KEY }}
-          permission-actions: read
-          permission-administration: write
-          permission-contents: write
-
-      - name: Проверить гейты и зарегистрировать поезд
-        id: open
-        env:
-          GITHUB_ACTOR_ID: ${{ github.actor_id }}
-          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          TRAIN_CONFIRMATION: ${{ inputs.confirmation }}
-          TRAIN_LIFECYCLE_APP_SLUG: ${{ steps.lifecycle-token.outputs.app-slug }}
-          TRAIN_LIFECYCLE_OWNER_ID: ${{ vars.TRAIN_LIFECYCLE_OWNER_ID }}
-          TRAIN_LIFECYCLE_TOKEN: ${{ steps.lifecycle-token.outputs.token }}
-          TRAIN_OPEN_MODE: register_existing
-        run: node scripts/release-train/train-lifecycle.mjs
+        run: |
+          if [ "$TRAIN_CONFIRMATION" != "ОТКРЫТЬ РЕЛИЗНЫЙ ПОЕЗД" ]; then
+            echo "::error title=Неверное подтверждение::Текст подтверждения не совпадает."
+            exit 1
+          fi
+          echo "::error title=GitHub Team/private::Private key не хранится в GitHub Environment. Выполните локальный owner-шлюз по docs/operations/release-train.md."
+          exit 1
