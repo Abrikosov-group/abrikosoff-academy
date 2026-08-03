@@ -108,7 +108,7 @@ ADR-0009 и процесс релизного поезда приняты в и�
   обязательные PR, четыре CI-контекста и закрытие обсуждений;
 - проверка production Environment без административного обхода, сохранение
   существующих wait timer и required reviewers и автоматическое ограничение
-  deployment policy точной веткой `main`;
+  deployment branch policy точной веткой `main`;
 - fail-closed классификатор release workflow: инфраструктурный PR из закрытого
   allowlist завершает выпуск без сборки и deployment, текущий hotfix-путь
   сохраняется, иной класс до финального шлюза отклоняется;
@@ -296,7 +296,7 @@ step-up. Отдельных маршрутов общего списка дос�
    admin bypass у lifecycle- и production Environment;
 4. выполнить `train-lifecycle` в режиме `register_existing`, подтвердить
    append-only запись `train_opened`, точную защиту ветки и единственную
-   deployment policy `main`;
+   deployment branch policy `main`;
 5. проверить автоматическое применение шаблона к новому функциональному PR и
    вручную синхронизировать процессные изменения из `main` в текущую ветку
    поезда merge-коммитом через PR.
