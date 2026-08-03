@@ -10,7 +10,11 @@ import {
   MAX_RELEASE_PR_LOOKUP_ATTEMPTS,
 } from "./config.mjs";
 import { ReleaseGateError, assertGate, formatGateError } from "./errors.mjs";
-import { GitHubApi, GitHubApiError } from "./github-api.mjs";
+import {
+  GitHubApi,
+  GitHubApiError,
+  GitHubTransportError,
+} from "./github-api.mjs";
 
 const RETRY_DELAYS_MS = Object.freeze([0, 2_000, 4_000, 8_000, 16_000, 30_000]);
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -182,6 +186,9 @@ export function retryDelayMs({ attemptIndex, error, nowMs = Date.now() }) {
 }
 
 function isRetryableApiError(error) {
+  if (error instanceof GitHubTransportError) {
+    return true;
+  }
   if (!(error instanceof GitHubApiError)) {
     return false;
   }

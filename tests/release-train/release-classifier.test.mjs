@@ -9,7 +9,10 @@ import {
   validateInfrastructureFiles,
   validateReleaseInvocation,
 } from "../../scripts/release-train/release-classifier.mjs";
-import { GitHubApiError } from "../../scripts/release-train/github-api.mjs";
+import {
+  GitHubApi,
+  GitHubApiError,
+} from "../../scripts/release-train/github-api.mjs";
 
 const REPOSITORY = "Abrikosov-group/abrikosoff-academy";
 const SHA = "a".repeat(40);
@@ -175,6 +178,36 @@ test("поиск связанного PR повторяет временную �
       resolve();
     },
   });
+  assert.equal(found.number, 40);
+  assert.equal(requests, 2);
+  assert.deepEqual(delays, [0]);
+});
+
+test("поиск связанного PR повторяет транспортный сбой GitHub API", async () => {
+  let requests = 0;
+  const delays = [];
+  const api = new GitHubApi({
+    apiUrl: "https://github.example.test",
+    fetchImpl: async () => {
+      requests += 1;
+      if (requests === 1) {
+        throw new TypeError("fetch failed");
+      }
+      return new Response(JSON.stringify([pullRequest()]), { status: 200 });
+    },
+    repository: REPOSITORY,
+    token: "test-token",
+  });
+
+  const found = await findMergedPullRequest({
+    api,
+    sha: SHA,
+    sleep(resolve, delay) {
+      delays.push(delay);
+      resolve();
+    },
+  });
+
   assert.equal(found.number, 40);
   assert.equal(requests, 2);
   assert.deepEqual(delays, [0]);

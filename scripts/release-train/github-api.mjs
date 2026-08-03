@@ -35,6 +35,18 @@ export class GitHubApiError extends ReleaseGateError {
   }
 }
 
+export class GitHubTransportError extends ReleaseGateError {
+  constructor({ cause, method, path }) {
+    super(
+      "GITHUB_API_TRANSPORT_ERROR",
+      `${method} ${path}: транспортный запрос к GitHub API не выполнен`,
+      { cause },
+    );
+    this.method = method;
+    this.path = path;
+  }
+}
+
 export class GitHubApi {
   constructor({
     apiUrl = "https://api.github.com",
@@ -66,16 +78,22 @@ export class GitHubApi {
   ) {
     assertGate(path.startsWith("/"), "GITHUB_API_PATH_INVALID", "API path должен начинаться с /");
 
-    const response = await this.fetchImpl(`${this.apiUrl}${path}`, {
-      body: body === undefined ? undefined : JSON.stringify(body),
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-      },
-      method,
-    });
+    const requestBody = body === undefined ? undefined : JSON.stringify(body);
+    let response;
+    try {
+      response = await this.fetchImpl(`${this.apiUrl}${path}`, {
+        body: requestBody,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        },
+        method,
+      });
+    } catch (cause) {
+      throw new GitHubTransportError({ cause, method, path });
+    }
     const text = await response.text();
     const data = parseResponseBody(text);
 

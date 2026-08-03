@@ -8,10 +8,28 @@ async function read(path) {
   return readFile(new URL(path, ROOT), "utf8");
 }
 
+function topLevelSectionKeys(source, sectionName) {
+  const lines = source.split("\n");
+  const sectionIndex = lines.findIndex((line) => line === `${sectionName}:`);
+  assert.notEqual(sectionIndex, -1, `Не найден раздел ${sectionName}`);
+
+  const keys = [];
+  for (const line of lines.slice(sectionIndex + 1)) {
+    if (/^[^\s#]/.test(line)) {
+      break;
+    }
+
+    const key = /^ {2}([^\s:#][^:]*):(?:\s.*)?$/.exec(line)?.[1];
+    if (key) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
 test("train-lifecycle загружается из main и предоставляет только ручной open", async () => {
   const workflow = await read(".github/workflows/train-lifecycle.yml");
-  assert.match(workflow, /^on:\n  workflow_dispatch:/m);
-  assert.doesNotMatch(workflow, /workflow_run:/);
+  assert.deepEqual(topLevelSectionKeys(workflow, "on"), ["workflow_dispatch"]);
   assert.doesNotMatch(workflow, /create_new/);
   assert.match(workflow, /TRAIN_OPEN_MODE: register_existing/);
   assert.match(workflow, /group: production-release/);
