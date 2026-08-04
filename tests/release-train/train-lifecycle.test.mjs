@@ -84,7 +84,7 @@ function sourceProtectionResponse() {
     allow_deletions: { enabled: false },
     allow_force_pushes: { enabled: false },
     allow_fork_syncing: { enabled: false },
-    block_creations: { enabled: true },
+    block_creations: { enabled: false },
     enforce_admins: { enabled: true },
     lock_branch: { enabled: false },
     required_conversation_resolution: { enabled: true },
@@ -207,6 +207,8 @@ test("payload защиты ветки требует PR, четыре CI и не
   assert.equal(payload.enforce_admins, true);
   assert.equal(payload.required_pull_request_reviews.required_approving_review_count, 0);
   assert.equal(payload.required_status_checks.checks.length, 4);
+  assert.equal(payload.block_creations, false);
+  assert.equal(payload.restrictions, null);
   assert.equal(
     Object.hasOwn(payload.required_status_checks, "contexts"),
     false,
@@ -233,6 +235,7 @@ test("защита ветки поезда требует явного откл�
     ["required_linear_history", "SOURCE_PROTECTION_LINEAR"],
     ["allow_force_pushes", "SOURCE_PROTECTION_FORCE_PUSH"],
     ["allow_deletions", "SOURCE_PROTECTION_DELETE"],
+    ["block_creations", "SOURCE_PROTECTION_CREATION"],
     ["lock_branch", "SOURCE_PROTECTION_LOCK"],
     ["allow_fork_syncing", "SOURCE_PROTECTION_FORK_SYNC"],
   ];
@@ -245,6 +248,10 @@ test("защита ветки поезда требует явного откл�
     const nullValue = sourceProtectionResponse();
     nullValue[field] = null;
     assert.throws(() => validateSourceBranchProtection(nullValue), { code });
+
+    const enabledValue = sourceProtectionResponse();
+    enabledValue[field].enabled = true;
+    assert.throws(() => validateSourceBranchProtection(enabledValue), { code });
   }
 });
 

@@ -68,6 +68,13 @@ Enterprise либо внешний OIDC-bound secret broker.
   вернёт, сохраняются.
 - Ветка поезда защищается с `enforce_admins`, обязательными PR, четырьмя точными
   CI-контекстами, закрытием обсуждений, запретом force-push и удаления.
+- Для существующей source branch push restrictions отключены, поэтому
+  `block_creations=false`: по
+  [контракту GitHub](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2026-03-10#update-branch-protection)
+  этот параметр действует только через `restrictions`. Прямые изменения
+  запрещает обязательный PR, а повторное создание существующей ветки исключает
+  отдельный запрет удаления. Для append-only реестра `block_creations=true`
+  сохраняется вместе с ограничением записи точным служебным App.
 - Исходящий `required_status_checks` для ветки поезда передаёт только `strict`
   и app-bound `checks`; поле `contexts` не передаётся. GitHub REST API
   [предписывает использовать `checks` вместо `contexts` для более точного
@@ -270,6 +277,10 @@ deployment. После него `/api/health` и production SHA не должн�
   создаёт активный поезд: точная policy `main` сохраняется, локальный state не
   удаляется, а повтор разрешён только после устранения причины и повторной
   проверки реестра, Environment и source branch.
+- GitHub возвращает `block_creations=false` для source branch без push
+  restrictions, даже если запрос передал `true`. Такой отказ post-check не
+  создаёт `train_opened`; совместимый контракт обязан явно запрашивать и
+  проверять `false`, не ослабляя отдельную защиту реестра.
 - Если `train_opened` уже записан, повтор с тем же operation ID подтверждает
   результат без второй записи.
 - Несовпадение локального state с новым SHA `main` закрывает повтор. Перед
