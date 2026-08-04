@@ -130,7 +130,6 @@ export function sourceBranchProtectionPayload() {
     },
     required_status_checks: {
       checks: SOURCE_BRANCH_REQUIRED_CHECKS,
-      contexts: [],
       strict: true,
     },
     restrictions: null,

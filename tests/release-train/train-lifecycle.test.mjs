@@ -207,9 +207,19 @@ test("payload защиты ветки требует PR, четыре CI и не
   assert.equal(payload.enforce_admins, true);
   assert.equal(payload.required_pull_request_reviews.required_approving_review_count, 0);
   assert.equal(payload.required_status_checks.checks.length, 4);
-  assert.deepEqual(payload.required_status_checks.contexts, []);
+  assert.equal(
+    Object.hasOwn(payload.required_status_checks, "contexts"),
+    false,
+  );
   assert.equal(payload.required_linear_history, false);
   assert.deepEqual(validateSourceBranchProtection(sourceProtectionResponse()), sourceProtectionResponse());
+
+  const missingResponseContexts = sourceProtectionResponse();
+  delete missingResponseContexts.required_status_checks.contexts;
+  assert.throws(
+    () => validateSourceBranchProtection(missingResponseContexts),
+    { code: "SOURCE_PROTECTION_CONTEXTS" },
+  );
 
   const unsafe = sourceProtectionResponse();
   unsafe.allow_force_pushes.enabled = true;
