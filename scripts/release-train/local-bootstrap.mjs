@@ -669,7 +669,23 @@ export async function createOrLoadOperationState({
   return readOperationState(statePath, expected);
 }
 
-async function verifyScopedToken(api, mainSha) {
+export function validateEnvironmentBranchPolicyMode(environment) {
+  const branchPolicy = environment?.deployment_branch_policy;
+  const usesProtectedBranches =
+    branchPolicy?.protected_branches === true &&
+    branchPolicy?.custom_branch_policies === false;
+  const usesCustomBranchPolicies =
+    branchPolicy?.protected_branches === false &&
+    branchPolicy?.custom_branch_policies === true;
+  assertGate(
+    usesProtectedBranches || usesCustomBranchPolicies,
+    "LOCAL_ENVIRONMENT_BRANCH_MODE_INVALID",
+    "Production Environment вернул неподдерживаемый режим deployment branch policy",
+  );
+  return usesCustomBranchPolicies ? "custom" : "protected";
+}
+
+export async function verifyScopedToken(api, mainSha) {
   const repositories = await api.request("/installation/repositories?per_page=100");
   assertGate(
     repositories.data?.total_count === 1 &&
@@ -697,14 +713,19 @@ async function verifyScopedToken(api, mainSha) {
     "LOCAL_PRODUCTION_ENVIRONMENT_INVALID",
     "GitHub API не подтвердил production Environment",
   );
-  const policies = await api.request(
-    `${environmentPath}/deployment-branch-policies?per_page=1&page=1`,
+  const branchPolicyMode = validateEnvironmentBranchPolicyMode(
+    environment.data,
   );
-  assertGate(
-    Array.isArray(policies.data?.branch_policies),
-    "LOCAL_ENVIRONMENT_POLICIES_INVALID",
-    "GitHub API не подтвердил доступ к deployment branch policies",
-  );
+  if (branchPolicyMode === "custom") {
+    const policies = await api.request(
+      `${environmentPath}/deployment-branch-policies?per_page=1&page=1`,
+    );
+    assertGate(
+      Array.isArray(policies.data?.branch_policies),
+      "LOCAL_ENVIRONMENT_POLICIES_INVALID",
+      "GitHub API не подтвердил доступ к custom deployment branch policies",
+    );
+  }
 }
 
 async function revokeInstallationToken(api) {

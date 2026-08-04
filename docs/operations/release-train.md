@@ -27,8 +27,9 @@ Deployment branch policies для него доступны, но GitHub не п
   памяти;
 - token ограничивается одним репозиторием и правами текущей операции
   `actions:read`, `administration:write`, `contents:write`, `metadata:read`;
-  `actions:read` используется только для чтения production Environment и его
-  deployment branch policies; после операции token отзывается;
+  `actions:read` используется только для чтения production Environment и, если
+  уже включён custom-режим, его deployment branch policies; после операции
+  token отзывается;
 - все удалённые мутации выполняет служебный GitHub App, а не пользовательский
   token владельца;
 - неизбежный `can_admins_bypass: true` принимается только точным локальным
@@ -110,7 +111,9 @@ Environment `release-train-lifecycle`, созданный во время пер
 5. проверяет точную App identity и installation;
 6. создаёт installation token для одного репозитория и минимальных прав;
 7. повторно проверяет scope token и SHA удалённого `main`;
-8. подтверждает чтение production Environment и deployment branch policies;
+8. проверяет взаимоисключающий режим deployment branch policy production
+   Environment; список custom policies читает только при уже включённом
+   `custom_branch_policies=true`;
 9. отзывает installation token;
 10. не создаёт локальный operation state.
 

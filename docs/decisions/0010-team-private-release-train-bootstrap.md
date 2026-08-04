@@ -61,9 +61,13 @@ append-only аудит.
    `abrikosoff-academy` и с минимальными правами текущей операции:
    `actions:read`, `administration:write`, `contents:write` и неотключаемым
    `metadata:read`. `actions:read` необходимо для чтения production Environment
-   и deployment branch policies до их безопасного изменения. Формат и длина
-   token не считаются стабильным контрактом. Ответ повторно проверяется, token
-   никогда не выводится и отзывается через API после успеха либо ошибки.
+   и, когда уже включён custom-режим, его deployment branch policies до их
+   безопасного изменения. REST endpoint списка custom policies используется
+   только при `custom_branch_policies=true`, как требует
+   [контракт GitHub API](https://docs.github.com/en/rest/deployments/branch-policies?apiVersion=2026-03-10).
+   Формат и длина token не считаются стабильным контрактом. Ответ повторно
+   проверяется, token никогда не выводится и отзывается через API после успеха
+   либо ошибки.
 5. До получения token локальная команда атомарно сохраняет в `.git` стабильный
    UUID операции. Повтор использует тот же UUID. Файл содержит только
    несекретные audit-данные, имеет права `0600` и привязан к точным владельцу,
