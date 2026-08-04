@@ -53,6 +53,10 @@ function disabled(value) {
   return value?.enabled === false;
 }
 
+function omittedOrNull(value) {
+  return value === undefined || value === null;
+}
+
 function actorListEmpty(value) {
   if (value === null || value === undefined) {
     return true;
@@ -181,7 +185,7 @@ export function validateSourceBranchProtection(protection) {
   assertGate(reviews.require_last_push_approval === false, "SOURCE_PROTECTION_LAST_PUSH", "Настройка last-push approval отличается от контракта");
   assertGate(Number(reviews.required_approving_review_count) === 0, "SOURCE_PROTECTION_REVIEW_COUNT", "Число обязательных approvals отличается от контракта");
   assertGate(actorListEmpty(reviews.bypass_pull_request_allowances), "SOURCE_PROTECTION_BYPASS", "Обнаружен PR-bypass для ветки поезда");
-  assertGate(protection?.restrictions === null, "SOURCE_PROTECTION_RESTRICTIONS", "Push restrictions ветки поезда отличаются от контракта");
+  assertGate(omittedOrNull(protection?.restrictions), "SOURCE_PROTECTION_RESTRICTIONS", "Push restrictions ветки поезда отличаются от контракта");
   assertGate(enabled(protection?.required_conversation_resolution), "SOURCE_PROTECTION_CONVERSATIONS", "Не требуется закрытие обсуждений");
   assertGate(disabled(protection?.required_linear_history), "SOURCE_PROTECTION_LINEAR", "Линейная история блокирует обязательные sync merge-коммиты");
   assertGate(disabled(protection?.allow_force_pushes), "SOURCE_PROTECTION_FORCE_PUSH", "Force-push разрешён");
@@ -194,8 +198,8 @@ export function validateSourceBranchProtection(protection) {
 
 export function validateRegistryBranchProtection(protection, appSlug) {
   assertGate(enabled(protection?.enforce_admins), "REGISTRY_PROTECTION_ADMINS", "Защита реестра не применяется к администраторам");
-  assertGate(protection?.required_status_checks === null, "REGISTRY_PROTECTION_CHECKS", "Реестр не должен зависеть от CI ветки данных");
-  assertGate(protection?.required_pull_request_reviews === null, "REGISTRY_PROTECTION_PR", "Реестр должен изменяться только служебным App, без PR");
+  assertGate(omittedOrNull(protection?.required_status_checks), "REGISTRY_PROTECTION_CHECKS", "Реестр не должен зависеть от CI ветки данных");
+  assertGate(omittedOrNull(protection?.required_pull_request_reviews), "REGISTRY_PROTECTION_PR", "Реестр должен изменяться только служебным App, без PR");
   assertGate(enabled(protection?.required_linear_history), "REGISTRY_PROTECTION_LINEAR", "Реестр не требует линейную историю");
   assertGate(disabled(protection?.allow_force_pushes), "REGISTRY_PROTECTION_FORCE_PUSH", "Force-push в реестр разрешён");
   assertGate(disabled(protection?.allow_deletions), "REGISTRY_PROTECTION_DELETE", "Удаление реестра разрешено");

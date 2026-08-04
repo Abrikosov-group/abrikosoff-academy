@@ -251,6 +251,19 @@ test("отсутствующий PR-bypass допустим, а некоррек
   });
 });
 
+test("защита ветки поезда принимает пропущенные отключённые push restrictions", () => {
+  const response = sourceProtectionResponse();
+  delete response.restrictions;
+
+  assert.doesNotThrow(() => validateSourceBranchProtection(response));
+
+  const enabledRestrictions = sourceProtectionResponse();
+  enabledRestrictions.restrictions = { apps: [], teams: [], users: [] };
+  assert.throws(() => validateSourceBranchProtection(enabledRestrictions), {
+    code: "SOURCE_PROTECTION_RESTRICTIONS",
+  });
+});
+
 test("ветка реестра разрешает запись только отдельному GitHub App", () => {
   const payload = registryBranchProtectionPayload(APP_SLUG);
   assert.deepEqual(payload.restrictions.apps, [APP_SLUG]);
@@ -265,6 +278,32 @@ test("ветка реестра разрешает запись только о�
   assert.throws(
     () => validateRegistryBranchProtection(unsafe, APP_SLUG),
     { code: "REGISTRY_PROTECTION_USERS" },
+  );
+});
+
+test("защита реестра принимает пропущенные GitHub поля отключённых правил", () => {
+  const response = registryProtectionResponse();
+  delete response.required_status_checks;
+  delete response.required_pull_request_reviews;
+
+  assert.doesNotThrow(() =>
+    validateRegistryBranchProtection(response, APP_SLUG),
+  );
+
+  const enabledChecks = registryProtectionResponse();
+  enabledChecks.required_status_checks = { strict: true };
+  assert.throws(
+    () => validateRegistryBranchProtection(enabledChecks, APP_SLUG),
+    { code: "REGISTRY_PROTECTION_CHECKS" },
+  );
+
+  const enabledReviews = registryProtectionResponse();
+  enabledReviews.required_pull_request_reviews = {
+    required_approving_review_count: 1,
+  };
+  assert.throws(
+    () => validateRegistryBranchProtection(enabledReviews, APP_SLUG),
+    { code: "REGISTRY_PROTECTION_PR" },
   );
 });
 
@@ -334,6 +373,35 @@ test("повтор open восстанавливает защиту коррек
   assert.equal(result, emptyRegistry);
   assert.equal(applyCount, 1);
   assert.equal(loadCount, 2);
+});
+
+test("повтор open принимает уже защищённый пустой реестр с пропущенными полями", async () => {
+  const emptyRegistry = {
+    events: [],
+    headSha: "c".repeat(40),
+    headTreeSha: "d".repeat(40),
+    state: { activeTrain: null },
+  };
+  const protection = registryProtectionResponse();
+  delete protection.required_status_checks;
+  delete protection.required_pull_request_reviews;
+
+  const result = await ensureRegistry({}, APP_SLUG, {
+    async applyBranchProtection() {
+      assert.fail("корректную существующую защиту нельзя применять повторно");
+    },
+    async getBranchProtection() {
+      return protection;
+    },
+    async initializeRegistry() {
+      assert.fail("существующий реестр не должен инициализироваться повторно");
+    },
+    async loadRegistry() {
+      return emptyRegistry;
+    },
+  });
+
+  assert.equal(result, emptyRegistry);
 });
 
 test("защита непустого реестра не исправляется автоматически", async () => {
