@@ -241,17 +241,31 @@ test("защита ветки поезда требует явного откл�
   ];
 
   for (const [field, code] of disabledFields) {
+    const expectedError =
+      field === "block_creations"
+        ? {
+            code,
+            message:
+              "block_creations должен присутствовать и быть явно отключён при отключённых push restrictions",
+          }
+        : { code };
     const missing = sourceProtectionResponse();
     delete missing[field];
-    assert.throws(() => validateSourceBranchProtection(missing), { code });
+    assert.throws(() => validateSourceBranchProtection(missing), expectedError);
 
     const nullValue = sourceProtectionResponse();
     nullValue[field] = null;
-    assert.throws(() => validateSourceBranchProtection(nullValue), { code });
+    assert.throws(
+      () => validateSourceBranchProtection(nullValue),
+      expectedError,
+    );
 
     const enabledValue = sourceProtectionResponse();
     enabledValue[field].enabled = true;
-    assert.throws(() => validateSourceBranchProtection(enabledValue), { code });
+    assert.throws(
+      () => validateSourceBranchProtection(enabledValue),
+      expectedError,
+    );
   }
 });
 
