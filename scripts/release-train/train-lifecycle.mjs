@@ -107,7 +107,7 @@ export function sourceBranchProtectionPayload() {
     allow_deletions: false,
     allow_force_pushes: false,
     allow_fork_syncing: false,
-    block_creations: true,
+    block_creations: false,
     enforce_admins: true,
     lock_branch: false,
     required_conversation_resolution: true,
@@ -189,7 +189,7 @@ export function validateSourceBranchProtection(protection) {
   assertGate(disabled(protection?.required_linear_history), "SOURCE_PROTECTION_LINEAR", "Линейная история блокирует обязательные sync merge-коммиты");
   assertGate(disabled(protection?.allow_force_pushes), "SOURCE_PROTECTION_FORCE_PUSH", "Force-push разрешён");
   assertGate(disabled(protection?.allow_deletions), "SOURCE_PROTECTION_DELETE", "Удаление ветки разрешено");
-  assertGate(enabled(protection?.block_creations), "SOURCE_PROTECTION_CREATION", "Повторное создание защищённой ветки не заблокировано");
+  assertGate(disabled(protection?.block_creations), "SOURCE_PROTECTION_CREATION", "block_creations должен присутствовать и быть явно отключён при отключённых push restrictions");
   assertGate(disabled(protection?.lock_branch), "SOURCE_PROTECTION_LOCK", "Ветка ошибочно заблокирована для PR-слияний");
   assertGate(disabled(protection?.allow_fork_syncing), "SOURCE_PROTECTION_FORK_SYNC", "Fork syncing неожиданно разрешён");
   return protection;
