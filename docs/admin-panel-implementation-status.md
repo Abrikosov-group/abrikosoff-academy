@@ -2,7 +2,7 @@
 
 - Статус документа: живой реестр фактической реализации
 - Обновлено: 2026-08-05
-- Базовый коммит `main`: `0f72b49fe70ee8b18010100d9092bad35723adeb`
+- Базовый коммит `main`: `ebd4cf9e97d01e61c5caf8d4a26632dc6482be17`
 - Основное ТЗ:
   [«Административная панель Академии Абрикософф»](admin-panel.md)
 - Текущий production-режим: `owner_preview`
@@ -100,8 +100,10 @@ ADR-0009 и процесс релизного поезда приняты в и�
 первого release-классификатора с фактическим GitHub API исправлена PR #46,
 локальный Team/private-профиль принят PR #47, а проверка исходного режима
 production branch policy исправлена PR #48. Совместимость проверки защиты
-пустого реестра с пропущенными отключёнными полями GitHub принята PR #49, а
-взаимоисключающий status-check payload исправлен PR #50:
+пустого реестра с пропущенными отключёнными полями GitHub принята PR #49,
+взаимоисключающий status-check payload исправлен PR #50, а контракт
+`block_creations=false` для существующей source branch без push restrictions —
+PR #51:
 
 - общий fail-closed алгоритм ручного `open` с единственной реализованной
   операцией `register_existing` и отдельным ограниченным GitHub App token;
@@ -195,11 +197,33 @@ source branch намеренно отключены. Все эффективны
 `enforce_admins`, запрет force-push и удаления. Реестр остался пустым,
 deployment отсутствует, production health сохранил SHA
 `6d817a7fa8b48ce000948084cf3608c9a2358a70`, installation token отозван.
-Текущее локальное исправление явно задаёт и проверяет
-`block_creations=false` только для source branch, сохраняя `true` для
-append-only реестра с push restriction служебного App. Начальный шлюз остаётся
-недействующим до принятия исправления и успешного повторного `--open` с
-доказательной проверкой всех инвариантов.
+PR #51 принят в `main` SHA
+`ebd4cf9e97d01e61c5caf8d4a26632dc6482be17`: source branch явно запрашивает и
+проверяет `block_creations=false`, а append-only реестр сохраняет
+`block_creations=true` вместе с push restriction служебного App. CI merge SHA
+[30963396020](https://github.com/Abrikosov-group/abrikosoff-academy/actions/runs/30963396020)
+успешен; release run
+[30963396014](https://github.com/Abrikosov-group/abrikosoff-academy/actions/runs/30963396014)
+классифицировал PR как `infrastructure-no-deploy`, обе сборки и deployment
+пропущены. Deployment для merge SHA отсутствует, production health сохранил
+версию `6d817a7fa8b48ce000948084cf3608c9a2358a70`.
+
+После доказанного отсутствия `train_opened` прежний operation state сохранён
+локальным архивом, а `--verify` на точном новом `main` завершён успешно.
+Единственный повторный `--open` 2026-08-05 успешно зарегистрировал поезд
+`bcbf37e0-cb77-407a-befb-10a884976cfd` для
+`codex/admin-operational-mvp` и добавил ровно одно событие `train_opened`
+схемы 2, последовательностью `1`, происхождением `local_owner`, operation ID
+`795b625d-03b0-41e8-bbbc-c164b56e95e1` и политикой
+`github_team_private_local_owner`. Локальный state имеет режим `0600` и не
+содержит token. Повторное чтение подтвердило точную защиту source branch,
+append-only реестра и единственную production deployment branch policy
+`main`; installation token отозван, deployment не создан, production health
+сохранил прежний SHA. Остаточная граница доверия Team/private принята в
+ADR-0010 и неизменяемо зафиксирована в событии. Для полного закрытия начального
+шлюза ещё требуется проверить автоматическое применение PR-шаблона и
+синхронизировать инфраструктурные изменения из `main` в source branch через
+отдельный PR с merge-коммитом.
 
 Операции `abort`, `close`, `fail`, `recover` и `reconcile`, candidate-build,
 неизменяемый release manifest, staging deployment и promotion проверенных
@@ -286,8 +310,8 @@ digest без повторной сборки относятся к отдель
 
 | Возможность | Статус | Что осталось |
 |---|---|---|
-| CI и временный production-release из `main` | 🟡 Переходный контур, infrastructure no-deploy проверен | PR #50 принят в SHA `0f72b49…`; CI и release run `30960541624` успешны, обе сборки и deployment пропущены. Финальный выпуск интеграционного поезда ещё не реализован |
-| Начальный шлюз релизного поезда: lifecycle, реестр и защиты | 🟡 Внешняя приёмка продолжена, `open` заблокирован API-контрактом | ADR-0010 и локальный owner-шлюз приняты в PR #47–#50, App установлен только на Академию, ключ локальный, `--verify` нового `main` успешен. Реестр пуст, production policy ограничена веткой `main`, source branch уже получила обязательный PR, четыре проверки, закрытие обсуждений, `enforce_admins` и запреты force-push/удаления. Третий `--open` остановился до `train_opened`, потому что GitHub сохраняет `block_creations=false` без push restrictions. Локальное исправление явно согласует этот неприменимый параметр, сохраняя строгую защиту реестра; до готовности нужны полный раунд, слияние исправления, безопасная замена operation state после доказанного отсутствия события, успешный `--open` и полный post-check |
+| CI и временный production-release из `main` | 🟡 Переходный контур, infrastructure no-deploy проверен | PR #51 принят в SHA `ebd4cf9…`; CI `30963396020` и release run `30963396014` успешны, обе сборки и deployment пропущены. Финальный выпуск интеграционного поезда ещё не реализован |
+| Начальный шлюз релизного поезда: lifecycle, реестр и защиты | 🟡 `open` и технический post-check успешны, приёмка продолжается | ADR-0010 и локальный owner-шлюз приняты в PR #47–#51. На точном `main` успешны `--verify` и единственный `--open`: append-only реестр содержит ровно один активный `train_opened`, source branch и реестр защищены по контракту, production policy допускает только `main`, installation token отозван, deployment отсутствует. Team/private-риск принят ADR-0010 и записан как `github_team_private_local_owner`. До полного закрытия начального шлюза остаются автоматическая проверка PR-шаблона и синхронизация инфраструктурных коммитов `main` в source branch через отдельный PR с merge-коммитом |
 | Финальный шлюз релизного поезда: staging, manifest и promotion по digest | ⬜ Не начато | До финального PR в `main` реализовать candidate-build с доказательством неизменности защищённого release-контура, неизменяемый release manifest, attempt-specific проверку доверенного staging workflow и его свидетельства, promotion тех же digest без повторной сборки, fail-closed выпуск и recovery |
 | Локальная production-подобная приёмка по постоянному HTTPS-адресу | ✅ Готово | Именованный Cloudflare Tunnel, отдельные база, Telegram-бот и OIDC-клиент; `operational` для локальных тестовых данных и безопасный `owner_preview`; порядок запуска и обязательного завершения сессии зафиксированы в [инструкции](operations/local-public-development.md) |
 | Сигнал сбоя записи административного аудита | ✅ Фундамент | Подключить штатное внешнее оповещение при развитии эксплуатации |
@@ -328,6 +352,8 @@ digest без повторной сборки относятся к отдель
 | Второй post-merge `open` 2026-08-04 | После доказанного отсутствия `train_opened` прежний state сохранён локальным архивом. Новый `open` настроил custom production policy с единственной веткой `main` и остановился до защиты source branch с HTTP 422: исходящий `required_status_checks` одновременно передавал app-bound `checks` и `contexts: []`. Реестр остался пустым, source branch не защищена, `train_opened` и deployment отсутствуют, production health сохранил SHA `6d817a7fa8b48ce000948084cf3608c9a2358a70`, installation token отозван |
 | PR #50 / `0f72b49fe70ee8b18010100d9092bad35723adeb` | Из status-check payload удалено альтернативное поле `contexts`, строгая проверка ответа сохранена. CI успешен; release run `30960541624` пропустил обе сборки и deployment; `--verify` на новом `main` успешен |
 | Третий post-merge `open` 2026-08-05 | После доказанного отсутствия `train_opened` прежний state сохранён локальным архивом. Новый `open` применил source branch protection и остановился до записи события с `SOURCE_PROTECTION_CREATION`: при `restrictions=null` GitHub вернул `block_creations=false`. Остальные правила защиты применены точно; реестр пуст, deployment отсутствует, production health сохранил SHA `6d817a7fa8b48ce000948084cf3608c9a2358a70`, installation token отозван |
+| PR #51 / `ebd4cf9e97d01e61c5caf8d4a26632dc6482be17` | Для существующей source branch без push restrictions явно заданы и проверены `block_creations=false`; строгий `block_creations=true` реестра сохранён. CI `30963396020` и release run `30963396014` успешны, обе сборки и deployment пропущены; `--verify` на новом `main` успешен |
+| Успешный post-merge `open` 2026-08-05 | После доказанного отсутствия события прежний state архивирован. Единственный `--open` зарегистрировал поезд `bcbf37e0-cb77-407a-befb-10a884976cfd` и ровно одно событие `train_opened` схемы 2 с `sequence=1`, source branch `codex/admin-operational-mvp`, локальным operation ID `795b625d-03b0-41e8-bbbc-c164b56e95e1` и политикой `github_team_private_local_owner`. Точные защиты source branch и append-only реестра, единственная production policy `main`, отзыв installation token и отсутствие deployment подтверждены; production health сохранил SHA `6d817a7fa8b48ce000948084cf3608c9a2358a70` |
 | Приёмка 2026-07-29 | Владелец вошёл в `/admin`; переходы между админкой и кабинетом, аватар и выход проверены пользователем |
 | Локальная приёмка 2026-07-29 | Владелец вошёл через отдельный Telegram OIDC-клиент на `academy-dev.abrikosoff.com`; повторный вход и возврат в кабинет проверены |
 | Локальная приёмка 2026-07-30 | Владелец проверил компактную карточку ученика v2 на `academy-dev.abrikosoff.com`; пользовательская приёмка пройдена |
@@ -374,26 +400,22 @@ step-up. Отдельных маршрутов общего списка дос�
 
 ## 6. Ближайшие зависимости
 
-До первого следующего функционального слияния в интеграционную ветку необходимо
-довести принятый, но не прошедший post-merge приёмку начальный шлюз ADR-0009 до
-действующего состояния:
+Техническая регистрация текущего поезда завершена: исправление
+`block_creations` принято PR #51 без deployment, `--verify` и единственный
+`--open` успешны, а реестр, обе защиты, production policy, отзыв token и
+неизменность production проверены. Team/private-риск принят ADR-0010 и записан
+в append-only событии.
 
-1. провести полный локальный и GitHub-раунд совместимости
-   `block_creations`: для существующей source branch без push restrictions
-   явно задавать и проверять `false`, сохраняя `true` для append-only реестра с
-   ограничением записи служебным App;
-2. принять исправление отдельным инфраструктурным PR в `main` с меткой
-   `release:infrastructure-no-deploy` и подтвердить пропуск build/deployment;
-3. доказать отсутствие `train_opened` для сохранённого operation state старого
-   SHA, безопасно заменить этот state, на точном новом `main` повторить
-   `--verify`, затем выполнить один `--open` в режиме `register_existing`;
-4. подтвердить append-only запись `train_opened` схемы 2, точную защиту обеих
-   веток, единственную deployment branch policy `main`, отзыв installation
-   token и отсутствие production deployment;
-5. явно принять остаточный риск доступного admin bypass GitHub Team/private;
-6. проверить автоматическое применение шаблона к новому функциональному PR и
-   вручную синхронизировать процессные изменения из `main` в текущую ветку
-   поезда merge-коммитом через PR.
+До первого следующего функционального слияния в интеграционную ветку остаётся:
+
+1. проверить, что новый функциональный PR автоматически получает шаблон из
+   default-ветки `main`;
+2. отдельным синхронизирующим PR включить актуальный `main` в
+   `codex/admin-operational-mvp` merge-коммитом без squash, rebase или
+   cherry-pick;
+3. после синхронизации подтвердить, что текущий `main` является предком source
+   branch, её защита сохранилась и обязательные проверки синхронизирующего PR
+   успешны.
 
 До создания финального PR релизного поезда в `main` необходимо реализовать
 финальный шлюз выпуска:
@@ -435,17 +457,15 @@ production-режима `operational`.
 Очередь ниже сохраняет границы основного ТЗ. Номера — это логические пакеты,
 а не номера будущих GitHub PR.
 
-1. **Начальный технический шлюз релизного поезда.** ADR-0010 и успешные
-   infrastructure-no-deploy приняты в PR #47–#50; App создан и установлен, ключ
-   остаётся локальным, `--verify` нового `main` успешен, production Environment
-   ограничен точной policy `main`, а эффективные правила source branch уже
-   применены. Согласовать `block_creations=false` с отсутствующими push
-   restrictions source branch, сохранив `true` для реестра, принять исправление
-   в `main` без deployment, безопасно заменить operation state после
-   доказанного отсутствия `train_opened`, выполнить `--verify` и один `--open`,
-   проверить реестр, branch protection, production policy, отсутствие
-   deployment и активный шаблон PR, затем синхронизировать новый `main` в
-   текущую ветку поезда.
+1. **Завершение приёмки начального технического шлюза.** ADR-0010 и
+   infrastructure-no-deploy приняты в PR #47–#51; App установлен только на
+   Академию, ключ остаётся локальным, `--verify`, единственный `--open` и полный
+   технический post-check успешны. Реестр содержит один активный
+   `train_opened`, production Environment ограничен точной policy `main`, обе
+   ветки защищены, token отозван, deployment отсутствует. Осталось проверить
+   автоматическое применение шаблона на новом функциональном PR, затем
+   синхронизировать актуальный `main` в source branch отдельным PR с
+   merge-коммитом и повторно подтвердить инварианты ветки.
 2. **Финальный шлюз выпуска.** До финального PR поезда в `main` реализовать
    candidate-build с доказательством неизменности защищённого release-контура и
    неизменяемый manifest, доверенную attempt-specific staging-проверку,
