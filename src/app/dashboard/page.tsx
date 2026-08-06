@@ -5,6 +5,9 @@ import {
   formatCabinetDate,
   getCabinetContext,
 } from "./_lib/cabinet-context";
+import {
+  createCabinetAccessPresentation,
+} from "./_lib/cabinet-access-presentation";
 
 export const metadata: Metadata = {
   title: "Личный кабинет",
@@ -20,12 +23,20 @@ export default async function DashboardPage() {
   const {
     user,
     subscription,
+    canReadCourses,
     subscriptionActive,
     subscriptionEnded,
   } = await getCabinetContext();
   const periodEnd = subscription?.currentPeriodEnd
     ? formatCabinetDate(subscription.currentPeriodEnd)
     : null;
+  const accessPresentation = createCabinetAccessPresentation({
+    canReadCourses,
+    subscriptionActive,
+    subscriptionEnded,
+    hasSubscription: Boolean(subscription),
+    formattedPeriodEnd: periodEnd,
+  });
   const firstName = user.displayName.split(/\s+/)[0] || "ученик";
 
   return (
@@ -46,12 +57,12 @@ export default async function DashboardPage() {
             <Link
               className="button button-secondary"
               href={
-                subscriptionActive
+                canReadCourses
                   ? "/courses/healthy-habits/lessons/1"
                   : "/dashboard/subscription"
               }
             >
-              {subscriptionActive
+              {canReadCourses
                 ? "Открыть первый урок"
                 : "Оформить доступ"}
             </Link>
@@ -66,11 +77,7 @@ export default async function DashboardPage() {
                 subscriptionActive ? "badge-success" : "badge-neutral"
               }`}
             >
-              {subscriptionActive
-                ? "Активна"
-                : subscriptionEnded
-                  ? "Завершена"
-                  : "Не оформлена"}
+              {accessPresentation.paidSubscriptionStatus}
             </span>
           </header>
           {subscriptionActive ? (
@@ -85,27 +92,25 @@ export default async function DashboardPage() {
               </strong>
             </p>
           ) : (
-            <p>
-              {subscriptionEnded
-                ? `Оплаченный период завершён ${periodEnd}. Выберите тариф, чтобы снова открыть курсы.`
-                : "Выберите тариф, чтобы открыть все курсы Академии."}
-            </p>
+            <p>{accessPresentation.inactiveSubscriptionSummary}</p>
           )}
           <Link href="/dashboard/subscription">
             {subscriptionActive
               ? "Управление подпиской"
               : "Выбрать тариф"}
           </Link>
-          <div className="cabinet-total-progress">
-            <p>
-              <strong>Продление</strong>
-              <span>
-                {subscription?.autoRenew
-                  ? "Автоматически"
-                  : "Только вручную"}
-              </span>
-            </p>
-          </div>
+          {accessPresentation.showRenewalDetails ? (
+            <div className="cabinet-total-progress">
+              <p>
+                <strong>Продление</strong>
+                <span>
+                  {subscription?.autoRenew
+                    ? "Автоматически"
+                    : "Только вручную"}
+                </span>
+              </p>
+            </div>
+          ) : null}
         </section>
       </div>
 

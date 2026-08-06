@@ -5,6 +5,9 @@ import {
   formatCabinetDate,
   getCabinetContext,
 } from "../_lib/cabinet-context";
+import {
+  createCabinetAccessPresentation,
+} from "../_lib/cabinet-access-presentation";
 
 export const metadata: Metadata = {
   title: "Подписка",
@@ -20,12 +23,20 @@ const included = [
 export default async function CabinetSubscriptionPage() {
   const {
     subscription,
+    canReadCourses,
     subscriptionActive,
     subscriptionEnded,
   } = await getCabinetContext();
   const periodEnd = subscription?.currentPeriodEnd
     ? formatCabinetDate(subscription.currentPeriodEnd)
     : null;
+  const accessPresentation = createCabinetAccessPresentation({
+    canReadCourses,
+    subscriptionActive,
+    subscriptionEnded,
+    hasSubscription: Boolean(subscription),
+    formattedPeriodEnd: periodEnd,
+  });
 
   return (
     <>
@@ -81,10 +92,9 @@ export default async function CabinetSubscriptionPage() {
         </section>
       ) : (
         <>
-          {subscriptionEnded ? (
+          {accessPresentation.subscriptionStatusNote ? (
             <p className="cabinet-status-note">
-              Предыдущий оплаченный период завершился {periodEnd}.
-              Выберите новый тариф, чтобы восстановить доступ.
+              {accessPresentation.subscriptionStatusNote}
             </p>
           ) : null}
 

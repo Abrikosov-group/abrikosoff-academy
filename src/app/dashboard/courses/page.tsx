@@ -20,7 +20,7 @@ const coming = [
 ];
 
 export default async function CabinetCoursesPage() {
-  const { subscriptionActive } = await getCabinetContext();
+  const { canReadCourses } = await getCabinetContext();
 
   return (
     <>
@@ -59,12 +59,12 @@ export default async function CabinetCoursesPage() {
             <Link
               className="button button-primary"
               href={
-                subscriptionActive
+                canReadCourses
                   ? "/courses/healthy-habits/lessons/1"
                   : "/dashboard/subscription"
               }
             >
-              {subscriptionActive
+              {canReadCourses
                 ? "Открыть первый урок"
                 : "Оформить доступ"}
             </Link>

@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { withDatabaseReadSnapshot } from "@/lib/database";
 import { EffectiveAccessService } from "@/modules/access/application/effective-access-service";
 import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
 import { PostgresEffectiveAccessRepository } from "@/modules/access/infrastructure/postgres-effective-access-repository";
+import { readStudentCourseAccess } from "@/modules/access/server/read-student-course-access";
 
 const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
@@ -407,6 +409,189 @@ describe("эффективный доступ с PostgreSQL", () => {
     },
   );
 
+  it.each([
+    {
+      label: "legacy-only",
+      subscriptionStatus: "active" as const,
+      createPaidGrant: false,
+      legacyCanReadCourses: true,
+      expectedCode: "EFFECTIVE_ACCESS_LEGACY_ONLY" as const,
+    },
+    {
+      label: "v2-only",
+      subscriptionStatus: "pending" as const,
+      createPaidGrant: true,
+      legacyCanReadCourses: false,
+      expectedCode: "EFFECTIVE_ACCESS_V2_ONLY" as const,
+    },
+  ])(
+    "в shadow применяет $label решение прежнего пути и фиксирует безопасный код",
+    async ({
+      subscriptionStatus,
+      createPaidGrant,
+      legacyCanReadCourses,
+      expectedCode,
+    }) => {
+      const userId = await insertUser(
+        `Shadow-регрессия ${subscriptionStatus} ${randomUUID()}`,
+      );
+      const periodStart = new Date(at.getTime() - 60_000);
+      const periodEnd = new Date(at.getTime() + 60_000);
+
+      await insertSubscription({
+        userId,
+        status: subscriptionStatus,
+        periodStart,
+        periodEnd,
+      });
+      if (createPaidGrant) {
+        await insertPaidGrant({
+          userId,
+          periodStart,
+          periodEnd,
+          createdAt: periodStart,
+        });
+      }
+
+      const subscription = await getSubscriptionSummary(pool, userId);
+      const reportMismatch = vi.fn();
+
+      expect(
+        hasCurrentSubscriptionAccess(subscription, at),
+      ).toBe(legacyCanReadCourses);
+      await expect(
+        service.resolveCourseAccess({
+          userId,
+          at,
+          legacyCanReadCourses,
+          config: {
+            effectiveAccessMode: "shadow",
+            manualAccessGrantingEnabled: false,
+          },
+          observation: { reportMismatch },
+        }),
+      ).resolves.toBe(legacyCanReadCourses);
+      expect(reportMismatch).toHaveBeenCalledWith(expectedCode);
+      expect(reportMismatch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("сравнивает legacy и v2 в одном снимке при конкурентном возврате", async () => {
+    const userId = await insertUser(
+      `Конкурентный shadow-снимок ${randomUUID()}`,
+    );
+    const periodStart = new Date("2000-01-01T00:00:00.000Z");
+    const periodEnd = new Date("2100-01-01T00:00:00.000Z");
+
+    await insertSubscription({
+      userId,
+      status: "active",
+      periodStart,
+      periodEnd,
+    });
+    const paidGrantId = await insertPaidGrant({
+      userId,
+      periodStart,
+      periodEnd,
+      createdAt: periodStart,
+    });
+
+    const snapshotResult = await withDatabaseReadSnapshot(
+      pool,
+      async (client, evaluatedAt) => {
+        const writer = await pool.connect();
+
+        try {
+          await writer.query("BEGIN");
+          await writer.query(
+            `
+              UPDATE billing_subscriptions
+              SET
+                status = 'expired',
+                current_period_end = $2,
+                updated_at = $2
+              WHERE customer_id = $1
+            `,
+            [userId, evaluatedAt],
+          );
+          await writer.query(
+            `
+              UPDATE billing_access_grants
+              SET
+                status = 'revoked',
+                revoked_at = $2,
+                updated_at = $2
+              WHERE order_id = $1
+            `,
+            [
+              paidGrantId,
+              new Date(evaluatedAt.getTime() + 1),
+            ],
+          );
+          await writer.query("COMMIT");
+        } catch (error) {
+          await writer.query("ROLLBACK");
+          throw error;
+        } finally {
+          writer.release();
+        }
+
+        const subscription = await getSubscriptionSummary(
+          client,
+          userId,
+        );
+        const legacyCanReadCourses = hasCurrentSubscriptionAccess(
+          subscription,
+          evaluatedAt,
+        );
+        const reportMismatch = vi.fn();
+        const snapshotService = new EffectiveAccessService(
+          new PostgresEffectiveAccessRepository(client),
+        );
+        const canReadCourses =
+          await snapshotService.resolveCourseAccess({
+            userId,
+            at: evaluatedAt,
+            legacyCanReadCourses,
+            config: {
+              effectiveAccessMode: "shadow",
+              manualAccessGrantingEnabled: false,
+            },
+            observation: { reportMismatch },
+          });
+
+        return {
+          evaluatedAt,
+          legacyCanReadCourses,
+          canReadCourses,
+          reportMismatch,
+        };
+      },
+    );
+
+    expect(snapshotResult.legacyCanReadCourses).toBe(true);
+    expect(snapshotResult.canReadCourses).toBe(true);
+    expect(snapshotResult.reportMismatch).not.toHaveBeenCalled();
+
+    const currentSubscription = await getSubscriptionSummary(
+      pool,
+      userId,
+    );
+    const historicalEffectiveAccess =
+      await service.getEffectiveAccess(
+        userId,
+        snapshotResult.evaluatedAt,
+      );
+
+    expect(
+      hasCurrentSubscriptionAccess(
+        currentSubscription,
+        snapshotResult.evaluatedAt,
+      ),
+    ).toBe(false);
+    expect(historicalEffectiveAccess.canReadCourses).toBe(true);
+  });
+
   it("объединяет только действующие paid и manual основания на точных границах", async () => {
     const actorUserId = await insertUser(
       "Владелец resolver integration-теста",
@@ -546,6 +731,67 @@ describe("эффективный доступ с PostgreSQL", () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it.each([
+    {
+      label: "без платной подписки",
+      subscriptionStatus: null,
+      subscriptionEnded: false,
+    },
+    {
+      label: "с завершённой платной подпиской",
+      subscriptionStatus: "expired" as const,
+      subscriptionEnded: true,
+    },
+  ])(
+    "не выдаёт ручной доступ за действующую подписку $label",
+    async ({ subscriptionStatus, subscriptionEnded }) => {
+      const actorUserId = await insertUser(
+        "Владелец проверки ручного доступа в кабинете",
+      );
+      const customerId = await insertUser(
+        `Ученик с ручным доступом ${randomUUID()}`,
+      );
+
+      if (subscriptionStatus) {
+        await insertSubscription({
+          userId: customerId,
+          status: subscriptionStatus,
+          periodStart: new Date(
+            "2000-01-01T00:00:00.000Z",
+          ),
+          periodEnd: new Date("2010-01-01T00:00:00.000Z"),
+        });
+      }
+      await insertManualGrant({
+        actorUserId,
+        customerId,
+        periodStart: new Date("2000-01-01T00:00:00.000Z"),
+        periodEnd: new Date("2100-01-01T00:00:00.000Z"),
+        grantedAt: new Date("2000-01-01T00:00:00.000Z"),
+      });
+      vi.stubEnv("EFFECTIVE_ACCESS_MODE", "v2");
+      vi.stubEnv("MANUAL_ACCESS_GRANTING_ENABLED", "false");
+
+      try {
+        const access = await readStudentCourseAccess(
+          pool,
+          customerId,
+        );
+
+        expect(access.subscription?.status ?? null).toBe(
+          subscriptionStatus,
+        );
+        expect(access.subscriptionActive).toBe(false);
+        expect(access.subscriptionEnded).toBe(
+          subscriptionEnded,
+        );
+        expect(access.canReadCourses).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("сохраняет paid и manual основания до точного момента отзыва", async () => {
     const actorUserId = await insertUser(

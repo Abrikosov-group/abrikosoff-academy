@@ -1105,7 +1105,7 @@ export type SubscriptionSummary = {
 };
 
 export async function getSubscriptionSummary(
-  pool: Pool,
+  pool: Pool | PoolClient,
   customerId: string,
 ): Promise<SubscriptionSummary | null> {
   const result = await pool.query<{
