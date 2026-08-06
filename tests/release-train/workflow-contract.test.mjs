@@ -66,6 +66,31 @@ test("release сначала классифицирует main SHA и не ст�
   const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
   assert.doesNotMatch(deployJob, /\n\s+- build-telegram-egress/);
   assert.match(workflow, /node scripts\/release-train\/release-classifier\.mjs/);
+  assert.equal(
+    (workflow.match(/release-classifier\.mjs --authorize-only/g) ?? []).length,
+    3,
+  );
+
+  const telegramBuild = workflow.slice(
+    workflow.indexOf("  build-telegram-egress:"),
+    workflow.indexOf("  build:"),
+  );
+  const appBuild = workflow.slice(
+    workflow.indexOf("  build:"),
+    workflow.indexOf("  deploy:"),
+  );
+  assert.ok(
+    telegramBuild.indexOf("--authorize-only") <
+      telegramBuild.indexOf("docker/login-action"),
+  );
+  assert.ok(
+    appBuild.indexOf("--authorize-only") <
+      appBuild.indexOf("docker/login-action"),
+  );
+  assert.ok(
+    deployJob.indexOf("--authorize-only") <
+      deployJob.indexOf("secrets.PRODUCTION_SSH_PRIVATE_KEY"),
+  );
 });
 
 test("CI публикует отдельный обязательный контекст начального шлюза", async () => {
@@ -85,6 +110,9 @@ test("release-классификатор содержит явный ref guard �
   assert.match(classifier, /api\.request\("\/graphql"/);
   assert.match(classifier, /mergeCommit \{\s+oid/);
   assert.match(classifier, /pullRequest\.merge_commit_sha === sha/);
+  assert.match(classifier, /GITHUB_TRIGGERING_ACTOR/);
+  assert.match(classifier, /CURRENT_PRODUCTION_OWNER_ID/);
+  assert.match(classifier, /`\/users\/\$\{encodeURIComponent\(triggeringActor\)\}`/);
   assert.match(config, /"release:infrastructure-no-deploy"/);
   assert.doesNotMatch(config, /src\/\*\*/);
 });

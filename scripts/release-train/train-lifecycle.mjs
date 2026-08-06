@@ -124,9 +124,9 @@ export function sourceBranchProtectionPayload() {
         teams: [],
         users: [],
       },
-      require_code_owner_reviews: false,
-      require_last_push_approval: false,
-      required_approving_review_count: 0,
+      require_code_owner_reviews: true,
+      require_last_push_approval: true,
+      required_approving_review_count: 1,
     },
     required_status_checks: {
       checks: SOURCE_BRANCH_REQUIRED_CHECKS,
@@ -180,9 +180,9 @@ export function validateSourceBranchProtection(protection) {
   const reviews = protection?.required_pull_request_reviews;
   assertGate(reviews && typeof reviews === "object", "SOURCE_PROTECTION_PR", "Изменения ветки не требуют pull request");
   assertGate(reviews.dismiss_stale_reviews === true, "SOURCE_PROTECTION_STALE", "Устаревшие approvals не сбрасываются");
-  assertGate(reviews.require_code_owner_reviews === false, "SOURCE_PROTECTION_CODEOWNERS", "Code Owner approval неожиданно включён");
-  assertGate(reviews.require_last_push_approval === false, "SOURCE_PROTECTION_LAST_PUSH", "Настройка last-push approval отличается от контракта");
-  assertGate(Number(reviews.required_approving_review_count) === 0, "SOURCE_PROTECTION_REVIEW_COUNT", "Число обязательных approvals отличается от контракта");
+  assertGate(reviews.require_code_owner_reviews === true, "SOURCE_PROTECTION_CODEOWNERS", "Ветка поезда не требует Code Owner approval");
+  assertGate(reviews.require_last_push_approval === true, "SOURCE_PROTECTION_LAST_PUSH", "Последний автор изменений может одобрить собственный push");
+  assertGate(Number(reviews.required_approving_review_count) === 1, "SOURCE_PROTECTION_REVIEW_COUNT", "Ветка поезда должна требовать ровно один approval");
   assertGate(actorListEmpty(reviews.bypass_pull_request_allowances), "SOURCE_PROTECTION_BYPASS", "Обнаружен PR-bypass для ветки поезда");
   assertGate(omittedOrNull(protection?.restrictions), "SOURCE_PROTECTION_RESTRICTIONS", "Push restrictions ветки поезда отличаются от контракта");
   assertGate(enabled(protection?.required_conversation_resolution), "SOURCE_PROTECTION_CONVERSATIONS", "Не требуется закрытие обсуждений");

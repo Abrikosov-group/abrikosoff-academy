@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  authorizeProductionOwner,
   classifyMergedPullRequest,
   findMergedPullRequest,
   listPullRequestFiles,
   retryDelayMs,
+  runProductionOwnerGate,
   validateInfrastructureFiles,
   validateReleaseInvocation,
 } from "../../scripts/release-train/release-classifier.mjs";
@@ -16,6 +18,18 @@ import {
 
 const REPOSITORY = "Abrikosov-group/abrikosoff-academy";
 const SHA = "a".repeat(40);
+
+function productionEnv(overrides = {}) {
+  return {
+    GITHUB_ACTOR: "Etogerman",
+    GITHUB_EVENT_NAME: "push",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_REPOSITORY: REPOSITORY,
+    GITHUB_SHA: SHA,
+    GITHUB_TRIGGERING_ACTOR: "Etogerman",
+    ...overrides,
+  };
+}
 
 function pullRequest(overrides = {}) {
   return {
@@ -54,6 +68,59 @@ function graphQlPullRequest(overrides = {}) {
     },
   };
 }
+
+test("production-действие привязано к числовому ID владельца", async () => {
+  const paths = [];
+  const api = {
+    async request(path) {
+      paths.push(path);
+      return { data: { id: 224131170, login: "renamed-owner" } };
+    },
+  };
+
+  const owner = await authorizeProductionOwner({
+    api,
+    triggeringActor: "renamed-owner",
+  });
+
+  assert.deepEqual(owner, { id: "224131170", login: "renamed-owner" });
+  assert.deepEqual(paths, ["/users/renamed-owner"]);
+});
+
+test("повторный запуск сотрудником отклоняется даже при исходном actor владельца", async () => {
+  const api = {
+    async request(path) {
+      assert.equal(path, "/users/valentinagorgoc6-commits");
+      return {
+        data: { id: 268953403, login: "valentinagorgoc6-commits" },
+      };
+    },
+  };
+
+  await assert.rejects(
+    runProductionOwnerGate(
+      productionEnv({
+        GITHUB_ACTOR: "Etogerman",
+        GITHUB_TRIGGERING_ACTOR: "valentinagorgoc6-commits",
+      }),
+      { api },
+    ),
+    { code: "RELEASE_TRIGGER_NOT_OWNER" },
+  );
+});
+
+test("некорректный triggering actor закрывает production-действие до API", async () => {
+  const api = {
+    async request() {
+      assert.fail("API нельзя вызывать для некорректного логина");
+    },
+  };
+
+  await assert.rejects(
+    authorizeProductionOwner({ api, triggeringActor: "owner/name" }),
+    { code: "RELEASE_TRIGGERING_ACTOR_INVALID" },
+  );
+});
 
 test("production-выпуск отклоняет ref, отличный от main", () => {
   assert.throws(

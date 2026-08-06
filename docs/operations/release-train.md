@@ -66,8 +66,18 @@ Enterprise либо внешний OIDC-bound secret broker.
 - Production Environment после операции разрешает deployment только из точной
   ветки `main`; wait timer и required reviewers, если платформа когда-либо их
   вернёт, сохраняются.
-- Ветка поезда защищается с `enforce_admins`, обязательными PR, четырьмя точными
-  CI-контекстами, закрытием обсуждений, запретом force-push и удаления.
+- Каждый job production workflow, способный опубликовать образ или обратиться
+  к SSH-секретам, самостоятельно сверяет числовой ID
+  `GITHUB_TRIGGERING_ACTOR` с ID владельца. Поэтому повторный запуск отдельного
+  job сотрудником закрывается до первого внешнего изменения.
+- Ветка поезда защищается с `enforce_admins`, обязательными PR, одним approval
+  текущего Code Owner, запретом одобрения собственного последнего push,
+  четырьмя точными CI-контекстами, закрытием обсуждений, запретом force-push и
+  удаления.
+- Кодовый owner-gate применяется только к запускам, созданным из содержащего
+  его коммита. До удаления либо инфраструктурной инвалидизации старых запусков
+  право `Write` выдаётся разработчику только после отдельной проверки истории
+  production workflow.
 - Для существующей source branch push restrictions отключены, поэтому
   `block_creations=false`: по
   [контракту GitHub](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2026-03-10#update-branch-protection)

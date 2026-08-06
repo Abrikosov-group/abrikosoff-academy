@@ -92,9 +92,9 @@ function sourceProtectionResponse() {
     required_pull_request_reviews: {
       bypass_pull_request_allowances: { apps: [], teams: [], users: [] },
       dismiss_stale_reviews: true,
-      require_code_owner_reviews: false,
-      require_last_push_approval: false,
-      required_approving_review_count: 0,
+      require_code_owner_reviews: true,
+      require_last_push_approval: true,
+      required_approving_review_count: 1,
     },
     required_status_checks: {
       checks: SOURCE_BRANCH_REQUIRED_CHECKS,
@@ -202,10 +202,12 @@ test("локальный invocation принимает только зафикс
   );
 });
 
-test("payload защиты ветки требует PR, четыре CI и не включает linear history", () => {
+test("payload защиты ветки требует одобрение владельца, четыре CI и не включает linear history", () => {
   const payload = sourceBranchProtectionPayload();
   assert.equal(payload.enforce_admins, true);
-  assert.equal(payload.required_pull_request_reviews.required_approving_review_count, 0);
+  assert.equal(payload.required_pull_request_reviews.required_approving_review_count, 1);
+  assert.equal(payload.required_pull_request_reviews.require_code_owner_reviews, true);
+  assert.equal(payload.required_pull_request_reviews.require_last_push_approval, true);
   assert.equal(payload.required_status_checks.checks.length, 4);
   assert.equal(payload.block_creations, false);
   assert.equal(payload.restrictions, null);
