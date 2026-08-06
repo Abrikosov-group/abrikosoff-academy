@@ -106,6 +106,11 @@ policy `main`, явный ref guard release workflow и локальное хр�
 изменённый Actions workflow, но не от злонамеренного владельца организации,
 который способен изменить настройки репозитория и самого App.
 
+После принятия [ADR-0011](0011-owner-local-production-release.md) эта граница
+относится только к lifecycle App начального `open`. Действующий
+production-выпуск больше не использует Environment или SSH-секреты GitHub
+Actions.
+
 Поэтому:
 
 - `github_team_private_local_owner` сохраняется в append-only событии как

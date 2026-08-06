@@ -14,27 +14,70 @@ Production использует `SESSION_TRUSTED_PROXY=cloudflare`. Поэтом
 [Cloudflare IP Ranges](https://www.cloudflare.com/ips/) диапазоны в
 `Caddyfile` обновляются и конфигурация повторно валидируется.
 
-## Автоматический релиз
+## Локальный выпуск владельцем
 
-Workflow `.github/workflows/release.yml` после изменения `main`:
+GitHub Actions выполняет только CI и не получает production Environment,
+SSH-реквизиты или право публикации в GHCR. После merge production не меняется
+автоматически. Решение и граница доверия зафиксированы в
+[ADR-0011](../docs/decisions/0011-owner-local-production-release.md).
 
-1. собирает Linux/AMD64-образ с SBOM и provenance;
-2. публикует неизменяемый тег с полным SHA коммита в приватный GHCR;
-3. передаёт серверу только `Caddyfile` и Compose-конфигурацию;
-4. запускает релиз ограниченным SSH-ключом;
-5. применяет миграции под advisory lock и запускает приложение только после
+Штатный выпуск запускается только с доверенной машины владельца. Сначала из
+корня чистого и актуального `main` выполняется read-only проверка:
+
+```bash
+node scripts/release-train/local-release.mjs --verify
+```
+
+Команда проверяет identity владельца, точный merge PR, четыре успешных checks
+на SHA `main`, локальные инструменты и выводит точную фразу подтверждения. Для
+`infrastructure-no-deploy` она сообщает, что deployment не требуется.
+
+Для изменяющего запуска заранее подготавливаются:
+
+- отдельный SSH private key владельца с правами `0600`; его public key на
+  сервере связан только с `/usr/local/sbin/academy-release` через
+  forced-command;
+- отдельный `known_hosts` с правами `0600`; отпечаток host key сверяется через
+  независимый доверенный канал;
+- classic personal access token владельца только со scopes `write:packages` и
+  `read:packages`, сохранённый вне GitHub и репозитория.
+
+Токен не экспортируется в environment и не передаётся аргументом. Пример для
+интерактивного `zsh`:
+
+```bash
+read -rsp 'GHCR token: ' academy_ghcr_token
+printf '\n'
+printf '%s\n' "$academy_ghcr_token" | \
+  node scripts/release-train/local-release.mjs \
+    --release \
+    --host PRODUCTION_HOST \
+    --port PRODUCTION_PORT \
+    --user deploy \
+    --ssh-key /absolute/path/academy-production \
+    --known-hosts /absolute/path/academy-known-hosts \
+    --confirmation "ВЫПУСТИТЬ PRODUCTION REPLACE_WITH_EXACT_MAIN_SHA"
+unset academy_ghcr_token
+```
+
+Локальный шлюз:
+
+1. повторяет все read-only проверки и сверяет точную фразу с текущим SHA;
+2. проверяет владельца и минимальные scopes GHCR token;
+3. собирает Linux/AMD64-образы приложения и Telegram-egress с SBOM и
+   provenance;
+4. публикует неизменяемые теги с полным SHA и указатели `main` в приватный
+   GHCR через временный Docker-профиль;
+5. передаёт серверу только `Caddyfile` и Compose-конфигурацию;
+6. запускает релиз ограниченным SSH-ключом;
+7. применяет миграции под advisory lock и запускает приложение только после
    их успешного завершения;
-6. проверяет `/api/health` и совпадение опубликованной версии;
-7. при ошибке возвращает предыдущий релиз, а при первой выкладке — исходную
-   статическую страницу.
+8. проверяет `/api/health` и совпадение версии, а сервер при ошибке возвращает
+   предыдущий релиз либо исходную статическую страницу.
 
-Production-окружение GitHub содержит:
-
-- переменные `PRODUCTION_HOST`, `PRODUCTION_PORT`, `PRODUCTION_USER`;
-- секреты `PRODUCTION_SSH_PRIVATE_KEY`, `PRODUCTION_SSH_KNOWN_HOSTS`.
-
-Токен GHCR не хранится отдельным секретом: workflow использует краткоживущий
-`GITHUB_TOKEN` с минимальными правами.
+До первого использования обязательно отзывается прежний public key GitHub
+Actions на сервере и удаляются production secrets из repository, organization
+и Environment. Само удаление workflow не обезвреживает исторические runs.
 
 ## Сервер
 
@@ -47,9 +90,16 @@ Production-окружение GitHub содержит:
 ```
 
 Серверный шлюз `server/academy-release` устанавливается как
-`/usr/local/sbin/academy-release`. Ключ GitHub Actions в `authorized_keys`
-запускает только этот шлюз и не даёт интерактивной оболочки, PTY, туннелей или
-перенаправления агента.
+`/usr/local/sbin/academy-release`. Отдельный public key локального выпуска в
+`authorized_keys` запускает только этот шлюз и не даёт интерактивной оболочки,
+PTY, туннелей или перенаправления агента:
+
+```text
+restrict,command="/usr/local/sbin/academy-release" ssh-ed25519 REPLACE_WITH_OWNER_RELEASE_PUBLIC_KEY academy-owner-release
+```
+
+Строка прежнего ключа GitHub Actions удаляется в той же обслуживаемой сессии,
+в которой проверен новый ключ владельца.
 
 Файл `/opt/academy/shared/.env` принадлежит `root:academy-runtime`, имеет режим
 `0640` и не передаётся в GitHub. В нём устанавливаются уникальный пароль
@@ -70,7 +120,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 После первого релиза и после каждого изменения любого из этих wrapper-ов
 оператор извлекает три кандидата из текущего production-образа, проверяет и
 явно устанавливает их как одну согласованную версию. Обновление начинается
-только после завершения текущего release-workflow; на первом переходе оператор
+только после завершения текущего локального выпуска; на первом переходе оператор
 отдельно подтверждает отсутствие активного релиза, а последующие обновления
 дополнительно сериализуются общей блокировкой:
 

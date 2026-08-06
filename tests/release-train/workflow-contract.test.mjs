@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const ROOT = new URL("../../", import.meta.url);
@@ -49,48 +49,24 @@ test("train-lifecycle на Team/private не получает private key и о�
   );
 });
 
-test("release сначала классифицирует main SHA и не строит infrastructure PR", async () => {
-  const workflow = await read(".github/workflows/release.yml");
-  assert.match(workflow, /group: production-release/);
-  assert.match(workflow, /node-version: 24\.18\.0/);
-  assert.match(workflow, /classify:\n\s+name: Классифицировать production-выпуск/);
-  assert.equal(
-    (workflow.match(/if: needs\.classify\.outputs\.should_deploy == 'true'/g) ?? [])
-      .length,
-    3,
+test("GitHub Actions не содержит production-выпуск, secrets или запись в packages", async () => {
+  await assert.rejects(
+    access(new URL(".github/workflows/release.yml", ROOT)),
+    { code: "ENOENT" },
   );
-  assert.match(
-    workflow,
-    /deploy:[\s\S]*?needs:\n\s+- build\n\s+- classify/,
+  const workflowDirectory = new URL(".github/workflows/", ROOT);
+  const workflowFiles = (await readdir(workflowDirectory)).filter((file) =>
+    /\.ya?ml$/.test(file),
   );
-  const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
-  assert.doesNotMatch(deployJob, /\n\s+- build-telegram-egress/);
-  assert.match(workflow, /node scripts\/release-train\/release-classifier\.mjs/);
-  assert.equal(
-    (workflow.match(/release-classifier\.mjs --authorize-only/g) ?? []).length,
-    3,
-  );
-
-  const telegramBuild = workflow.slice(
-    workflow.indexOf("  build-telegram-egress:"),
-    workflow.indexOf("  build:"),
-  );
-  const appBuild = workflow.slice(
-    workflow.indexOf("  build:"),
-    workflow.indexOf("  deploy:"),
-  );
-  assert.ok(
-    telegramBuild.indexOf("--authorize-only") <
-      telegramBuild.indexOf("docker/login-action"),
-  );
-  assert.ok(
-    appBuild.indexOf("--authorize-only") <
-      appBuild.indexOf("docker/login-action"),
-  );
-  assert.ok(
-    deployJob.indexOf("--authorize-only") <
-      deployJob.indexOf("secrets.PRODUCTION_SSH_PRIVATE_KEY"),
-  );
+  assert.deepEqual(workflowFiles.sort(), ["ci.yml", "train-lifecycle.yml"]);
+  for (const workflowFile of workflowFiles) {
+    const workflow = await read(`.github/workflows/${workflowFile}`);
+    assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
+    assert.doesNotMatch(workflow, /packages:\s*write/);
+    assert.doesNotMatch(workflow, /environment:\s*(?:\n\s+name:\s*)?production/);
+    assert.doesNotMatch(workflow, /docker\/login-action/);
+    assert.doesNotMatch(workflow, /\bssh\b/);
+  }
 });
 
 test("CI публикует отдельный обязательный контекст начального шлюза", async () => {
@@ -110,9 +86,20 @@ test("release-классификатор содержит явный ref guard �
   assert.match(classifier, /api\.request\("\/graphql"/);
   assert.match(classifier, /mergeCommit \{\s+oid/);
   assert.match(classifier, /pullRequest\.merge_commit_sha === sha/);
-  assert.match(classifier, /GITHUB_TRIGGERING_ACTOR/);
-  assert.match(classifier, /CURRENT_PRODUCTION_OWNER_ID/);
-  assert.match(classifier, /`\/users\/\$\{encodeURIComponent\(triggeringActor\)\}`/);
   assert.match(config, /"release:infrastructure-no-deploy"/);
   assert.doesNotMatch(config, /src\/\*\*/);
+});
+
+test("локальный выпуск закрыт точным owner, SHA, checks и stdin-секретом", async () => {
+  const localRelease = await read("scripts/release-train/local-release.mjs");
+  assert.match(localRelease, /inspectTrustedCheckout/);
+  assert.match(localRelease, /inspectOwnerPlatformContext/);
+  assert.match(localRelease, /CURRENT_LIFECYCLE_OWNER_ID/);
+  assert.match(localRelease, /SOURCE_BRANCH_REQUIRED_CHECKS/);
+  assert.match(localRelease, /pullRequest\?\.merged_by\?\.id/);
+  assert.match(localRelease, /--password-stdin/);
+  assert.match(localRelease, /StrictHostKeyChecking=yes/);
+  assert.match(localRelease, /UserKnownHostsFile=/);
+  assert.match(localRelease, /linux\/amd64/);
+  assert.doesNotMatch(localRelease, /process\.env\.[A-Z_]*(?:TOKEN|SECRET|PASSWORD)/);
 });

@@ -5,6 +5,9 @@
 начальную часть [ADR-0009](../decisions/0009-integration-release-train.md) с
 Team/private-уточнением
 [ADR-0010](../decisions/0010-team-private-release-train-bootstrap.md).
+Действующий production-выпуск выполняется локально владельцем по
+[ADR-0011](../decisions/0011-owner-local-production-release.md); целевой
+жизненный цикл релизного поезда остаётся отдельной незавершённой работой.
 
 Операции `create_new`, `abort`, `close`, `fail`, `recover`, `reconcile`,
 candidate-build, staging, manifest и production promotion этой инструкцией не
@@ -66,20 +69,19 @@ Enterprise либо внешний OIDC-bound secret broker.
 - Production Environment после операции разрешает deployment только из точной
   ветки `main`; wait timer и required reviewers, если платформа когда-либо их
   вернёт, сохраняются.
-- Каждый job production workflow, способный опубликовать образ или обратиться
-  к SSH-секретам, самостоятельно сверяет числовой ID
-  `GITHUB_TRIGGERING_ACTOR` с ID владельца. Поэтому повторный запуск отдельного
-  job сотрудником закрывается до первого внешнего изменения.
+- GitHub Actions выполняет только CI без production Environment, SSH-секретов
+  и `packages: write`. Production workflow удалён; публикацию образов и
+  ограниченный SSH-вызов выполняет только локальный шлюз владельца после
+  проверки точного `main`, merger и четырёх app-bound checks.
 - Ветка поезда защищается с `enforce_admins`, обязательными PR, четырьмя
   точными CI-контекстами, закрытием обсуждений, запретом force-push и удаления.
   Право merge и любой записи в неё ограничено командой
   `production-approvers`, в которой состоит только владелец. Отдельный approval
   не требуется: owner-only merge является технически зафиксированным согласием
   и не блокирует PR, созданные ИИ-агентами от аккаунта владельца.
-- Кодовый owner-gate применяется только к запускам, созданным из содержащего
-  его коммита. До удаления либо инфраструктурной инвалидизации старых запусков
-  право `Write` выдаётся разработчику только после отдельной проверки истории
-  production workflow.
+- Удаление workflow не инвалидирует исторические runs. До удаления GitHub
+  production secrets и отзыва прежнего public key Actions на сервере право
+  `Write` разработчику не возвращается.
 - Для существующей source branch push restrictions ограничены точной командой
   владельца, а `block_creations=false`: по
   [контракту GitHub](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2026-03-10#update-branch-protection)
@@ -274,7 +276,7 @@ restrictions — ровно один App `abrikosoff-academy-train`. В дере
 
 ### 6.4. Отсутствие deployment
 
-Начальный `open` не запускает release workflow и не создаёт production
+Начальный `open` не запускает локальный выпуск и не создаёт production
 deployment. После него `/api/health` и production SHA не должны измениться.
 
 ## 7. Ошибки и безопасный повтор

@@ -21,7 +21,7 @@
 - PostgreSQL 18;
 - Docker Compose;
 - Caddy с автоматическим HTTPS;
-- GitHub Actions.
+- GitHub Actions только для CI; production выпускается локально владельцем.
 
 ## Локальный запуск
 

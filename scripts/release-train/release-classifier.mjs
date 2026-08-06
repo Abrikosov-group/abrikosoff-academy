@@ -3,7 +3,6 @@ import { pathToFileURL } from "node:url";
 
 import {
   ACADEMY_REPOSITORY,
-  CURRENT_PRODUCTION_OWNER_ID,
   DEFAULT_BRANCH,
   INFRASTRUCTURE_NO_DEPLOY_LABEL,
   INFRASTRUCTURE_NO_DEPLOY_PATHS,
@@ -19,7 +18,6 @@ import {
 
 const RETRY_DELAYS_MS = Object.freeze([0, 2_000, 4_000, 8_000, 16_000, 30_000]);
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const FILE_STATUSES = new Set([
   "added",
   "changed",
@@ -141,40 +139,6 @@ export function validateReleaseInvocation({ eventName, ref, repository, sha }) {
     "RELEASE_SHA_INVALID",
     "SHA production-выпуска должен содержать 40 шестнадцатеричных символов",
   );
-}
-
-export async function authorizeProductionOwner({ api, triggeringActor }) {
-  assertGate(
-    typeof triggeringActor === "string" &&
-      GITHUB_LOGIN_PATTERN.test(triggeringActor),
-    "RELEASE_TRIGGERING_ACTOR_INVALID",
-    "GitHub не передал допустимого инициатора production-действия",
-  );
-
-  const response = await api.request(
-    `/users/${encodeURIComponent(triggeringActor)}`,
-  );
-  const user = response.data;
-  assertGate(
-    user && typeof user === "object" && !Array.isArray(user),
-    "RELEASE_TRIGGERING_ACTOR_RESPONSE_INVALID",
-    "GitHub API не вернул карточку инициатора production-действия",
-  );
-  assertGate(
-    Number.isSafeInteger(user.id) && user.id > 0,
-    "RELEASE_TRIGGERING_ACTOR_ID_INVALID",
-    "GitHub API не вернул допустимый ID инициатора production-действия",
-  );
-  assertGate(
-    String(user.id) === CURRENT_PRODUCTION_OWNER_ID,
-    "RELEASE_TRIGGER_NOT_OWNER",
-    "Production-действие разрешено только владельцу Академии",
-  );
-
-  return {
-    id: String(user.id),
-    login: typeof user.login === "string" ? user.login : triggeringActor,
-  };
 }
 
 export function validateInfrastructureFiles(files) {
@@ -454,7 +418,20 @@ async function writeActionsResult(result, env) {
 }
 
 export async function runReleaseClassifier(env = process.env, dependencies = {}) {
-  const { api } = await runProductionOwnerGate(env, dependencies);
+  validateReleaseInvocation({
+    eventName: env.GITHUB_EVENT_NAME,
+    ref: env.GITHUB_REF,
+    repository: env.GITHUB_REPOSITORY,
+    sha: env.GITHUB_SHA,
+  });
+
+  const api =
+    dependencies.api ??
+    new GitHubApi({
+      apiUrl: env.GITHUB_API_URL,
+      repository: env.GITHUB_REPOSITORY,
+      token: env.GITHUB_TOKEN,
+    });
   const pullRequest = await findMergedPullRequest({
     api,
     sha: env.GITHUB_SHA,
@@ -477,40 +454,11 @@ export async function runReleaseClassifier(env = process.env, dependencies = {})
   return result;
 }
 
-export async function runProductionOwnerGate(
-  env = process.env,
-  dependencies = {},
-) {
-  validateReleaseInvocation({
-    eventName: env.GITHUB_EVENT_NAME,
-    ref: env.GITHUB_REF,
-    repository: env.GITHUB_REPOSITORY,
-    sha: env.GITHUB_SHA,
-  });
-
-  const api =
-    dependencies.api ??
-    new GitHubApi({
-      apiUrl: env.GITHUB_API_URL,
-      repository: env.GITHUB_REPOSITORY,
-      token: env.GITHUB_TOKEN,
-    });
-  const owner = await authorizeProductionOwner({
-    api,
-    triggeringActor: env.GITHUB_TRIGGERING_ACTOR,
-  });
-
-  return { api, owner };
-}
-
 const isDirectRun =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  const runner = process.argv.slice(2).includes("--authorize-only")
-    ? runProductionOwnerGate
-    : runReleaseClassifier;
-  runner().catch((error) => {
+  runReleaseClassifier().catch((error) => {
     console.error(formatGateError(error));
     process.exitCode = 1;
   });
