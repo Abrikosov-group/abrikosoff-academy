@@ -18,6 +18,7 @@ export const CURRENT_LIFECYCLE_APP = Object.freeze({
 
 export const CURRENT_LIFECYCLE_OWNER_ID = "224131170";
 export const CURRENT_PRODUCTION_OWNER_ID = CURRENT_LIFECYCLE_OWNER_ID;
+export const PRODUCTION_APPROVERS_TEAM = "production-approvers";
 
 export const ENVIRONMENT_ADMIN_BYPASS_POLICIES = Object.freeze({
   FORBIDDEN: "admin_bypass_forbidden",
