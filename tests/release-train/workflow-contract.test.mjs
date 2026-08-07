@@ -76,6 +76,11 @@ test("CI публикует отдельный обязательный конт
   assert.match(workflow, /node --check "\$script"/);
   const gateJob = workflow.slice(workflow.indexOf("  release-train-gate:"));
   assert.match(gateJob, /persist-credentials: false/);
+  assert.match(workflow, /shellcheck deploy\/server\/academy-task/);
+  assert.match(
+    workflow,
+    /for wrapper_name in academy-admin academy-release academy-task/,
+  );
 });
 
 test("release-классификатор содержит явный ref guard и закрытый allowlist", async () => {
@@ -91,7 +96,13 @@ test("release-классификатор содержит явный ref guard �
 });
 
 test("локальный выпуск закрыт точным owner, SHA, checks и stdin-секретом", async () => {
+  const decision = await read(
+    "docs/decisions/0011-owner-local-production-release.md",
+  );
   const localRelease = await read("scripts/release-train/local-release.mjs");
+  const adminWrapper = await read("deploy/server/academy-admin");
+  const releaseWrapper = await read("deploy/server/academy-release");
+  const taskWrapper = await read("deploy/server/academy-task");
   assert.match(localRelease, /inspectTrustedCheckout/);
   assert.match(localRelease, /inspectOwnerPlatformContext/);
   assert.match(localRelease, /CURRENT_LIFECYCLE_OWNER_ID/);
@@ -101,5 +112,16 @@ test("локальный выпуск закрыт точным owner, SHA, chec
   assert.match(localRelease, /StrictHostKeyChecking=yes/);
   assert.match(localRelease, /UserKnownHostsFile=/);
   assert.match(localRelease, /linux\/amd64/);
+  assert.match(localRelease, /--metadata-file/);
+  assert.match(localRelease, /PRODUCTION_APPLICATION_IMAGE\}@\$\{applicationDigest\}/);
+  assert.match(localRelease, /ALLOWED_REGISTRY_TOKEN_SCOPES/);
+  assert.match(localRelease, /await verifyCurrentMain\(\)/);
   assert.doesNotMatch(localRelease, /process\.env\.[A-Z_]*(?:TOKEN|SECRET|PASSWORD)/);
+  assert.match(decision, /отключает наследование доступа от\s+репозитория/);
+  assert.match(decision, /удаляет доступ Actions на запись/);
+  assert.match(decision, /package-роли `Write` или\s+`Admin`/);
+  for (const wrapper of [adminWrapper, releaseWrapper, taskWrapper]) {
+    assert.match(wrapper, /@\$\{image_digest\}|sha256:\[0-9a-f\]\{64\}/);
+    assert.doesNotMatch(wrapper, /image_prefix/);
+  }
 });

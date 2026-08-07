@@ -40,7 +40,19 @@ node scripts/release-train/local-release.mjs --verify
 - отдельный `known_hosts` с правами `0600`; отпечаток host key сверяется через
   независимый доверенный канал;
 - classic personal access token владельца только со scopes `write:packages` и
-  `read:packages`, сохранённый вне GitHub и репозитория.
+  `read:packages`, сохранённый вне GitHub и репозитория;
+- у packages `abrikosoff-academy` и
+  `abrikosoff-academy-telegram-egress` отключено наследование прав
+  репозитория; доступ Actions на запись удалён, а package-роли `Write` и
+  `Admin` остаются только у владельца.
+
+Package ACL проверяется отдельно для каждого из двух packages в GitHub:
+`Inherit access from source repository` выключен; в `Manage Actions access`
+нет репозитория с ролью `Write`; в списках пользователей и команд нет
+сотрудника или команды с `Write`/`Admin`. Результат фиксируется в cutover-
+протоколе до возврата сотруднику repository-роли `Write`. Локальный
+`--verify`, который принципиально не читает GHCR token и ничего не изменяет,
+не заменяет эту проверку настроек package.
 
 Токен не экспортируется в environment и не передаётся аргументом. Пример для
 интерактивного `zsh`:
@@ -63,16 +75,22 @@ unset academy_ghcr_token
 Локальный шлюз:
 
 1. повторяет все read-only проверки и сверяет точную фразу с текущим SHA;
-2. проверяет владельца и минимальные scopes GHCR token;
-3. собирает Linux/AMD64-образы приложения и Telegram-egress с SBOM и
+2. проверяет владельца и точный allowlist scopes GHCR token: обязательный
+   `write:packages` и необязательный `read:packages`;
+3. непосредственно перед первой публикацией повторно проверяет чистый `main`
+   и заново полученный `origin/main`;
+4. собирает Linux/AMD64-образы приложения и Telegram-egress с SBOM и
    provenance;
-4. публикует неизменяемые теги с полным SHA и указатели `main` в приватный
-   GHCR через временный Docker-профиль;
-5. передаёт серверу только `Caddyfile` и Compose-конфигурацию;
-6. запускает релиз ограниченным SSH-ключом;
-7. применяет миграции под advisory lock и запускает приложение только после
+5. публикует изменяемые указатели SHA и `main` в приватный GHCR через
+   временный Docker-профиль, но получает доверенную ссылку только из
+   Buildx metadata как `image@sha256:digest`;
+6. после сборок ещё раз проверяет `origin/main`; при изменении SHA не вызывает
+   SSH-wrapper;
+7. передаёт серверу только `Caddyfile`, Compose-конфигурацию и точный digest;
+8. запускает релиз ограниченным SSH-ключом;
+9. применяет миграции под advisory lock и запускает приложение только после
    их успешного завершения;
-8. проверяет `/api/health` и совпадение версии, а сервер при ошибке возвращает
+10. проверяет `/api/health` и совпадение версии, а сервер при ошибке возвращает
    предыдущий релиз либо исходную статическую страницу.
 
 До первого использования обязательно отзывается прежний public key GitHub
@@ -85,6 +103,7 @@ Actions на сервере и удаляются production secrets из reposi
 
 ```text
 /opt/academy/shared/.env       секреты приложения и PostgreSQL
+/opt/academy/shared/current-image  точный image@sha256:digest
 /opt/academy/releases/<sha>/   конфигурации отдельных релизов
 /opt/academy/current           ссылка на активный релиз
 ```
@@ -111,13 +130,37 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 становятся группово изменяемыми.
 
 Кандидаты release-, административного и task-wrapper-ов доставляются внутри
-неизменяемого production-образа как
+production-образа, выбранного по неизменяемому digest, как
 `/usr/local/share/academy/academy-release` и
 `/usr/local/share/academy/academy-admin` и
 `/usr/local/share/academy/academy-task`. Обычный release-процесс не
 устанавливает и не обновляет root-owned файлы или systemd-unit-ы автоматически.
 
-После первого релиза и после каждого изменения любого из этих wrapper-ов
+До первого digest-выпуска новые версии `academy-release`, `academy-admin` и
+`academy-task` устанавливаются из точного принятого `main` через отдельную
+доверенную обслуживаемую сессию. Это отдельная явно подтверждаемая
+production-операция: старый release-wrapper принимает tag `image:sha` и
+намеренно отклонит новый `image@sha256:digest`, а старые административная и
+фоновая обёртки не принимают новый формат `current-image`.
+
+Установка трёх wrapper-ов и перевод уже активного `current-image` выполняются
+в одной общей exclusive-блокировке. До атомарной замены tag на digest оператор
+обязан доказать одновременно:
+
+- `/opt/academy/current` указывает на каталог с 40-значным SHA;
+- `.Config.Image` единственного работающего app-контейнера совпадает со старым
+  `current-image`;
+- выбранный `RepoDigest` принадлежит только
+  `ghcr.io/abrikosov-group/abrikosoff-academy`;
+- OCI label `org.opencontainers.image.revision` этого digest совпадает с SHA
+  текущего каталога релиза.
+
+Если хотя бы одно условие не подтверждено однозначно, переход останавливается,
+старые wrapper-ы и `current-image` сохраняются. После успешного перехода откат
+первого digest-релиза также использует точный digest предыдущего образа.
+
+После первого digest-релиза и после каждого следующего изменения любого из
+этих wrapper-ов
 оператор извлекает три кандидата из текущего production-образа, проверяет и
 явно устанавливает их как одну согласованную версию. Обновление начинается
 только после завершения текущего локального выпуска; на первом переходе оператор
@@ -130,7 +173,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   image_reference="$(
     sudo cat /opt/academy/shared/current-image
   )"
-  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy@sha256:[0-9a-f]{64}$ ]]
   exec 9< /opt/academy
   flock --exclusive --wait 600 9
   candidate_directory="$(mktemp -d)"
@@ -177,7 +220,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   exec 9< /opt/academy
   flock --exclusive --wait 600 9
   image_reference="$(sudo cat /opt/academy/shared/current-image)"
-  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy@sha256:[0-9a-f]{64}$ ]]
   candidate_directory="$(mktemp -d)"
   trap '
     rm -f -- \
@@ -221,7 +264,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 назначения первого `owner`, проверяет аргументы и запускает CLI из текущего
 production-образа в закрытой Compose-сети. Wrapper и release-шлюз используют
 общую блокировку операций. Перед запуском wrapper сверяет SHA каталога релиза,
-metadata образа и реально работающего контейнера и закрывается при любом
+digest в metadata и реально работающего контейнера и закрывается при любом
 несовпадении:
 
 ```bash

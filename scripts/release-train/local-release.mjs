@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import {
   mkdtemp,
+  readFile,
   realpath,
   rm,
   stat,
@@ -34,16 +35,16 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
+const MAX_BUILD_METADATA_BYTES = 1024 * 1024;
 const MAX_REGISTRY_TOKEN_BYTES = 4 * 1024;
 const MAX_SSH_FILE_BYTES = 1024 * 1024;
 const HOST_PATTERN = /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 const SSH_USER_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
 const TOKEN_PATTERN = /^[\x21-\x7e]{20,4096}$/;
-const FORBIDDEN_REGISTRY_TOKEN_SCOPES = new Set([
-  "admin:org",
-  "delete:packages",
-  "repo",
-  "workflow",
+const IMAGE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const ALLOWED_REGISTRY_TOKEN_SCOPES = new Set([
+  "read:packages",
+  "write:packages",
 ]);
 
 async function defaultRunCommand(command, args, options = {}) {
@@ -524,13 +525,13 @@ export async function verifyRegistryToken({
     "LOCAL_RELEASE_REGISTRY_TOKEN_SCOPE_MISSING",
     "Токен GHCR не имеет минимального scope write:packages",
   );
-  const excessiveScopes = [...FORBIDDEN_REGISTRY_TOKEN_SCOPES].filter((scope) =>
-    scopes.has(scope),
+  const excessiveScopes = [...scopes].filter(
+    (scope) => !ALLOWED_REGISTRY_TOKEN_SCOPES.has(scope),
   );
   assertGate(
     excessiveScopes.length === 0,
     "LOCAL_RELEASE_REGISTRY_TOKEN_SCOPE_EXCESSIVE",
-    `Токен GHCR имеет запрещённые избыточные scopes: ${excessiveScopes.join(", ")}`,
+    `Токен GHCR имеет scopes вне package-only allowlist: ${excessiveScopes.join(", ")}`,
   );
   return { login: user.login, scopes: [...scopes].sort() };
 }
@@ -563,7 +564,19 @@ export function sshArguments({ host, knownHostsPath, port, sshKeyPath, user }) {
   ];
 }
 
-export function buildArguments({ context, dockerfile, image, labels, sha }) {
+export function buildArguments({
+  context,
+  dockerfile,
+  image,
+  labels,
+  metadataPath,
+  sha,
+}) {
+  assertGate(
+    typeof metadataPath === "string" && metadataPath.length > 0,
+    "LOCAL_RELEASE_BUILD_METADATA_PATH_REQUIRED",
+    "Для production-сборки требуется отдельный файл metadata",
+  );
   const args = [
     "buildx",
     "build",
@@ -575,6 +588,8 @@ export function buildArguments({ context, dockerfile, image, labels, sha }) {
     "--push",
     "--provenance=mode=max",
     "--sbom=true",
+    "--metadata-file",
+    metadataPath,
     "--tag",
     `${image}:${sha}`,
     "--tag",
@@ -585,6 +600,50 @@ export function buildArguments({ context, dockerfile, image, labels, sha }) {
   }
   args.push(context);
   return args;
+}
+
+export function parseBuildMetadata(contents) {
+  const buffer = Buffer.isBuffer(contents)
+    ? contents
+    : Buffer.from(String(contents), "utf8");
+  assertGate(
+    buffer.length > 0 && buffer.length <= MAX_BUILD_METADATA_BYTES,
+    "LOCAL_RELEASE_BUILD_METADATA_SIZE_INVALID",
+    "Docker Buildx вернул metadata недопустимого размера",
+  );
+  let metadata;
+  try {
+    metadata = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    throw new ReleaseGateError(
+      "LOCAL_RELEASE_BUILD_METADATA_INVALID",
+      "Docker Buildx вернул некорректный JSON metadata",
+    );
+  }
+  const digest = metadata?.["containerimage.digest"];
+  assertGate(
+    typeof digest === "string" && IMAGE_DIGEST_PATTERN.test(digest),
+    "LOCAL_RELEASE_BUILD_DIGEST_INVALID",
+    "Docker Buildx не подтвердил точный sha256 digest опубликованного образа",
+  );
+  const descriptorDigest = metadata?.["containerimage.descriptor"]?.digest;
+  assertGate(
+    descriptorDigest === undefined || descriptorDigest === digest,
+    "LOCAL_RELEASE_BUILD_DIGEST_MISMATCH",
+    "Digest образа не совпадает с digest его OCI descriptor",
+  );
+  return digest;
+}
+
+async function readBuildDigest(metadataPath) {
+  const resolvedPath = await realpath(metadataPath);
+  const file = await stat(resolvedPath);
+  assertGate(
+    file.isFile() && file.size > 0 && file.size <= MAX_BUILD_METADATA_BYTES,
+    "LOCAL_RELEASE_BUILD_METADATA_FILE_INVALID",
+    "Файл metadata Docker Buildx отсутствует или имеет недопустимый размер",
+  );
+  return parseBuildMetadata(await readFile(resolvedPath));
 }
 
 export async function executeProductionRelease({
@@ -598,8 +657,22 @@ export async function executeProductionRelease({
   sshKeyPath,
   token,
   user,
+  verifyCurrentMain,
 }) {
+  assertGate(
+    typeof verifyCurrentMain === "function",
+    "LOCAL_RELEASE_MAIN_RECHECK_REQUIRED",
+    "Production-выпуск требует повторной проверки актуального main",
+  );
   const dockerConfig = await mkdtemp(join(tmpdir(), "academy-release-docker-"));
+  const applicationMetadataPath = join(
+    dockerConfig,
+    "application-build-metadata.json",
+  );
+  const egressMetadataPath = join(
+    dockerConfig,
+    "telegram-egress-build-metadata.json",
+  );
   const processEnvironment = {
     ...process.env,
     DOCKER_CONFIG: dockerConfig,
@@ -643,6 +716,8 @@ export async function executeProductionRelease({
       loginInput.fill(0);
     }
 
+    await verifyCurrentMain();
+
     await runProcess(
       "docker",
       buildArguments({
@@ -650,10 +725,12 @@ export async function executeProductionRelease({
         dockerfile: "./deploy/telegram-egress/Dockerfile",
         image: PRODUCTION_TELEGRAM_EGRESS_IMAGE,
         labels: egressLabels,
+        metadataPath: egressMetadataPath,
         sha,
       }),
       { cwd, env: processEnvironment },
     );
+    const telegramEgressDigest = await readBuildDigest(egressMetadataPath);
     await runProcess(
       "docker",
       buildArguments({
@@ -661,10 +738,16 @@ export async function executeProductionRelease({
         dockerfile: "./Dockerfile",
         image: PRODUCTION_APPLICATION_IMAGE,
         labels: appLabels,
+        metadataPath: applicationMetadataPath,
         sha,
       }),
       { cwd, env: processEnvironment },
     );
+    const applicationDigest = await readBuildDigest(applicationMetadataPath);
+    const applicationImageReference =
+      `${PRODUCTION_APPLICATION_IMAGE}@${applicationDigest}`;
+
+    await verifyCurrentMain();
 
     const archive = await runProcess(
       "tar",
@@ -696,13 +779,14 @@ export async function executeProductionRelease({
         "ssh",
         [
           ...sshBase,
-          `deploy ${sha} ${PRODUCTION_APPLICATION_IMAGE}:${sha} ${actorLogin}`,
+          `deploy ${sha} ${applicationImageReference} ${actorLogin}`,
         ],
         { cwd, input: deployInput },
       );
     } finally {
       deployInput.fill(0);
     }
+    return { applicationDigest, telegramEgressDigest };
   } finally {
     await rm(dockerConfig, { force: true, recursive: true });
   }
@@ -756,9 +840,17 @@ async function createGitHubApiFromCli({ cwd, runCommand }) {
 export async function runLocalRelease(options, dependencies = {}) {
   const cwd = dependencies.cwd ?? process.cwd();
   const runCommand = dependencies.runCommand ?? defaultRunCommand;
-  const checkout = await (
-    dependencies.inspectCheckout ?? inspectTrustedCheckout
-  )({ cwd, runCommand });
+  const inspectCheckout = dependencies.inspectCheckout ?? inspectTrustedCheckout;
+  const checkout = await inspectCheckout({ cwd, runCommand });
+  const verifyCurrentMain = async () => {
+    const currentCheckout = await inspectCheckout({ cwd, runCommand });
+    assertGate(
+      currentCheckout.mainSha === checkout.mainSha,
+      "LOCAL_RELEASE_MAIN_CHANGED",
+      `Актуальный main изменился после проверки кандидата ${checkout.mainSha}`,
+    );
+    return currentCheckout;
+  };
   const platform = await (
     dependencies.inspectPlatform ?? inspectOwnerPlatformContext
   )({ cwd, runCommand });
@@ -822,7 +914,10 @@ export async function runLocalRelease(options, dependencies = {}) {
       "LOCAL_RELEASE_REGISTRY_LOGIN_MISMATCH",
       "Login токена GHCR не совпадает с текущей сессией владельца",
     );
-    await (dependencies.executeRelease ?? executeProductionRelease)({
+    await verifyCurrentMain();
+    const releaseResult = await (
+      dependencies.executeRelease ?? executeProductionRelease
+    )({
       actorLogin: platform.actorLogin,
       cwd,
       host: options.host,
@@ -833,6 +928,7 @@ export async function runLocalRelease(options, dependencies = {}) {
       sshKeyPath,
       token,
       user: options.user,
+      verifyCurrentMain,
     });
     await (dependencies.verifyHealth ?? verifyPublicHealth)({
       fetchImpl: dependencies.fetchImpl,
@@ -841,11 +937,13 @@ export async function runLocalRelease(options, dependencies = {}) {
     });
     return {
       actorLogin: platform.actorLogin,
+      applicationDigest: releaseResult?.applicationDigest,
       deploymentRequired: true,
       deployed: true,
       pullRequestNumber: candidate.pullRequest.number,
       requiredChecks: candidate.requiredChecks,
       sha: checkout.mainSha,
+      telegramEgressDigest: releaseResult?.telegramEgressDigest,
     };
   } finally {
     token.fill(0);
@@ -890,8 +988,14 @@ if (isDirectRun) {
           `PR #${result.pullRequestNumber}, SHA ${result.sha}: локальный выпуск готов. Подтверждение: ${result.confirmation}`,
         );
       } else {
+        const digestSuffix = result.applicationDigest
+          ? `, образ ${PRODUCTION_APPLICATION_IMAGE}@${result.applicationDigest}`
+          : "";
+        const egressDigestSuffix = result.telegramEgressDigest
+          ? `, Telegram-egress ${PRODUCTION_TELEGRAM_EGRESS_IMAGE}@${result.telegramEgressDigest}`
+          : "";
         console.log(
-          `PR #${result.pullRequestNumber}, SHA ${result.sha}: production успешно подтверждён.`,
+          `PR #${result.pullRequestNumber}, SHA ${result.sha}${digestSuffix}${egressDigestSuffix}: production успешно подтверждён.`,
         );
       }
     }

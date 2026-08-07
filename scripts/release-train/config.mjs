@@ -78,6 +78,12 @@ export const INFRASTRUCTURE_NO_DEPLOY_PATHS = Object.freeze(
     "AGENTS.md",
     "README.md",
     "deploy/README.md",
+    "deploy/server/academy-admin",
+    "deploy/server/academy-release",
+    "deploy/server/academy-task",
+    "deploy/telegram-egress/README.md",
+    "deploy/telegram-egress/remote.env.example",
+    "deploy/telegram-egress/tunnel.env.example",
     "docs/admin-panel-implementation-status.md",
     "docs/decisions/0009-integration-release-train.md",
     "docs/decisions/0010-team-private-release-train-bootstrap.md",
@@ -99,6 +105,7 @@ export const INFRASTRUCTURE_NO_DEPLOY_PATHS = Object.freeze(
     "tests/release-train/release-classifier.test.mjs",
     "tests/release-train/train-lifecycle.test.mjs",
     "tests/release-train/workflow-contract.test.mjs",
+    "tests/server/academy-admin-wrapper.sh",
   ]),
 );
 

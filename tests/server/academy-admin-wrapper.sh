@@ -4,9 +4,15 @@ set -Eeuo pipefail
 
 readonly wrapper="/workspace/deploy/server/academy-admin"
 readonly academy_root="/opt/academy"
-readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+readonly image_repository="ghcr.io/abrikosov-group/abrikosoff-academy"
 readonly release_sha="1111111111111111111111111111111111111111"
 readonly other_sha="2222222222222222222222222222222222222222"
+release_digest="sha256:$(printf 'a%.0s' {1..64})"
+readonly release_digest
+other_digest="sha256:$(printf 'b%.0s' {1..64})"
+readonly other_digest
+readonly release_image="${image_repository}@${release_digest}"
+readonly other_image="${image_repository}@${other_digest}"
 readonly release_directory="${academy_root}/releases/${release_sha}"
 
 docker() {
@@ -24,6 +30,19 @@ docker() {
 
   if [[ " $* " == *" run --rm --no-deps -T app "* ]]; then
     printf '%s\n' "fake-compose-run-ok"
+    return
+  fi
+
+  if [[ "${1:-}" == "login" || "${1:-}" == "logout" ]]; then
+    return
+  fi
+
+  if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+    printf '%s\n' "${FAKE_IMAGE_REVISION:-}"
+    return
+  fi
+
+  if [[ " $* " == *" compose "* ]]; then
     return
   fi
 
@@ -62,6 +81,7 @@ install -d -m 755 \
   "${release_directory}" \
   "${academy_root}/shared"
 touch \
+  "${release_directory}/Caddyfile" \
   "${release_directory}/compose.production.yaml" \
   "${academy_root}/shared/.env"
 ln -sfn "${release_directory}" "${academy_root}/current"
@@ -92,20 +112,56 @@ rm -f -- "${lock_marker}"
 [[ "${admin_lock_exit}" -eq 124 ]]
 [[ "${release_lock_exit}" -eq 124 ]]
 
-printf '%s%s\n' "${image_prefix}" "${other_sha}" \
-  > "${academy_root}/shared/current-image"
-expect_failure "метаданные текущего релиза и образа не совпадают"
+set +e
+release_tag_output="$(
+  env \
+    SSH_ORIGINAL_COMMAND="deploy ${release_sha} ${image_repository}:${release_sha} Etogerman" \
+    /workspace/deploy/server/academy-release \
+    2>&1
+)"
+release_tag_exit=$?
+set -e
+[[ "${release_tag_exit}" -eq 1 ]]
+grep -Fq "образ должен быть привязан к точному sha256 digest Академии" \
+  <<< "${release_tag_output}"
 
-printf '%s%s\n' "${image_prefix}" "${release_sha}" \
+export FAKE_IMAGE_REVISION="${other_sha}"
+set +e
+release_revision_output="$(
+  printf '%s\n' "ghp_test_registry_token_value_1234567890" | \
+    env \
+      SSH_ORIGINAL_COMMAND="deploy ${release_sha} ${release_image} Etogerman" \
+      /workspace/deploy/server/academy-release \
+      2>&1
+)"
+release_revision_exit=$?
+set -e
+[[ "${release_revision_exit}" -eq 1 ]]
+grep -Fq "revision production-образа не совпадает с SHA релиза" \
+  <<< "${release_revision_output}"
+unset FAKE_IMAGE_REVISION
+
+printf '%s:%s\n' "${image_repository}" "${release_sha}" \
+  > "${academy_root}/shared/current-image"
+expect_failure "текущий образ не привязан к точному sha256 digest Академии"
+
+printf '%s\n' "${release_image}" \
   > "${academy_root}/shared/current-image"
 expect_failure "production-приложение запущено не ровно в одном экземпляре"
 
 export FAKE_RUNNING="true"
-export FAKE_ACTIVE_IMAGE="${image_prefix}${other_sha}"
+export FAKE_ACTIVE_IMAGE="${other_image}"
 expect_failure "запущенный production-образ не совпадает с текущим релизом"
 
-export FAKE_ACTIVE_IMAGE="${image_prefix}${release_sha}"
+export FAKE_ACTIVE_IMAGE="${release_image}"
 success_output="$(run_admin)"
 grep -Fq "fake-compose-run-ok" <<< "${success_output}"
+
+task_output="$(
+  /workspace/deploy/server/academy-task \
+    run \
+    purge-identity-session-technical-data
+)"
+grep -Fq "fake-compose-run-ok" <<< "${task_output}"
 
 printf '%s\n' "Проверки production wrapper успешно завершены."

@@ -39,15 +39,18 @@ GitHub остаётся источником кода, pull request и резу�
    - четыре обязательных app-bound GitHub Actions checks со статусом
      `completed/success` на том же SHA;
    - доступность локальных Docker Buildx, Docker daemon, SSH и tar.
+   Непосредственно перед публикацией образов шлюз заново получает
+   `origin/main`; после публикации и до первого SSH-вызова эта проверка
+   выполняется ещё раз. Изменение `main` закрывает выпуск.
 4. Режим `--verify` выполняет только чтение и выводит точную фразу подтверждения.
    Режим `--release` принимает SSH-параметры и требует фразу
    `ВЫПУСТИТЬ PRODUCTION <40-значный SHA>`.
 5. Для GHCR используется отдельный classic personal access token владельца с
    минимальными scopes `write:packages` и `read:packages`, как требует
    [контракт Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
-   Шлюз проверяет
-   владельца token и отклоняет scopes `repo`, `workflow`, `admin:org` и
-   `delete:packages`.
+   Шлюз проверяет владельца token и принимает только точный allowlist
+   `write:packages` с необязательным `read:packages`. Любой иной scope,
+   включая ранее не перечисленный GitHub scope, закрывает выпуск.
 6. GHCR token:
    - передаётся локальному процессу только через стандартный ввод;
    - не передаётся в аргументах, environment, GitHub Secrets или файлах
@@ -56,13 +59,18 @@ GitHub остаётся источником кода, pull request и резу�
    - используется с временным `DOCKER_CONFIG`, который удаляется в `finally`;
    - обнуляется в локальных Buffer после успеха или ошибки.
 7. На доверенной машине собираются Linux/AMD64-образы приложения и
-   Telegram-egress с SBOM, provenance, неизменяемым тегом SHA и указателем
-   `main`. Только после успешной публикации локальный процесс передаёт
-   `Caddyfile` и Compose-конфигурацию существующему ограниченному SSH-wrapper.
+   Telegram-egress с SBOM и provenance. Теги SHA и `main` публикуются только
+   как удобные изменяемые указатели и не входят в production trust boundary.
+   Buildx обязан записать metadata-файл, из которого шлюз извлекает и проверяет
+   точный `sha256` digest опубликованного OCI-образа по
+   [официальному контракту `--metadata-file`](https://docs.docker.com/reference/cli/docker/buildx/build/#metadata-file).
+   Только digest приложения передаётся серверу вместе с `Caddyfile` и
+   Compose-конфигурацией.
 8. Сервер по-прежнему принимает только `upload <sha>` и
-   `deploy <sha> <точный-image:sha> <registry-user>`, сериализует операции,
-   применяет миграции, проверяет health и выполняет откат. Интерактивная SSH
-   shell для release-ключа не разрешается.
+   `deploy <sha> <image@sha256:digest> <registry-user>`, проверяет OCI label
+   `org.opencontainers.image.revision` на совпадение с SHA, сериализует
+   операции, применяет миграции, проверяет health и выполняет откат.
+   Интерактивная SSH shell для release-ключа не разрешается.
 9. После ответа wrapper локальная машина независимо проверяет публичный
    `/api/health` и точный SHA. Ошибка закрывает команду, но не маскирует
    фактическое состояние сервера; оператор следует runbook отката.
@@ -77,21 +85,39 @@ GitHub остаётся источником кода, pull request и резу�
    `infrastructure-no-deploy` и production не меняет;
 2. создаёт на доверенной машине отдельный release SSH key и фиксирует host key
    сервера через независимый доверенный канал;
-3. добавляет новый public key в `authorized_keys` пользователя `deploy` с тем
+3. под общей exclusive-блокировкой из точного принятого `main` через отдельную
+   доверенную обслуживаемую сессию устанавливает digest-aware версии
+   `academy-release`, `academy-admin` и `academy-task` как `root:root 0755`,
+   предварительно выполняет `bash -n` и сверяет установленные файлы с
+   локальными; для уже работающего контейнера одновременно получает его точный
+   GHCR digest, проверяет repository, OCI revision и SHA каталога текущего
+   релиза, затем атомарно переводит `current-image` с прежнего tag на digest.
+   При любом несовпадении переход останавливается; старый tag-only
+   release-wrapper несовместим с новым локальным шлюзом, а старые
+   административная и фоновая обёртки несовместимы с новым форматом
+   `current-image`;
+4. добавляет новый public key в `authorized_keys` пользователя `deploy` с тем
    же forced-command wrapper и запретами PTY, forwarding и agent forwarding;
-4. в той же обслуживаемой сессии удаляет прежний public key GitHub Actions и
+5. в той же обслуживаемой сессии удаляет прежний public key GitHub Actions и
    проверяет, что новый ключ вызывает только wrapper;
-5. удаляет из GitHub production Environment значения
+6. удаляет из GitHub production Environment значения
    `PRODUCTION_SSH_PRIVATE_KEY`, `PRODUCTION_SSH_KNOWN_HOSTS` и более не нужные
    release variables; проверяет отсутствие копий на уровне repository и
    organization secrets;
-6. создаёт отдельный package-only GHCR token, сохраняет его в менеджере
+7. для packages `abrikosoff-academy` и
+   `abrikosoff-academy-telegram-egress` отключает наследование доступа от
+   репозитория, удаляет доступ Actions на запись и проверяет, что ни сотрудник,
+   ни команда с правом `Write` в репозитории не имеют package-роли `Write` или
+   `Admin`; запись остаётся только у владельца по
+   [granular package permissions](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility);
+8. создаёт отдельный package-only GHCR token, сохраняет его в менеджере
    секретов владельца и не добавляет в GitHub;
-7. запускает `--verify` из актуального чистого `main`;
-8. только после доказанного отзыва старого SSH-ключа и удаления GitHub secrets
+9. запускает `--verify` из актуального чистого `main`;
+10. только после доказанного отзыва старого SSH-ключа, удаления GitHub secrets
+   и ограничения package ACL
    пересматривает доступ разработчика с `Read` на `Write`.
 
-Шаги 3–5 изменяют production и настройки GitHub, поэтому выполняются отдельной
+Шаги 3–8 изменяют production и настройки GitHub, поэтому выполняются отдельной
 явно подтверждённой операцией владельца, а не самим merge этого PR.
 
 ## Последствия
@@ -135,9 +161,12 @@ manager и build toolchain и повышает последствия supply-cha
   или deploy;
 - выпуск закрывается при другом owner ID, merger, repository, branch, SHA,
   PR-классе, GitHub App проверки или неуспешном check;
-- GHCR token проходит только через stdin и отклоняется при избыточных scopes;
+- GHCR token проходит только через stdin и отклоняется при любом scope вне
+  точного package-only allowlist;
 - SSH использует точный private key, pinned `known_hosts`,
-  `StrictHostKeyChecking=yes` и неизменяемый image tag SHA;
+  `StrictHostKeyChecking=yes` и неизменяемый `image@sha256:digest`;
+- `main` повторно проверяется перед публикацией и после сборок до SSH-вызова;
 - unit- и contract-тесты подтверждают эти инварианты;
 - фактический cutover считается завершённым только после отзыва прежнего
-  серверного ключа и удаления production secrets из GitHub.
+  серверного ключа, удаления production secrets из GitHub, установки
+  digest-aware wrapper-ов и ограничения package ACL.

@@ -9,7 +9,7 @@ readonly environment_file="${shared_root}/.env"
 readonly current_link="${academy_root}/current"
 readonly current_image_file="${shared_root}/current-image"
 readonly project_name="academy-abrikosoff"
-readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+readonly image_repository="ghcr.io/abrikosov-group/abrikosoff-academy"
 readonly operation_lock_timeout_seconds=600
 readonly allowed_task="purge-identity-session-technical-data"
 
@@ -30,19 +30,24 @@ flock --shared --wait "${operation_lock_timeout_seconds}" 9 \
 [[ -L "${current_link}" ]] || fail "текущий релиз не найден"
 release_directory="$(readlink -f "${current_link}")"
 readonly release_directory
+app_version="${release_directory##*/}"
+readonly app_version
+readonly expected_release_directory="${academy_root}/releases/${app_version}"
 [[ -f "${environment_file}" ]] || fail "файл окружения не найден"
 [[ -f "${current_image_file}" ]] || fail "текущий образ не найден"
 image_reference="$(<"${current_image_file}")"
 readonly image_reference
-readonly app_version="${image_reference##*:}"
-readonly expected_release_directory="${academy_root}/releases/${app_version}"
+image_digest="${image_reference#"${image_repository}"@}"
+readonly image_digest
 
 [[ "${app_version}" =~ ^[0-9a-f]{40}$ ]] \
-  || fail "тег текущего образа не является SHA релиза"
-[[ "${image_reference}" == "${image_prefix}${app_version}" ]] \
-  || fail "текущий образ не принадлежит Академии"
+  || fail "каталог текущего релиза не является SHA коммита"
 [[ "${release_directory}" == "${expected_release_directory}" ]] \
-  || fail "метаданные текущего релиза и образа не совпадают"
+  || fail "текущая ссылка указывает вне каталога релизов"
+[[ \
+  "${image_reference}" == "${image_repository}@${image_digest}" \
+  && "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ \
+]] || fail "текущий образ не привязан к точному sha256 digest Академии"
 [[ -f "${release_directory}/compose.production.yaml" ]] \
   || fail "Compose-конфигурация текущего релиза не найдена"
 

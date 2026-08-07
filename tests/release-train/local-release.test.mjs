@@ -12,6 +12,7 @@ import {
 } from "../../scripts/release-train/config.mjs";
 import {
   executeProductionRelease,
+  parseBuildMetadata,
   parseLocalReleaseArguments,
   runLocalRelease,
   validateMergedByOwner,
@@ -23,6 +24,8 @@ import {
 const REPOSITORY = "Abrikosov-group/abrikosoff-academy";
 const SHA = "a".repeat(40);
 const TOKEN = "ghp_test_registry_token_value_1234567890";
+const APPLICATION_DIGEST = `sha256:${"b".repeat(64)}`;
+const TELEGRAM_EGRESS_DIGEST = `sha256:${"c".repeat(64)}`;
 
 function pullRequest(overrides = {}) {
   return {
@@ -250,6 +253,52 @@ test("GHCR token принадлежит владельцу и имеет тол�
     }),
     { code: "LOCAL_RELEASE_REGISTRY_TOKEN_SCOPE_EXCESSIVE" },
   );
+  await assert.rejects(
+    verifyRegistryToken({
+      fetchImpl: async () => ({
+        headers: new Headers({
+          "x-oauth-scopes": "admin:public_key, write:packages",
+        }),
+        json: async () => ({
+          id: Number(CURRENT_LIFECYCLE_OWNER_ID),
+          login: "Etogerman",
+        }),
+        ok: true,
+        status: 200,
+      }),
+      token,
+    }),
+    { code: "LOCAL_RELEASE_REGISTRY_TOKEN_SCOPE_EXCESSIVE" },
+  );
+});
+
+test("Buildx metadata принимает только согласованный sha256 digest", () => {
+  assert.equal(
+    parseBuildMetadata(
+      JSON.stringify({
+        "containerimage.descriptor": { digest: APPLICATION_DIGEST },
+        "containerimage.digest": APPLICATION_DIGEST,
+      }),
+    ),
+    APPLICATION_DIGEST,
+  );
+  assert.throws(
+    () =>
+      parseBuildMetadata(
+        JSON.stringify({ "containerimage.digest": `sha256:${"z".repeat(64)}` }),
+      ),
+    { code: "LOCAL_RELEASE_BUILD_DIGEST_INVALID" },
+  );
+  assert.throws(
+    () =>
+      parseBuildMetadata(
+        JSON.stringify({
+          "containerimage.descriptor": { digest: TELEGRAM_EGRESS_DIGEST },
+          "containerimage.digest": APPLICATION_DIGEST,
+        }),
+      ),
+    { code: "LOCAL_RELEASE_BUILD_DIGEST_MISMATCH" },
+  );
 });
 
 test("--verify выдаёт точное подтверждение и ничего не развёртывает", async () => {
@@ -274,8 +323,9 @@ test("--verify выдаёт точное подтверждение и ниче�
 test("изменяющие команды не получают GHCR token через args или environment", async () => {
   const token = Buffer.from(TOKEN);
   const calls = [];
+  const events = [];
   let dockerConfig;
-  await executeProductionRelease({
+  const result = await executeProductionRelease({
     actorLogin: "Etogerman",
     cwd: "/tmp/repo",
     host: "production.example.com",
@@ -286,8 +336,25 @@ test("изменяющие команды не получают GHCR token че�
         ? Buffer.from(options.input)
         : options.input;
       calls.push({ command, args: [...args], env: options.env, input });
+      events.push(command === "docker" && args.includes("build")
+        ? `build:${args.at(-1)}`
+        : command);
       if (command === "docker" && args.includes("login")) {
         dockerConfig = options.env.DOCKER_CONFIG;
+      }
+      if (command === "docker" && args.includes("build")) {
+        const metadataPath = args[args.indexOf("--metadata-file") + 1];
+        const digest = args.at(-1) === "."
+          ? APPLICATION_DIGEST
+          : TELEGRAM_EGRESS_DIGEST;
+        await writeFile(
+          metadataPath,
+          JSON.stringify({
+            "containerimage.descriptor": { digest },
+            "containerimage.digest": digest,
+          }),
+          "utf8",
+        );
       }
       if (command === "tar") {
         return { stderr: Buffer.alloc(0), stdout: Buffer.from("archive") };
@@ -298,12 +365,17 @@ test("изменяющие команды не получают GHCR token че�
     sshKeyPath: "/tmp/key",
     token,
     user: "deploy",
+    verifyCurrentMain: async () => {
+      events.push("verify-main");
+    },
   });
 
   assert.equal(calls.length, 6);
   assert.equal(calls.filter((call) => call.command === "docker").length, 3);
   assert.equal(calls.filter((call) => call.command === "ssh").length, 2);
   assert.equal(calls.some((call) => call.args.includes("--push")), true);
+  assert.equal(result.applicationDigest, APPLICATION_DIGEST);
+  assert.equal(result.telegramEgressDigest, TELEGRAM_EGRESS_DIGEST);
   assert.equal(
     calls.some((call) =>
       call.args.includes(
@@ -312,6 +384,22 @@ test("изменяющие команды не получают GHCR token че�
     ),
     true,
   );
+  const deployCall = calls.find(
+    (call) =>
+      call.command === "ssh" &&
+      call.args.some((argument) => argument.startsWith("deploy ")),
+  );
+  assert.equal(
+    deployCall.args.at(-1),
+    `deploy ${SHA} ghcr.io/abrikosov-group/abrikosoff-academy@${APPLICATION_DIGEST} Etogerman`,
+  );
+  const mainVerificationIndexes = events
+    .map((event, index) => (event === "verify-main" ? index : -1))
+    .filter((index) => index >= 0);
+  assert.equal(mainVerificationIndexes.length, 2);
+  assert.ok(mainVerificationIndexes[0] < events.indexOf("build:./deploy/telegram-egress"));
+  assert.ok(mainVerificationIndexes[1] > events.indexOf("build:."));
+  assert.ok(mainVerificationIndexes[1] < events.indexOf("tar"));
   for (const call of calls) {
     assert.doesNotMatch(JSON.stringify(call.args), new RegExp(TOKEN));
     assert.doesNotMatch(JSON.stringify(call.env ?? {}), new RegExp(TOKEN));
@@ -321,6 +409,50 @@ test("изменяющие команды не получают GHCR token че�
     2,
   );
   await assert.rejects(access(dockerConfig), { code: "ENOENT" });
+});
+
+test("изменение main после сборок запрещает любой SSH-вызов", async () => {
+  const commands = [];
+  let mainVerifications = 0;
+  await assert.rejects(
+    executeProductionRelease({
+      actorLogin: "Etogerman",
+      cwd: "/tmp/repo",
+      host: "production.example.com",
+      knownHostsPath: "/tmp/known_hosts",
+      port: "22",
+      runProcess: async (command, args) => {
+        commands.push(command);
+        if (command === "docker" && args.includes("build")) {
+          const metadataPath = args[args.indexOf("--metadata-file") + 1];
+          const digest = args.at(-1) === "."
+            ? APPLICATION_DIGEST
+            : TELEGRAM_EGRESS_DIGEST;
+          await writeFile(
+            metadataPath,
+            JSON.stringify({ "containerimage.digest": digest }),
+            "utf8",
+          );
+        }
+        return { stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+      },
+      sha: SHA,
+      sshKeyPath: "/tmp/key",
+      token: Buffer.from(TOKEN),
+      user: "deploy",
+      verifyCurrentMain: async () => {
+        mainVerifications += 1;
+        if (mainVerifications === 2) {
+          throw new Error("main изменился");
+        }
+      },
+    }),
+    /main изменился/,
+  );
+  assert.equal(commands.filter((command) => command === "docker").length, 3);
+  assert.equal(mainVerifications, 2);
+  assert.equal(commands.includes("tar"), false);
+  assert.equal(commands.includes("ssh"), false);
 });
 
 test("infrastructure-no-deploy успешно проверяется, но не выпускается", async () => {
@@ -357,6 +489,7 @@ test("--release проверяет секреты до передачи и об�
   const suppliedToken = Buffer.from(TOKEN);
   let executed = false;
   let healthChecked = false;
+  let checkoutInspections = 0;
   try {
     const result = await runLocalRelease(
       {
@@ -369,10 +502,11 @@ test("--release проверяет секреты до передачи и об�
         user: "deploy",
       },
       platformDependencies({
-        executeRelease: async ({ actorLogin, token }) => {
+        executeRelease: async ({ actorLogin, token, verifyCurrentMain }) => {
           executed = true;
           assert.equal(actorLogin, "Etogerman");
           assert.equal(token.toString("utf8"), TOKEN);
+          await verifyCurrentMain();
         },
         fetchImpl: async () => ({
           headers: new Headers({
@@ -386,6 +520,10 @@ test("--release проверяет секреты до передачи и об�
           status: 200,
         }),
         readRegistryToken: async () => suppliedToken,
+        inspectCheckout: async () => {
+          checkoutInspections += 1;
+          return { mainSha: SHA, repositoryRoot: "/tmp/repo" };
+        },
         verifyHealth: async ({ sha }) => {
           assert.equal(sha, SHA);
           healthChecked = true;
@@ -395,7 +533,52 @@ test("--release проверяет секреты до передачи и об�
     assert.equal(result.deployed, true);
     assert.equal(executed, true);
     assert.equal(healthChecked, true);
+    assert.equal(checkoutInspections, 3);
     assert.equal(suppliedToken.every((byte) => byte === 0), true);
+
+    const changedToken = Buffer.from(TOKEN);
+    let changedCheckoutInspections = 0;
+    let changedReleaseExecuted = false;
+    await assert.rejects(
+      runLocalRelease(
+        {
+          confirmation: `${LOCAL_PRODUCTION_RELEASE_CONFIRMATION} ${SHA}`,
+          host: "production.example.com",
+          knownHostsPath,
+          mode: "release",
+          port: "22",
+          sshKeyPath,
+          user: "deploy",
+        },
+        platformDependencies({
+          executeRelease: async () => {
+            changedReleaseExecuted = true;
+          },
+          fetchImpl: async () => ({
+            headers: new Headers({
+              "x-oauth-scopes": "read:packages, write:packages",
+            }),
+            json: async () => ({
+              id: Number(CURRENT_LIFECYCLE_OWNER_ID),
+              login: "Etogerman",
+            }),
+            ok: true,
+            status: 200,
+          }),
+          inspectCheckout: async () => {
+            changedCheckoutInspections += 1;
+            return {
+              mainSha: changedCheckoutInspections === 1 ? SHA : "d".repeat(40),
+              repositoryRoot: "/tmp/repo",
+            };
+          },
+          readRegistryToken: async () => changedToken,
+        }),
+      ),
+      { code: "LOCAL_RELEASE_MAIN_CHANGED" },
+    );
+    assert.equal(changedReleaseExecuted, false);
+    assert.equal(changedToken.every((byte) => byte === 0), true);
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
