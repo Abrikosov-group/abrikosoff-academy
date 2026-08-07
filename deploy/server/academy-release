@@ -49,14 +49,19 @@ validate_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "некорректный SHA коммита"
 }
 
-validate_image_reference() {
+is_academy_digest_reference() {
   local image_reference="$1"
   local image_digest="${image_reference#"${image_repository}"@}"
 
   [[ \
     "${image_reference}" == "${image_repository}@${image_digest}" \
     && "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ \
-  ]] || fail "образ должен быть привязан к точному sha256 digest Академии"
+  ]]
+}
+
+validate_image_reference() {
+  is_academy_digest_reference "$1" \
+    || fail "образ должен быть привязан к точному sha256 digest Академии"
 }
 
 upload_release() {
@@ -138,16 +143,13 @@ restore_previous_release() {
   local previous_release="$1"
   local previous_image="$2"
   local previous_version="${previous_release##*/}"
-  local previous_digest="${previous_image#"${image_repository}"@}"
 
   if [[ \
     -n "${previous_release}" \
     && -n "${previous_image}" \
     && "${previous_version}" =~ ^[0-9a-f]{40}$ \
-    && "${previous_image}" == "${image_repository}@${previous_digest}" \
-    && "${previous_digest}" =~ ^sha256:[0-9a-f]{64}$ \
     && -f "${previous_release}/compose.production.yaml" \
-  ]]; then
+  ]] && is_academy_digest_reference "${previous_image}"; then
     printf 'Возвращаю предыдущий образ %s.\n' "${previous_image}" >&2
     run_compose \
       "${previous_release}" \
@@ -173,6 +175,8 @@ deploy_release() {
   local release_directory="${releases_root}/${release_sha}"
   local previous_release=""
   local previous_image=""
+  local previous_revision=""
+  local previous_version=""
   local registry_token=""
   local response=""
   local image_revision=""
@@ -188,6 +192,37 @@ deploy_release() {
   [[ -f "${environment_file}" ]] || \
     fail "серверный файл окружения не найден"
 
+  if [[ \
+    -e "${current_link}" \
+    || -L "${current_link}" \
+    || -e "${current_image_file}" \
+    || -L "${current_image_file}" \
+  ]]; then
+    [[ -L "${current_link}" ]] \
+      || fail "метаданные текущего релиза неполны; завершите digest-cutover"
+    [[ -f "${current_image_file}" && ! -L "${current_image_file}" ]] \
+      || fail "метаданные текущего образа неполны; завершите digest-cutover"
+    previous_release="$(readlink -f "${current_link}")" \
+      || fail "не удалось прочитать текущий каталог релиза"
+    previous_image="$(<"${current_image_file}")"
+    previous_version="${previous_release##*/}"
+    [[ \
+      "${previous_version}" =~ ^[0-9a-f]{40}$ \
+      && "${previous_release}" == "${releases_root}/${previous_version}" \
+      && -f "${previous_release}/compose.production.yaml" \
+    ]] || fail "метаданные текущего релиза не прошли fail-closed проверку"
+    is_academy_digest_reference "${previous_image}" \
+      || fail "текущий образ использует legacy tag; завершите digest-cutover"
+
+    previous_revision="$(
+      docker image inspect \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+        "${previous_image}"
+    )" || fail "не удалось проверить revision текущего production-образа"
+    [[ "${previous_revision}" == "${previous_version}" ]] || \
+      fail "revision текущего production-образа не совпадает с SHA релиза"
+  fi
+
   IFS= read -r registry_token || true
   [[ "${#registry_token}" -ge 20 ]] || fail "токен реестра не передан"
 
@@ -200,13 +235,6 @@ deploy_release() {
         --password-stdin \
         >/dev/null
   unset registry_token
-
-  if [[ -L "${current_link}" ]]; then
-    previous_release="$(readlink -f "${current_link}")"
-  fi
-  if [[ -f "${current_image_file}" ]]; then
-    previous_image="$(<"${current_image_file}")"
-  fi
 
   run_compose \
     "${release_directory}" \

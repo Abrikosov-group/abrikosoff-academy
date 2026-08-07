@@ -137,7 +137,7 @@ test("CLI разделяет read-only проверку и явно подтве
     user: null,
   });
 
-  const release = parseLocalReleaseArguments([
+  const releaseArguments = [
     "--release",
     "--host",
     "production.example.com",
@@ -151,9 +151,25 @@ test("CLI разделяет read-only проверку и явно подтве
     "/tmp/known_hosts",
     "--confirmation",
     `${LOCAL_PRODUCTION_RELEASE_CONFIRMATION} ${SHA}`,
-  ]);
+  ];
+  const release = parseLocalReleaseArguments(releaseArguments);
   assert.equal(release.mode, "release");
   assert.equal(release.port, "2222");
+
+  for (const missingArgument of ["--known-hosts", "--ssh-key"]) {
+    const argumentIndex = releaseArguments.indexOf(missingArgument);
+    assert.throws(
+      () =>
+        parseLocalReleaseArguments([
+          ...releaseArguments.slice(0, argumentIndex),
+          ...releaseArguments.slice(argumentIndex + 2),
+        ]),
+      {
+        code: "LOCAL_RELEASE_ARGUMENT_REQUIRED",
+        message: new RegExp(missingArgument),
+      },
+    );
+  }
 
   assert.throws(
     () => parseLocalReleaseArguments(["--verify", "--host", "example.com"]),

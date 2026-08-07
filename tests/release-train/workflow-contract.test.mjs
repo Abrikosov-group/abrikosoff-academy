@@ -124,4 +124,10 @@ test("локальный выпуск закрыт точным owner, SHA, chec
     assert.match(wrapper, /@\$\{image_digest\}|sha256:\[0-9a-f\]\{64\}/);
     assert.doesNotMatch(wrapper, /image_prefix/);
   }
+  for (const runtimeWrapper of [adminWrapper, taskWrapper]) {
+    assert.match(runtimeWrapper, /org\.opencontainers\.image\.revision/);
+    assert.match(runtimeWrapper, /active_revision.*app_version/s);
+  }
+  assert.match(releaseWrapper, /legacy tag; завершите digest-cutover/);
+  assert.match(releaseWrapper, /previous_revision.*previous_version/s);
 });

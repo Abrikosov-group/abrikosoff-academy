@@ -68,9 +68,13 @@ GitHub остаётся источником кода, pull request и резу�
    Compose-конфигурацией.
 8. Сервер по-прежнему принимает только `upload <sha>` и
    `deploy <sha> <image@sha256:digest> <registry-user>`, проверяет OCI label
-   `org.opencontainers.image.revision` на совпадение с SHA, сериализует
-   операции, применяет миграции, проверяет health и выполняет откат.
-   Интерактивная SSH shell для release-ключа не разрешается.
+   `org.opencontainers.image.revision` нового и предыдущего образов на
+   совпадение с их SHA. Legacy tag или неполные metadata текущего релиза
+   отклоняются до чтения токена и Docker-изменений. Сервер сериализует операции,
+   применяет миграции, проверяет health и выполняет откат. Интерактивная SSH
+   shell для release-ключа не разрешается. Административный и task-wrapper
+   перед изменяющей командой также сверяют digest и OCI revision реально
+   работающего контейнера с SHA текущего каталога релиза.
 9. После ответа wrapper локальная машина независимо проверяет публичный
    `/api/health` и точный SHA. Ошибка закрывает команду, но не маскирует
    фактическое состояние сервера; оператор следует runbook отката.
@@ -166,6 +170,9 @@ manager и build toolchain и повышает последствия supply-cha
 - SSH использует точный private key, pinned `known_hosts`,
   `StrictHostKeyChecking=yes` и неизменяемый `image@sha256:digest`;
 - `main` повторно проверяется перед публикацией и после сборок до SSH-вызова;
+- release-wrapper до Docker-изменений отклоняет legacy или несогласованные
+  metadata текущего релиза, а admin/task-wrapper сверяют OCI revision
+  работающего контейнера с SHA каталога;
 - unit- и contract-тесты подтверждают эти инварианты;
 - фактический cutover считается завершённым только после отзыва прежнего
   серверного ключа, удаления production secrets из GitHub, установки

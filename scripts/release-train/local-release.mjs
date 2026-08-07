@@ -258,11 +258,11 @@ export function parseLocalReleaseArguments(args) {
     return parsed;
   }
 
-  for (const property of releaseOnlyProperties) {
+  for (const [argument, property] of valueArguments) {
     assertGate(
       typeof parsed[property] === "string" && parsed[property].length > 0,
       "LOCAL_RELEASE_ARGUMENT_REQUIRED",
-      `Для --release не задан обязательный параметр ${property}`,
+      `Для --release не задан обязательный параметр ${argument}`,
     );
   }
   assertGate(

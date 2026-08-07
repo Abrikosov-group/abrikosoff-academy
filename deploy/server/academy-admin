@@ -97,6 +97,14 @@ active_image="$(
 readonly active_image
 [[ "${active_image}" == "${image_reference}" ]] \
   || fail "запущенный production-образ не совпадает с текущим релизом"
+active_revision="$(
+  docker inspect \
+    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "${running_app_container}"
+)" || fail "не удалось определить revision production-приложения"
+readonly active_revision
+[[ "${active_revision}" == "${app_version}" ]] \
+  || fail "revision production-приложения не совпадает с SHA текущего релиза"
 
 run_compose \
     run \
