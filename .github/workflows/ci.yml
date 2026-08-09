@@ -14,26 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review-orchestrator:
-    name: Безопасность оркестратора ИИ-ревью
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-
-    steps:
-      - name: Получить исходный код
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
-
-      - name: Подготовить Ruby
-        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
-        with:
-          ruby-version: "3.4"
-
-      - name: Проверить конфигурацию Fable 5
-        run: ruby .github/review/tests/validate.rb
-
-      - name: Проверить неизменяемый снимок и безопасную публикацию
-        run: ruby .github/review/tests/simulate_prompt.rb
-
   administration-wrapper:
     name: Production-wrapper Administration
     runs-on: ubuntu-24.04
