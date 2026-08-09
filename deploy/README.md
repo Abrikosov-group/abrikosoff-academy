@@ -14,27 +14,88 @@ Production использует `SESSION_TRUSTED_PROXY=cloudflare`. Поэтом
 [Cloudflare IP Ranges](https://www.cloudflare.com/ips/) диапазоны в
 `Caddyfile` обновляются и конфигурация повторно валидируется.
 
-## Автоматический релиз
+## Локальный выпуск владельцем
 
-Workflow `.github/workflows/release.yml` после изменения `main`:
+GitHub Actions выполняет только CI и не получает production Environment,
+SSH-реквизиты или право публикации в GHCR. После merge production не меняется
+автоматически. Решение и граница доверия зафиксированы в
+[ADR-0011](../docs/decisions/0011-owner-local-production-release.md).
 
-1. собирает Linux/AMD64-образ с SBOM и provenance;
-2. публикует неизменяемый тег с полным SHA коммита в приватный GHCR;
-3. передаёт серверу только `Caddyfile` и Compose-конфигурацию;
-4. запускает релиз ограниченным SSH-ключом;
-5. применяет миграции под advisory lock и запускает приложение только после
+Штатный выпуск запускается только с доверенной машины владельца. Сначала из
+корня чистого и актуального `main` выполняется read-only проверка:
+
+```bash
+node scripts/release-train/local-release.mjs --verify
+```
+
+Команда проверяет identity владельца, точный merge PR, четыре успешных checks
+на SHA `main`, локальные инструменты и выводит точную фразу подтверждения. Для
+`infrastructure-no-deploy` она сообщает, что deployment не требуется.
+
+Для изменяющего запуска заранее подготавливаются:
+
+- отдельный SSH private key владельца с правами `0600`; его public key на
+  сервере связан только с `/usr/local/sbin/academy-release` через
+  forced-command;
+- отдельный `known_hosts` с правами `0600`; отпечаток host key сверяется через
+  независимый доверенный канал;
+- classic personal access token владельца только со scopes `write:packages` и
+  `read:packages`, сохранённый вне GitHub и репозитория;
+- у packages `abrikosoff-academy` и
+  `abrikosoff-academy-telegram-egress` отключено наследование прав
+  репозитория; доступ Actions на запись удалён, а package-роли `Write` и
+  `Admin` остаются только у владельца.
+
+Package ACL проверяется отдельно для каждого из двух packages в GitHub:
+`Inherit access from source repository` выключен; в `Manage Actions access`
+нет репозитория с ролью `Write`; в списках пользователей и команд нет
+сотрудника или команды с `Write`/`Admin`. Результат фиксируется в cutover-
+протоколе до возврата сотруднику repository-роли `Write`. Локальный
+`--verify`, который принципиально не читает GHCR token и ничего не изменяет,
+не заменяет эту проверку настроек package.
+
+Токен не экспортируется в environment и не передаётся аргументом. Пример для
+интерактивного `zsh`:
+
+```bash
+read -rsp 'GHCR token: ' academy_ghcr_token
+printf '\n'
+printf '%s\n' "$academy_ghcr_token" | \
+  node scripts/release-train/local-release.mjs \
+    --release \
+    --host PRODUCTION_HOST \
+    --port PRODUCTION_PORT \
+    --user deploy \
+    --ssh-key /absolute/path/academy-production \
+    --known-hosts /absolute/path/academy-known-hosts \
+    --confirmation "ВЫПУСТИТЬ PRODUCTION REPLACE_WITH_EXACT_MAIN_SHA"
+unset academy_ghcr_token
+```
+
+Локальный шлюз:
+
+1. повторяет все read-only проверки и сверяет точную фразу с текущим SHA;
+2. проверяет владельца и точный allowlist scopes GHCR token: обязательный
+   `write:packages` и необязательный `read:packages`;
+3. непосредственно перед первой публикацией повторно проверяет чистый `main`
+   и заново полученный `origin/main`;
+4. собирает Linux/AMD64-образы приложения и Telegram-egress с SBOM и
+   provenance;
+5. публикует изменяемые указатели SHA и `main` в приватный GHCR через
+   временный Docker-профиль, но получает доверенную ссылку только из
+   Buildx metadata как `image@sha256:digest`;
+6. после сборок ещё раз проверяет `origin/main`; при изменении SHA не вызывает
+   SSH-wrapper;
+7. передаёт серверу только `Caddyfile`, Compose-конфигурацию и точный digest;
+8. запускает релиз ограниченным SSH-ключом;
+9. применяет миграции под advisory lock и запускает приложение только после
    их успешного завершения;
-6. проверяет `/api/health` и совпадение опубликованной версии;
-7. при ошибке возвращает предыдущий релиз, а при первой выкладке — исходную
-   статическую страницу.
+10. проверяет `/api/health` и совпадение версии, а сервер при ошибке возвращает
+   предыдущий релиз либо исходную статическую страницу.
 
-Production-окружение GitHub содержит:
-
-- переменные `PRODUCTION_HOST`, `PRODUCTION_PORT`, `PRODUCTION_USER`;
-- секреты `PRODUCTION_SSH_PRIVATE_KEY`, `PRODUCTION_SSH_KNOWN_HOSTS`.
-
-Токен GHCR не хранится отдельным секретом: workflow использует краткоживущий
-`GITHUB_TOKEN` с минимальными правами.
+До первого использования обязательно отзывается прежний public key GitHub
+Actions на сервере и удаляются production secrets из repository, organization
+и Environment. Само удаление workflow не обезвреживает исторические runs.
 
 ## Сервер
 
@@ -42,14 +103,22 @@ Production-окружение GitHub содержит:
 
 ```text
 /opt/academy/shared/.env       секреты приложения и PostgreSQL
+/opt/academy/shared/current-image  точный image@sha256:digest
 /opt/academy/releases/<sha>/   конфигурации отдельных релизов
 /opt/academy/current           ссылка на активный релиз
 ```
 
 Серверный шлюз `server/academy-release` устанавливается как
-`/usr/local/sbin/academy-release`. Ключ GitHub Actions в `authorized_keys`
-запускает только этот шлюз и не даёт интерактивной оболочки, PTY, туннелей или
-перенаправления агента.
+`/usr/local/sbin/academy-release`. Отдельный public key локального выпуска в
+`authorized_keys` запускает только этот шлюз и не даёт интерактивной оболочки,
+PTY, туннелей или перенаправления агента:
+
+```text
+restrict,command="/usr/local/sbin/academy-release" ssh-ed25519 REPLACE_WITH_OWNER_RELEASE_PUBLIC_KEY academy-owner-release
+```
+
+Строка прежнего ключа GitHub Actions удаляется в той же обслуживаемой сессии,
+в которой проверен новый ключ владельца.
 
 Файл `/opt/academy/shared/.env` принадлежит `root:academy-runtime`, имеет режим
 `0640` и не передаётся в GitHub. В нём устанавливаются уникальный пароль
@@ -61,16 +130,43 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 становятся группово изменяемыми.
 
 Кандидаты release-, административного и task-wrapper-ов доставляются внутри
-неизменяемого production-образа как
+production-образа, выбранного по неизменяемому digest, как
 `/usr/local/share/academy/academy-release` и
 `/usr/local/share/academy/academy-admin` и
 `/usr/local/share/academy/academy-task`. Обычный release-процесс не
 устанавливает и не обновляет root-owned файлы или systemd-unit-ы автоматически.
 
-После первого релиза и после каждого изменения любого из этих wrapper-ов
+До первого digest-выпуска новые версии `academy-release`, `academy-admin` и
+`academy-task` устанавливаются из точного принятого `main` через отдельную
+доверенную обслуживаемую сессию. Это отдельная явно подтверждаемая
+production-операция: старый release-wrapper принимает tag `image:sha` и
+намеренно отклонит новый `image@sha256:digest`, а старые административная и
+фоновая обёртки не принимают новый формат `current-image`.
+
+Установка трёх wrapper-ов и перевод уже активного `current-image` выполняются
+в одной общей exclusive-блокировке. До атомарной замены tag на digest оператор
+обязан доказать одновременно:
+
+- `/opt/academy/current` указывает на каталог с 40-значным SHA;
+- `.Config.Image` единственного работающего app-контейнера совпадает со старым
+  `current-image`;
+- выбранный `RepoDigest` принадлежит только
+  `ghcr.io/abrikosov-group/abrikosoff-academy`;
+- OCI label `org.opencontainers.image.revision` этого digest совпадает с SHA
+  текущего каталога релиза.
+
+Если хотя бы одно условие не подтверждено однозначно, переход останавливается,
+старые wrapper-ы и `current-image` сохраняются. После успешного перехода откат
+первого digest-релиза также использует точный digest предыдущего образа.
+Новый release-wrapper до чтения токена и любых Docker-изменений явно отклоняет
+неполные метаданные, legacy tag в `current-image` и несовпадение OCI revision
+предыдущего образа с SHA текущего каталога релиза.
+
+После первого digest-релиза и после каждого следующего изменения любого из
+этих wrapper-ов
 оператор извлекает три кандидата из текущего production-образа, проверяет и
 явно устанавливает их как одну согласованную версию. Обновление начинается
-только после завершения текущего release-workflow; на первом переходе оператор
+только после завершения текущего локального выпуска; на первом переходе оператор
 отдельно подтверждает отсутствие активного релиза, а последующие обновления
 дополнительно сериализуются общей блокировкой:
 
@@ -80,7 +176,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   image_reference="$(
     sudo cat /opt/academy/shared/current-image
   )"
-  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy@sha256:[0-9a-f]{64}$ ]]
   exec 9< /opt/academy
   flock --exclusive --wait 600 9
   candidate_directory="$(mktemp -d)"
@@ -127,7 +223,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   exec 9< /opt/academy
   flock --exclusive --wait 600 9
   image_reference="$(sudo cat /opt/academy/shared/current-image)"
-  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy:[0-9a-f]{40}$ ]]
+  [[ "$image_reference" =~ ^ghcr\.io/abrikosov-group/abrikosoff-academy@sha256:[0-9a-f]{64}$ ]]
   candidate_directory="$(mktemp -d)"
   trap '
     rm -f -- \
@@ -171,8 +267,8 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 назначения первого `owner`, проверяет аргументы и запускает CLI из текущего
 production-образа в закрытой Compose-сети. Wrapper и release-шлюз используют
 общую блокировку операций. Перед запуском wrapper сверяет SHA каталога релиза,
-metadata образа и реально работающего контейнера и закрывается при любом
-несовпадении:
+digest в metadata, точную ссылку реально работающего контейнера и его OCI label
+`org.opencontainers.image.revision`. Любое несовпадение закрывает команду:
 
 ```bash
 sudo /usr/local/sbin/academy-admin grant \
@@ -260,8 +356,10 @@ API-адаптером. До включения межканальных уве�
 Фоновые задачи запускаются host-level `systemd`-таймерами через root-owned
 allowlist-wrapper `/usr/local/sbin/academy-task`. Wrapper запускает разрешённую
 подкоманду из текущего production-образа в закрытой Compose-сети; GitHub
-Actions и процесс Next.js не являются планировщиками. Общий контракт,
-взаимная блокировка и проверка состояния описаны в
+Actions и процесс Next.js не являются планировщиками. Перед задачей wrapper
+fail-closed сверяет digest работающего контейнера и его OCI revision с SHA
+текущего релиза. Общий контракт, взаимная блокировка и проверка состояния
+описаны в
 [эксплуатационной инструкции](../docs/operations/background-jobs.md).
 
 Первый включённый timer ежедневно обезличивает технический контекст сессий

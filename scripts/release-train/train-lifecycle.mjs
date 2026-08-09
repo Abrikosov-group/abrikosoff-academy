@@ -12,6 +12,7 @@ import {
   LIFECYCLE_INVOCATION_KINDS,
   MAX_GITHUB_PAGES,
   MAX_REGISTRY_COMMITS,
+  PRODUCTION_APPROVERS_TEAM,
   PRODUCTION_ENVIRONMENT,
   REGISTRY_BRANCH,
   REGISTRY_METADATA,
@@ -132,7 +133,11 @@ export function sourceBranchProtectionPayload() {
       checks: SOURCE_BRANCH_REQUIRED_CHECKS,
       strict: true,
     },
-    restrictions: null,
+    restrictions: {
+      apps: [],
+      teams: [PRODUCTION_APPROVERS_TEAM],
+      users: [],
+    },
   };
 }
 
@@ -180,11 +185,21 @@ export function validateSourceBranchProtection(protection) {
   const reviews = protection?.required_pull_request_reviews;
   assertGate(reviews && typeof reviews === "object", "SOURCE_PROTECTION_PR", "Изменения ветки не требуют pull request");
   assertGate(reviews.dismiss_stale_reviews === true, "SOURCE_PROTECTION_STALE", "Устаревшие approvals не сбрасываются");
-  assertGate(reviews.require_code_owner_reviews === false, "SOURCE_PROTECTION_CODEOWNERS", "Code Owner approval неожиданно включён");
-  assertGate(reviews.require_last_push_approval === false, "SOURCE_PROTECTION_LAST_PUSH", "Настройка last-push approval отличается от контракта");
-  assertGate(Number(reviews.required_approving_review_count) === 0, "SOURCE_PROTECTION_REVIEW_COUNT", "Число обязательных approvals отличается от контракта");
+  assertGate(reviews.require_code_owner_reviews === false, "SOURCE_PROTECTION_CODEOWNERS", "Code Owner approval блокирует PR, созданный владельцем");
+  assertGate(reviews.require_last_push_approval === false, "SOURCE_PROTECTION_LAST_PUSH", "Настройка last-push approval отличается от owner-only контракта");
+  assertGate(Number(reviews.required_approving_review_count) === 0, "SOURCE_PROTECTION_REVIEW_COUNT", "Формальный approval не должен заменять owner-only merge");
   assertGate(actorListEmpty(reviews.bypass_pull_request_allowances), "SOURCE_PROTECTION_BYPASS", "Обнаружен PR-bypass для ветки поезда");
-  assertGate(omittedOrNull(protection?.restrictions), "SOURCE_PROTECTION_RESTRICTIONS", "Push restrictions ветки поезда отличаются от контракта");
+  const restrictions = protection?.restrictions;
+  assertGate(restrictions && typeof restrictions === "object", "SOURCE_PROTECTION_RESTRICTIONS", "У ветки поезда отсутствует owner-only ограничение merge");
+  assertGate(Array.isArray(restrictions.users) && restrictions.users.length === 0, "SOURCE_PROTECTION_USERS", "Отдельный пользователь может писать в ветку поезда");
+  assertGate(Array.isArray(restrictions.apps) && restrictions.apps.length === 0, "SOURCE_PROTECTION_APPS", "GitHub App может писать в ветку поезда");
+  assertGate(
+    Array.isArray(restrictions.teams) &&
+      restrictions.teams.length === 1 &&
+      restrictions.teams[0]?.slug === PRODUCTION_APPROVERS_TEAM,
+    "SOURCE_PROTECTION_TEAMS",
+    "Право merge в ветку поезда не ограничено командой владельца",
+  );
   assertGate(enabled(protection?.required_conversation_resolution), "SOURCE_PROTECTION_CONVERSATIONS", "Не требуется закрытие обсуждений");
   assertGate(disabled(protection?.required_linear_history), "SOURCE_PROTECTION_LINEAR", "Линейная история блокирует обязательные sync merge-коммиты");
   assertGate(disabled(protection?.allow_force_pushes), "SOURCE_PROTECTION_FORCE_PUSH", "Force-push разрешён");

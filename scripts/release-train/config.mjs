@@ -17,6 +17,16 @@ export const CURRENT_LIFECYCLE_APP = Object.freeze({
 });
 
 export const CURRENT_LIFECYCLE_OWNER_ID = "224131170";
+export const PRODUCTION_APPROVERS_TEAM = "production-approvers";
+
+export const LOCAL_PRODUCTION_RELEASE_CONFIRMATION =
+  "ВЫПУСТИТЬ PRODUCTION";
+export const PRODUCTION_APPLICATION_IMAGE =
+  "ghcr.io/abrikosov-group/abrikosoff-academy";
+export const PRODUCTION_TELEGRAM_EGRESS_IMAGE =
+  "ghcr.io/abrikosov-group/abrikosoff-academy-telegram-egress";
+export const PRODUCTION_HEALTH_URL =
+  "https://academy.abrikosoff.com/api/health";
 
 export const ENVIRONMENT_ADMIN_BYPASS_POLICIES = Object.freeze({
   FORBIDDEN: "admin_bypass_forbidden",
@@ -67,23 +77,35 @@ export const INFRASTRUCTURE_NO_DEPLOY_PATHS = Object.freeze(
     ".github/workflows/train-lifecycle.yml",
     "AGENTS.md",
     "README.md",
+    "deploy/README.md",
+    "deploy/server/academy-admin",
+    "deploy/server/academy-release",
+    "deploy/server/academy-task",
+    "deploy/telegram-egress/README.md",
+    "deploy/telegram-egress/remote.env.example",
+    "deploy/telegram-egress/tunnel.env.example",
     "docs/admin-panel-implementation-status.md",
     "docs/decisions/0009-integration-release-train.md",
     "docs/decisions/0010-team-private-release-train-bootstrap.md",
+    "docs/decisions/0011-owner-local-production-release.md",
     "docs/development-workflow.md",
+    "docs/operations/administration-owner-preview.md",
     "docs/operations/release-train.md",
     "scripts/release-train/config.mjs",
     "scripts/release-train/errors.mjs",
     "scripts/release-train/github-api.mjs",
     "scripts/release-train/local-bootstrap.mjs",
+    "scripts/release-train/local-release.mjs",
     "scripts/release-train/registry.mjs",
     "scripts/release-train/release-classifier.mjs",
     "scripts/release-train/train-lifecycle.mjs",
     "tests/release-train/registry.test.mjs",
     "tests/release-train/local-bootstrap.test.mjs",
+    "tests/release-train/local-release.test.mjs",
     "tests/release-train/release-classifier.test.mjs",
     "tests/release-train/train-lifecycle.test.mjs",
     "tests/release-train/workflow-contract.test.mjs",
+    "tests/server/academy-admin-wrapper.sh",
   ]),
 );
 

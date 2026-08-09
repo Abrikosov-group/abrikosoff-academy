@@ -27,9 +27,11 @@ jobs:
         run: |
           bash -n deploy/server/academy-admin
           bash -n deploy/server/academy-release
+          bash -n deploy/server/academy-task
           bash -n tests/server/academy-admin-wrapper.sh
           shellcheck deploy/server/academy-admin
           shellcheck deploy/server/academy-release
+          shellcheck deploy/server/academy-task
           shellcheck tests/server/academy-admin-wrapper.sh
 
       - name: Проверить fail-closed согласованность production-релиза
@@ -39,6 +41,7 @@ jobs:
             --network none \
             --read-only \
             --tmpfs /opt:mode=0755 \
+            --tmpfs /tmp:mode=1777 \
             --volume "$PWD:/workspace:ro" \
             ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90 \
             bash /workspace/tests/server/academy-admin-wrapper.sh
@@ -59,7 +62,7 @@ jobs:
 
       - name: Проверить доставку wrapper-ов в образе
         run: |
-          for wrapper_name in academy-admin academy-release; do
+          for wrapper_name in academy-admin academy-release academy-task; do
             expected_sha="$(
               sha256sum "deploy/server/${wrapper_name}" | awk '{print $1}'
             )"

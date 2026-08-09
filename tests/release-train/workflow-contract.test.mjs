@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const ROOT = new URL("../../", import.meta.url);
@@ -49,23 +49,24 @@ test("train-lifecycle на Team/private не получает private key и о�
   );
 });
 
-test("release сначала классифицирует main SHA и не строит infrastructure PR", async () => {
-  const workflow = await read(".github/workflows/release.yml");
-  assert.match(workflow, /group: production-release/);
-  assert.match(workflow, /node-version: 24\.18\.0/);
-  assert.match(workflow, /classify:\n\s+name: Классифицировать production-выпуск/);
-  assert.equal(
-    (workflow.match(/if: needs\.classify\.outputs\.should_deploy == 'true'/g) ?? [])
-      .length,
-    3,
+test("GitHub Actions не содержит production-выпуск, secrets или запись в packages", async () => {
+  await assert.rejects(
+    access(new URL(".github/workflows/release.yml", ROOT)),
+    { code: "ENOENT" },
   );
-  assert.match(
-    workflow,
-    /deploy:[\s\S]*?needs:\n\s+- build\n\s+- classify/,
+  const workflowDirectory = new URL(".github/workflows/", ROOT);
+  const workflowFiles = (await readdir(workflowDirectory)).filter((file) =>
+    /\.ya?ml$/.test(file),
   );
-  const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
-  assert.doesNotMatch(deployJob, /\n\s+- build-telegram-egress/);
-  assert.match(workflow, /node scripts\/release-train\/release-classifier\.mjs/);
+  assert.deepEqual(workflowFiles.sort(), ["ci.yml", "train-lifecycle.yml"]);
+  for (const workflowFile of workflowFiles) {
+    const workflow = await read(`.github/workflows/${workflowFile}`);
+    assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
+    assert.doesNotMatch(workflow, /packages:\s*write/);
+    assert.doesNotMatch(workflow, /environment:\s*(?:\n\s+name:\s*)?production/);
+    assert.doesNotMatch(workflow, /docker\/login-action/);
+    assert.doesNotMatch(workflow, /\bssh\b/);
+  }
 });
 
 test("CI публикует отдельный обязательный контекст начального шлюза", async () => {
@@ -75,6 +76,11 @@ test("CI публикует отдельный обязательный конт
   assert.match(workflow, /node --check "\$script"/);
   const gateJob = workflow.slice(workflow.indexOf("  release-train-gate:"));
   assert.match(gateJob, /persist-credentials: false/);
+  assert.match(workflow, /shellcheck deploy\/server\/academy-task/);
+  assert.match(
+    workflow,
+    /for wrapper_name in academy-admin academy-release academy-task/,
+  );
 });
 
 test("release-классификатор содержит явный ref guard и закрытый allowlist", async () => {
@@ -87,4 +93,41 @@ test("release-классификатор содержит явный ref guard �
   assert.match(classifier, /pullRequest\.merge_commit_sha === sha/);
   assert.match(config, /"release:infrastructure-no-deploy"/);
   assert.doesNotMatch(config, /src\/\*\*/);
+});
+
+test("локальный выпуск закрыт точным owner, SHA, checks и stdin-секретом", async () => {
+  const decision = await read(
+    "docs/decisions/0011-owner-local-production-release.md",
+  );
+  const localRelease = await read("scripts/release-train/local-release.mjs");
+  const adminWrapper = await read("deploy/server/academy-admin");
+  const releaseWrapper = await read("deploy/server/academy-release");
+  const taskWrapper = await read("deploy/server/academy-task");
+  assert.match(localRelease, /inspectTrustedCheckout/);
+  assert.match(localRelease, /inspectOwnerPlatformContext/);
+  assert.match(localRelease, /CURRENT_LIFECYCLE_OWNER_ID/);
+  assert.match(localRelease, /SOURCE_BRANCH_REQUIRED_CHECKS/);
+  assert.match(localRelease, /pullRequest\?\.merged_by\?\.id/);
+  assert.match(localRelease, /--password-stdin/);
+  assert.match(localRelease, /StrictHostKeyChecking=yes/);
+  assert.match(localRelease, /UserKnownHostsFile=/);
+  assert.match(localRelease, /linux\/amd64/);
+  assert.match(localRelease, /--metadata-file/);
+  assert.match(localRelease, /PRODUCTION_APPLICATION_IMAGE\}@\$\{applicationDigest\}/);
+  assert.match(localRelease, /ALLOWED_REGISTRY_TOKEN_SCOPES/);
+  assert.match(localRelease, /await verifyCurrentMain\(\)/);
+  assert.doesNotMatch(localRelease, /process\.env\.[A-Z_]*(?:TOKEN|SECRET|PASSWORD)/);
+  assert.match(decision, /отключает наследование доступа от\s+репозитория/);
+  assert.match(decision, /удаляет доступ Actions на запись/);
+  assert.match(decision, /package-роли `Write` или\s+`Admin`/);
+  for (const wrapper of [adminWrapper, releaseWrapper, taskWrapper]) {
+    assert.match(wrapper, /@\$\{image_digest\}|sha256:\[0-9a-f\]\{64\}/);
+    assert.doesNotMatch(wrapper, /image_prefix/);
+  }
+  for (const runtimeWrapper of [adminWrapper, taskWrapper]) {
+    assert.match(runtimeWrapper, /org\.opencontainers\.image\.revision/);
+    assert.match(runtimeWrapper, /active_revision.*app_version/s);
+  }
+  assert.match(releaseWrapper, /legacy tag; завершите digest-cutover/);
+  assert.match(releaseWrapper, /previous_revision.*previous_version/s);
 });

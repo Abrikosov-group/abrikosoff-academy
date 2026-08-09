@@ -8,6 +8,7 @@ import {
   CURRENT_LIFECYCLE_OWNER_ID,
   ENVIRONMENT_ADMIN_BYPASS_POLICIES,
   LIFECYCLE_INVOCATION_KINDS,
+  PRODUCTION_APPROVERS_TEAM,
   SOURCE_BRANCH_REQUIRED_CHECKS,
   TRAIN_OPEN_CONFIRMATION,
 } from "../../scripts/release-train/config.mjs";
@@ -101,7 +102,11 @@ function sourceProtectionResponse() {
       contexts: SOURCE_BRANCH_REQUIRED_CHECKS.map((check) => check.context),
       strict: true,
     },
-    restrictions: null,
+    restrictions: {
+      apps: [],
+      teams: [{ slug: PRODUCTION_APPROVERS_TEAM }],
+      users: [],
+    },
   };
 }
 
@@ -202,13 +207,19 @@ test("локальный invocation принимает только зафикс
   );
 });
 
-test("payload защиты ветки требует PR, четыре CI и не включает linear history", () => {
+test("payload защиты ветки разрешает merge только команде владельца", () => {
   const payload = sourceBranchProtectionPayload();
   assert.equal(payload.enforce_admins, true);
   assert.equal(payload.required_pull_request_reviews.required_approving_review_count, 0);
+  assert.equal(payload.required_pull_request_reviews.require_code_owner_reviews, false);
+  assert.equal(payload.required_pull_request_reviews.require_last_push_approval, false);
   assert.equal(payload.required_status_checks.checks.length, 4);
   assert.equal(payload.block_creations, false);
-  assert.equal(payload.restrictions, null);
+  assert.deepEqual(payload.restrictions, {
+    apps: [],
+    teams: [PRODUCTION_APPROVERS_TEAM],
+    users: [],
+  });
   assert.equal(
     Object.hasOwn(payload.required_status_checks, "contexts"),
     false,
@@ -282,16 +293,29 @@ test("отсутствующий PR-bypass допустим, а некоррек
   });
 });
 
-test("защита ветки поезда принимает пропущенные отключённые push restrictions", () => {
-  const response = sourceProtectionResponse();
-  delete response.restrictions;
-
-  assert.doesNotThrow(() => validateSourceBranchProtection(response));
-
-  const enabledRestrictions = sourceProtectionResponse();
-  enabledRestrictions.restrictions = { apps: [], teams: [], users: [] };
-  assert.throws(() => validateSourceBranchProtection(enabledRestrictions), {
+test("защита ветки поезда принимает только owner-only push restrictions", () => {
+  const missing = sourceProtectionResponse();
+  delete missing.restrictions;
+  assert.throws(() => validateSourceBranchProtection(missing), {
     code: "SOURCE_PROTECTION_RESTRICTIONS",
+  });
+
+  const user = sourceProtectionResponse();
+  user.restrictions.users.push({ login: "developer" });
+  assert.throws(() => validateSourceBranchProtection(user), {
+    code: "SOURCE_PROTECTION_USERS",
+  });
+
+  const app = sourceProtectionResponse();
+  app.restrictions.apps.push({ slug: "automation" });
+  assert.throws(() => validateSourceBranchProtection(app), {
+    code: "SOURCE_PROTECTION_APPS",
+  });
+
+  const team = sourceProtectionResponse();
+  team.restrictions.teams[0] = { slug: "academy-developers" };
+  assert.throws(() => validateSourceBranchProtection(team), {
+    code: "SOURCE_PROTECTION_TEAMS",
   });
 });
 

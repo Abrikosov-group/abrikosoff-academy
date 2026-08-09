@@ -11,7 +11,7 @@ readonly current_link="${academy_root}/current"
 readonly current_image_file="${shared_root}/current-image"
 readonly legacy_compose_file="${academy_root}/compose.yaml"
 readonly project_name="academy-abrikosoff"
-readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
+readonly image_repository="ghcr.io/abrikosov-group/abrikosoff-academy"
 readonly health_url="https://academy.abrikosoff.com/api/health"
 readonly operation_lock_timeout_seconds=600
 
@@ -47,6 +47,21 @@ fail() {
 
 validate_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "некорректный SHA коммита"
+}
+
+is_academy_digest_reference() {
+  local image_reference="$1"
+  local image_digest="${image_reference#"${image_repository}"@}"
+
+  [[ \
+    "${image_reference}" == "${image_repository}@${image_digest}" \
+    && "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ \
+  ]]
+}
+
+validate_image_reference() {
+  is_academy_digest_reference "$1" \
+    || fail "образ должен быть привязан к точному sha256 digest Академии"
 }
 
 upload_release() {
@@ -108,8 +123,10 @@ upload_release() {
 run_compose() {
   local release_directory="$1"
   local image_reference="$2"
-  local app_version="${image_reference##*:}"
-  shift 2
+  local app_version="$3"
+  shift 3
+
+  validate_sha "${app_version}"
 
   DOCKER_CONFIG="${docker_config}" \
   ACADEMY_IMAGE="${image_reference}" \
@@ -125,16 +142,19 @@ run_compose() {
 restore_previous_release() {
   local previous_release="$1"
   local previous_image="$2"
+  local previous_version="${previous_release##*/}"
 
   if [[ \
     -n "${previous_release}" \
     && -n "${previous_image}" \
+    && "${previous_version}" =~ ^[0-9a-f]{40}$ \
     && -f "${previous_release}/compose.production.yaml" \
-  ]]; then
+  ]] && is_academy_digest_reference "${previous_image}"; then
     printf 'Возвращаю предыдущий образ %s.\n' "${previous_image}" >&2
     run_compose \
       "${previous_release}" \
       "${previous_image}" \
+      "${previous_version}" \
       up -d --remove-orphans --wait --wait-timeout 180 || true
     return
   fi
@@ -155,12 +175,14 @@ deploy_release() {
   local release_directory="${releases_root}/${release_sha}"
   local previous_release=""
   local previous_image=""
+  local previous_revision=""
+  local previous_version=""
   local registry_token=""
   local response=""
+  local image_revision=""
 
   validate_sha "${release_sha}"
-  [[ "${image_reference}" == "${image_prefix}${release_sha}" ]] || \
-    fail "образ не соответствует SHA релиза"
+  validate_image_reference "${image_reference}"
   [[ "${registry_actor}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || \
     fail "некорректное имя пользователя реестра"
   [[ -f "${release_directory}/Caddyfile" ]] || \
@@ -169,6 +191,37 @@ deploy_release() {
     fail "Compose-конфигурация релиза не загружена"
   [[ -f "${environment_file}" ]] || \
     fail "серверный файл окружения не найден"
+
+  if [[ \
+    -e "${current_link}" \
+    || -L "${current_link}" \
+    || -e "${current_image_file}" \
+    || -L "${current_image_file}" \
+  ]]; then
+    [[ -L "${current_link}" ]] \
+      || fail "метаданные текущего релиза неполны; завершите digest-cutover"
+    [[ -f "${current_image_file}" && ! -L "${current_image_file}" ]] \
+      || fail "метаданные текущего образа неполны; завершите digest-cutover"
+    previous_release="$(readlink -f "${current_link}")" \
+      || fail "не удалось прочитать текущий каталог релиза"
+    previous_image="$(<"${current_image_file}")"
+    previous_version="${previous_release##*/}"
+    [[ \
+      "${previous_version}" =~ ^[0-9a-f]{40}$ \
+      && "${previous_release}" == "${releases_root}/${previous_version}" \
+      && -f "${previous_release}/compose.production.yaml" \
+    ]] || fail "метаданные текущего релиза не прошли fail-closed проверку"
+    is_academy_digest_reference "${previous_image}" \
+      || fail "текущий образ использует legacy tag; завершите digest-cutover"
+
+    previous_revision="$(
+      docker image inspect \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+        "${previous_image}"
+    )" || fail "не удалось проверить revision текущего production-образа"
+    [[ "${previous_revision}" == "${previous_version}" ]] || \
+      fail "revision текущего production-образа не совпадает с SHA релиза"
+  fi
 
   IFS= read -r registry_token || true
   [[ "${#registry_token}" -ge 20 ]] || fail "токен реестра не передан"
@@ -183,19 +236,30 @@ deploy_release() {
         >/dev/null
   unset registry_token
 
-  if [[ -L "${current_link}" ]]; then
-    previous_release="$(readlink -f "${current_link}")"
-  fi
-  if [[ -f "${current_image_file}" ]]; then
-    previous_image="$(<"${current_image_file}")"
-  fi
+  run_compose \
+    "${release_directory}" \
+    "${image_reference}" \
+    "${release_sha}" \
+    config --quiet
+  run_compose \
+    "${release_directory}" \
+    "${image_reference}" \
+    "${release_sha}" \
+    pull
 
-  run_compose "${release_directory}" "${image_reference}" config --quiet
-  run_compose "${release_directory}" "${image_reference}" pull
+  image_revision="$(
+    DOCKER_CONFIG="${docker_config}" \
+      docker image inspect \
+        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+        "${image_reference}"
+  )" || fail "не удалось проверить revision production-образа"
+  [[ "${image_revision}" == "${release_sha}" ]] || \
+    fail "revision production-образа не совпадает с SHA релиза"
 
   if ! run_compose \
     "${release_directory}" \
     "${image_reference}" \
+    "${release_sha}" \
     up -d --remove-orphans --wait --wait-timeout 180; then
     restore_previous_release "${previous_release}" "${previous_image}"
     fail "контейнеры новой версии не прошли проверку готовности"
