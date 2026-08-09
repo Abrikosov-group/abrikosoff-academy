@@ -1,0 +1,49 @@
+name: Проверка self-hosted Runner
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: self-hosted-runner-health-check
+  cancel-in-progress: true
+
+jobs:
+  health-check:
+    name: Проверить защищённый Runner
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
+    runs-on:
+      group: codex-spark-review
+    timeout-minutes: 2
+
+    steps:
+      - name: Проверить контекст и идентичность Runner
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: Abrikosov-group/abrikosoff-academy
+          EXPECTED_RUNNER_NAME: codex-spark-review-187-127-26-1
+        run: |
+          set -euo pipefail
+
+          test "${GITHUB_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          test "${GITHUB_EVENT_NAME}" = workflow_dispatch
+          test "${GITHUB_REF}" = refs/heads/main
+          test "${GITHUB_REF_PROTECTED}" = true
+          test "${RUNNER_NAME}" = "${EXPECTED_RUNNER_NAME}"
+          test "${RUNNER_ENVIRONMENT}" = self-hosted
+          test "${RUNNER_OS}" = Linux
+          test "${RUNNER_ARCH}" = X64
+
+          printf 'Защищённый Runner доступен: %s (%s/%s)\n' \
+            "${RUNNER_NAME}" "${RUNNER_OS}" "${RUNNER_ARCH}"
+
+          {
+            echo '## Проверка self-hosted Runner'
+            echo
+            echo "- Runner: \`${RUNNER_NAME}\`"
+            echo "- Система: \`${RUNNER_OS}/${RUNNER_ARCH}\`"
+            echo "- Репозиторий: \`${GITHUB_REPOSITORY}\`"
+            echo "- Ветка: \`${GITHUB_REF_NAME}\` (защищена)"
+            echo '- Результат: успешно'
+          } >> "${GITHUB_STEP_SUMMARY}"
