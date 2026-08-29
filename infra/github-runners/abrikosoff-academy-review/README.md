@@ -32,16 +32,68 @@ work и diag-каталоги и точный systemd service. Job-start hook р
 - точное соответствие runner и job.
 
 Модельные runner’ы очищают workspace и модельный home до и после job. Codex
-сохраняет только отдельную копию `auth.json`; Claude получает OAuth-токен только
-из GitHub Actions secret. Все runner services используют `ProtectProc=invisible`,
+сохраняет только отдельный Academy `auth.json`; Claude получает OAuth-токен
+только из GitHub Actions secret. Все runner services используют `ProtectProc=invisible`,
 `NoNewPrivileges=true`, `ProtectSystem=full`, пустой capability set и отдельные
 лимиты памяти, CPU и процессов.
 
 ## Первичная установка
 
-`install.sh` предназначен только для чистой первичной установки и завершится с
-ошибкой при обнаружении существующего Academy runner root, service или
-Unix-пользователя. Он не изменяет и не перезапускает существующие runner’ы.
+`install.sh` предназначен только для чистой первичной установки runner’ов и
+завершится с ошибкой при обнаружении существующего Academy runner root,
+service, пользователя оркестрации или пользователя Claude. Единственное
+допустимое заранее подготовленное состояние — точная Academy identity Codex и
+её отдельная авторизация по инструкции ниже. Скрипт не изменяет credential и не
+перезапускает существующие runner’ы.
+
+### Подготовка отдельной авторизации Codex
+
+Codex для Academy не использует и не копирует credential Sawabook или другого
+проекта. До запуска `install.sh` оператор один раз создаёт точные группу,
+пользователя и закрытый home:
+
+```bash
+sudo groupadd --system academyreview
+sudo groupadd --system academyreviewcodex
+sudo useradd --system \
+  --gid academyreviewcodex \
+  --groups academyreview \
+  --home-dir /var/lib/abrikosoff-academy-review-codex \
+  --create-home \
+  --shell /usr/sbin/nologin \
+  --comment 'GitHub runner Codex для Academy' \
+  academyreviewcodex
+sudo install -d \
+  -o academyreviewcodex -g academyreviewcodex -m 0700 \
+  /var/lib/abrikosoff-academy-review-codex \
+  /var/lib/abrikosoff-academy-review-codex/.codex
+```
+
+Команды предназначены для чистого сервера и завершаются ошибкой, если identity
+уже существует. После создания identity оператор выполняет отдельный вход
+Academy и проверяет его:
+
+```bash
+sudo -u academyreviewcodex env -i \
+  HOME=/var/lib/abrikosoff-academy-review-codex \
+  CODEX_HOME=/var/lib/abrikosoff-academy-review-codex/.codex \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  LANG=C.UTF-8 \
+  codex login --device-auth
+
+sudo -u academyreviewcodex env -i \
+  HOME=/var/lib/abrikosoff-academy-review-codex \
+  CODEX_HOME=/var/lib/abrikosoff-academy-review-codex/.codex \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  LANG=C.UTF-8 \
+  codex login status
+```
+
+`install.sh` до загрузки archive и создания остальных identity проверяет точные
+имя, primary и supplementary groups, home, shell, владельца и режим каталогов,
+обычный файл `auth.json` размером не более 1 MiB и результат `codex login
+status`. Любое несовпадение останавливает установку без копирования или
+перезаписи credential.
 
 Перед запуском оператор должен проверить:
 
@@ -49,14 +101,16 @@ Unix-пользователя. Он не изменяет и не перезап
 2. Runner group имеет точные настройки, перечисленные выше, и пока пуста.
 3. На сервере установлены GitHub Actions Runner `2.336.0`, Codex CLI `0.147.0`
    и Claude Code `2.1.226` либо доступна загрузка закреплённого runner archive.
-4. Источник Codex OAuth
-   `/var/lib/sawabook-review-codex/.codex/auth.json` является обычным файлом
-   `sawabookreviewcodex:sawabookreviewcodex:600`. Скрипт копирует его в отдельный
-   Academy home и не выводит содержимое.
+4. Отдельный Academy Codex OAuth
+   `/var/lib/abrikosoff-academy-review-codex/.codex/auth.json` является обычным
+   файлом `academyreviewcodex:academyreviewcodex:600` и `codex login status`
+   подтверждает вход через ChatGPT.
 
 Для каждого runner создаётся отдельный одночасовой organization registration
-token. Три токена передаются скрипту тремя строками через stdin; аргументы,
-файлы репозитория и журналы их не содержат.
+token. Три токена передаются скрипту тремя строками через stdin. Установщик
+передаёт каждый token закреплённому Runner только через поддерживаемую
+переменную `ACTIONS_RUNNER_INPUT_TOKEN`; аргументы процессов, файлы репозитория
+и журналы значения не содержат.
 
 ```bash
 printf '%s\n%s\n%s\n' \

@@ -49,6 +49,17 @@ function extractRunScript(job: string): string {
   return scriptLines.join("\n");
 }
 
+function extractRunnerTokenBootstrap(source: string): string {
+  const marker = "bash --noprofile --norc -c '\n";
+  const endMarker = "\n        ' -- \\\n";
+  const start = source.indexOf(marker);
+  const end = source.indexOf(endMarker, start + marker.length);
+
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return source.slice(start + marker.length, end);
+}
+
 describe("организационное двойное ИИ-ревью", () => {
   const workflow = readProjectFile(".github/workflows/review-all.yml");
   const developmentWorkflow = readProjectFile("docs/development-workflow.md");
@@ -261,6 +272,97 @@ esac
     expect(runnerInstall).toContain("IFS= read -r codex_token");
     expect(runnerInstall).toContain("IFS= read -r claude_token");
     expect(runnerInstall).not.toContain("--replace");
+  });
+
+  it("не передаёт registration token через аргументы процессов", () => {
+    expect(runnerInstall).toContain(
+      "IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN",
+    );
+    expect(runnerInstall).toContain(
+      "export ACTIONS_RUNNER_INPUT_TOKEN",
+    );
+    expect(runnerInstall).toContain(
+      `printf '%s\\n' "\${registration_token}" |`,
+    );
+    expect(runnerInstall).not.toMatch(/--token\s/u);
+    expect(runnerInstall).not.toContain(
+      'ACTIONS_RUNNER_INPUT_TOKEN="${registration_token}"',
+    );
+  });
+
+  it("передаёт registration token конфигуратору только через environment", () => {
+    const tokenBootstrap = extractRunnerTokenBootstrap(runnerInstall);
+    const temporaryDirectory = mkdtempSync(
+      join(tmpdir(), "academy-runner-token-"),
+    );
+    const fakeConfigPath = join(temporaryDirectory, "config.sh");
+    const tokenPath = join(temporaryDirectory, "token.txt");
+    const argvPath = join(temporaryDirectory, "argv.txt");
+    const argumentsPath = join(temporaryDirectory, "arguments.txt");
+    const registrationToken = "test-registration-token-not-for-github";
+
+    writeFileSync(
+      fakeConfigPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' "\${ACTIONS_RUNNER_INPUT_TOKEN}" > "\${TOKEN_PATH}"
+ps -p "\${$}" -o command= > "\${ARGV_PATH}"
+printf '%s\\n' "$@" > "\${ARGUMENTS_PATH}"
+`,
+      "utf8",
+    );
+    chmodSync(fakeConfigPath, 0o755);
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          tokenBootstrap,
+          "--",
+          "--unattended",
+          "--name",
+          "academy-test-runner",
+        ],
+        {
+          cwd: temporaryDirectory,
+          encoding: "utf8",
+          input: `${registrationToken}\n`,
+          env: {
+            ...process.env,
+            TOKEN_PATH: tokenPath,
+            ARGV_PATH: argvPath,
+            ARGUMENTS_PATH: argumentsPath,
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(tokenPath, "utf8")).toBe(registrationToken);
+      expect(readFileSync(argvPath, "utf8")).not.toContain(registrationToken);
+      expect(readFileSync(argumentsPath, "utf8")).not.toContain(
+        registrationToken,
+      );
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("требует отдельную Academy-авторизацию Codex без копирования", () => {
+    const exactAuthPath =
+      "/var/lib/abrikosoff-academy-review-codex/.codex/auth.json";
+
+    expect(runnerInstall).toContain(
+      'readonly CODEX_AUTH_PATH="${CODEX_HOME}/.codex/auth.json"',
+    );
+    expect(runnerInstall).toContain("validate_codex_identity");
+    expect(runnerInstall).toContain("verify_codex_login");
+    expect(runnerReadme).toContain(exactAuthPath);
+    expect(runnerInstall).not.toMatch(/sawabook/iu);
+    expect(runnerReadme).not.toMatch(/sawabook-review-codex/iu);
+    expect(runnerInstall).not.toContain("CODEX_AUTH_SOURCE");
   });
 
   it("ограничивает job-start hook exact репозиторием, main и runner identity", () => {
