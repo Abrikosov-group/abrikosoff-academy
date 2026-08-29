@@ -8,9 +8,11 @@ name: Организационное двойное ИИ-ревью
     types: [opened, ready_for_review, synchronize, reopened, edited]
 
 permissions:
+  actions: read
   contents: read
   issues: write
   pull-requests: write
+  statuses: write
 
 jobs:
   acknowledge-manual:
@@ -132,14 +134,27 @@ jobs:
     needs: acknowledge-manual
     if: needs.acknowledge-manual.outputs.accepted == 'true'
     # Обновляйте SHA только отдельным PR после проверки центрального workflow.
-    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@ce8a887cbb97fd01afcc65384d34046431613dd9
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
     with:
       trigger: manual
       command: ${{ github.event.comment.body }}
       repository: ${{ github.repository }}
+      trusted_workflow_repository: Abrikosov-group/.github
+      trusted_workflow_sha: 5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
       pr_number: ${{ github.event.issue.number }}
       comment_id: ${{ github.event.comment.id }}
       author_association: ${{ github.event.comment.author_association }}
+      automatic_base_refs: main
+      manual_base_refs: "*"
+      review_runner_group: abrikosoff-academy-review
+      orchestration_runner_label: abrikosoff-academy-review-orchestration
+      codex_runner_label: abrikosoff-academy-review-codex
+      claude_runner_label: abrikosoff-academy-review-claude
+      expected_orchestration_runner_name: abrikosoff-academy-review-orchestration-01
+      expected_codex_runner_name: abrikosoff-academy-review-codex-01
+      expected_claude_runner_name: abrikosoff-academy-review-claude-01
+      reuse_existing_reviews: true
+      review_gate_context: Двойное ИИ-ревью
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
@@ -230,12 +245,25 @@ jobs:
       group: organizational-review-caller-auto-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
       cancel-in-progress: true
     # Обновляйте SHA только отдельным PR после проверки центрального workflow.
-    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@ce8a887cbb97fd01afcc65384d34046431613dd9
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
     with:
       trigger: automatic
       command: /review-all
       repository: ${{ github.repository }}
+      trusted_workflow_repository: Abrikosov-group/.github
+      trusted_workflow_sha: 5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
       pr_number: ${{ github.event.pull_request.number }}
       expected_head_sha: ${{ github.event.pull_request.head.sha }}
+      automatic_base_refs: main
+      manual_base_refs: "*"
+      review_runner_group: abrikosoff-academy-review
+      orchestration_runner_label: abrikosoff-academy-review-orchestration
+      codex_runner_label: abrikosoff-academy-review-codex
+      claude_runner_label: abrikosoff-academy-review-claude
+      expected_orchestration_runner_name: abrikosoff-academy-review-orchestration-01
+      expected_codex_runner_name: abrikosoff-academy-review-codex-01
+      expected_claude_runner_name: abrikosoff-academy-review-claude-01
+      reuse_existing_reviews: true
+      review_gate_context: Двойное ИИ-ревью
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
