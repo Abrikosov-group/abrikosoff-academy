@@ -1,5 +1,14 @@
-import { readFileSync, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const reviewedWorkflowSha = "5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f";
@@ -19,6 +28,25 @@ function extractJob(source: string, jobId: string, nextJobId?: string): string {
 
 function readProjectFile(path: string): string {
   return readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+}
+
+function extractRunScript(job: string): string {
+  const marker = "        run: |\n";
+  const start = job.indexOf(marker);
+
+  expect(start).toBeGreaterThanOrEqual(0);
+
+  const lines = job.slice(start + marker.length).split("\n");
+  const scriptLines: string[] = [];
+
+  for (const line of lines) {
+    if (line && !line.startsWith("          ")) {
+      break;
+    }
+    scriptLines.push(line.startsWith("          ") ? line.slice(10) : line);
+  }
+
+  return scriptLines.join("\n");
 }
 
 describe("организационное двойное ИИ-ревью", () => {
@@ -100,6 +128,96 @@ describe("организационное двойное ИИ-ревью", () => 
     expect(workflow).toContain("trigger: manual");
     expect(workflow).toContain("trigger: automatic");
     expect(workflow).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+  });
+
+  it("не отменяет ручное ревью из-за недоступной служебной реакции", () => {
+    const manualAcknowledgementJob = extractJob(
+      workflow,
+      "acknowledge-manual",
+      "manual-review",
+    );
+    const acknowledgementScript = extractRunScript(
+      manualAcknowledgementJob,
+    );
+    const temporaryDirectory = mkdtempSync(
+      join(tmpdir(), "academy-review-ack-"),
+    );
+    const fakeGhPath = join(temporaryDirectory, "gh");
+    const outputPath = join(temporaryDirectory, "github-output");
+
+    writeFileSync(
+      fakeGhPath,
+      `#!/usr/bin/env bash
+set -u
+arguments="$*"
+
+case "\${arguments}" in
+  *"issues/comments/9001/reactions"*)
+    if [[ "\${arguments}" == *"--method POST"* || "\${arguments}" == *"--method DELETE"* ]]; then
+      echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+      exit 1
+    fi
+    printf 'повреждённый-json\\n'
+    ;;
+  *"issues/comments/9001"*)
+    printf '%s\\n' '{"issue_url":"https://api.github.com/repos/Abrikosov-group/abrikosoff-academy/issues/63","body":"/review-all","user":{"login":"Etogerman"}}'
+    ;;
+  *"pulls/63"*)
+    printf '%s\\n' '{"state":"open","draft":false}'
+    ;;
+  *)
+    echo "Неожиданный вызов gh: \${arguments}" >&2
+    exit 2
+    ;;
+esac
+`,
+      "utf8",
+    );
+    chmodSync(fakeGhPath, 0o755);
+    writeFileSync(outputPath, "", "utf8");
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          acknowledgementScript,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${temporaryDirectory}:${process.env.PATH ?? ""}`,
+            GH_TOKEN: "test-token",
+            REPOSITORY: "Abrikosov-group/abrikosoff-academy",
+            PR_NUMBER: "63",
+            COMMENT_ID: "9001",
+            TRIGGER_ACTOR: "Etogerman",
+            AUTHOR_ASSOCIATION: "MEMBER",
+            RUN_ATTEMPT: "1",
+            GITHUB_OUTPUT: outputPath,
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain(
+        "запуск ревью продолжается",
+      );
+      expect(result.stderr).toContain(
+        "Не удалось разобрать служебные реакции",
+      );
+      expect(readFileSync(outputPath, "utf8")).toContain(
+        "accepted=true",
+      );
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("не возвращает отключённые внешние контуры в workflow и шаблон PR", () => {
