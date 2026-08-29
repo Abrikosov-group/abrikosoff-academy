@@ -359,6 +359,12 @@ printf '%s\\n' "$@" > "\${ARGUMENTS_PATH}"
     );
     expect(runnerInstall).toContain("validate_codex_identity");
     expect(runnerInstall).toContain("verify_codex_login");
+    expect(runnerInstall).toContain(
+      "fail_codex_identity 'обнаружен неожиданный набор Unix-групп'",
+    );
+    expect(runnerInstall).toContain(
+      `stat -c '%h' -- "\${CODEX_AUTH_PATH}"`,
+    );
     expect(runnerReadme).toContain(exactAuthPath);
     expect(runnerInstall).not.toMatch(/sawabook/iu);
     expect(runnerReadme).not.toMatch(/sawabook-review-codex/iu);

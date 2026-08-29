@@ -88,7 +88,7 @@ fail_codex_identity() {
 
 validate_codex_identity() {
   local account_name home_directory login_shell passwd_record
-  local primary_group supplementary_groups
+  local actual_groups expected_groups primary_group user_id
 
   passwd_record="$(getent passwd "${CODEX_USER}")" ||
     fail_codex_identity "Unix-пользователь ${CODEX_USER} отсутствует"
@@ -101,13 +101,18 @@ validate_codex_identity() {
   [[ "${login_shell}" == "${CODEX_SHELL}" ]] ||
     fail_codex_identity 'неожиданная login shell'
 
+  user_id="$(id -u "${CODEX_USER}")" ||
+    fail_codex_identity 'не удалось определить UID'
+  [[ "${user_id}" =~ ^[1-9][0-9]*$ ]] && (( user_id < 1000 )) ||
+    fail_codex_identity 'Unix-пользователь не является системным'
   primary_group="$(id -gn "${CODEX_USER}")" ||
     fail_codex_identity 'не удалось определить primary group'
   [[ "${primary_group}" == "${CODEX_GROUP}" ]] ||
     fail_codex_identity 'неожиданная primary group'
-  supplementary_groups="$(id -nG "${CODEX_USER}" | tr ' ' '\n')"
-  grep -Fx "${HOOK_GROUP}" <<< "${supplementary_groups}" >/dev/null ||
-    fail_codex_identity "пользователь не входит в группу ${HOOK_GROUP}"
+  actual_groups="$(id -nG "${CODEX_USER}" | tr ' ' '\n' | sort -u)"
+  expected_groups="$(printf '%s\n%s\n' "${CODEX_GROUP}" "${HOOK_GROUP}" | sort -u)"
+  [[ "${actual_groups}" == "${expected_groups}" ]] ||
+    fail_codex_identity 'обнаружен неожиданный набор Unix-групп'
 
   [[ -d "${CODEX_HOME}" && ! -L "${CODEX_HOME}" ]] ||
     fail_codex_identity 'home отсутствует либо является символьной ссылкой'
@@ -197,6 +202,14 @@ validate_codex_identity
 [[ "$(stat -c '%U:%G:%a' -- "${CODEX_AUTH_PATH}")" == \
    "${CODEX_USER}:${CODEX_GROUP}:600" ]] || {
   printf 'Отдельный Academy Codex OAuth имеет небезопасные права.\n' >&2
+  exit 1
+}
+[[ "$(stat -c '%h' -- "${CODEX_AUTH_PATH}")" == '1' ]] || {
+  printf 'Отдельный Academy Codex OAuth имеет дополнительные жёсткие ссылки.\n' >&2
+  exit 1
+}
+[[ "$(realpath -e -- "${CODEX_AUTH_PATH}")" == "${CODEX_AUTH_PATH}" ]] || {
+  printf 'Отдельный Academy Codex OAuth имеет неожиданный канонический путь.\n' >&2
   exit 1
 }
 auth_size="$(stat -c '%s' -- "${CODEX_AUTH_PATH}")"

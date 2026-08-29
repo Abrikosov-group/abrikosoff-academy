@@ -90,8 +90,9 @@ sudo -u academyreviewcodex env -i \
 ```
 
 `install.sh` до загрузки archive и создания остальных identity проверяет точные
-имя, primary и supplementary groups, home, shell, владельца и режим каталогов,
-обычный файл `auth.json` размером не более 1 MiB и результат `codex login
+имя, системный UID, полный набор из primary и supplementary groups, home, shell,
+владельца и режим каталогов, канонический обычный файл `auth.json` с одной
+жёсткой ссылкой и размером не более 1 MiB, а также результат `codex login
 status`. Любое несовпадение останавливает установку без копирования или
 перезаписи credential.
 
