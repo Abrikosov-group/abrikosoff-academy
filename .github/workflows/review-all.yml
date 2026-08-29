@@ -64,6 +64,53 @@ jobs:
               ;;
           esac
 
+          list_command_reactions() {
+            local reactions
+            local normalized_reactions
+
+            if ! reactions="$(gh api --paginate --slurp \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"; then
+              echo "::warning::Не удалось получить служебные реакции; проверка команды продолжается" >&2
+              printf '[]\n'
+              return
+            fi
+            if ! normalized_reactions="$(jq -ce '
+              if type == "array" and
+                 all(.[]; type == "array" and all(.[]; type == "object"))
+              then .
+              else error("unexpected reactions response")
+              end
+            ' <<< "${reactions}")"; then
+              echo "::warning::Не удалось разобрать служебные реакции; проверка команды продолжается" >&2
+              printf '[]\n'
+              return
+            fi
+            printf '%s\n' "${normalized_reactions}"
+          }
+
+          add_command_reaction() {
+            local content="$1"
+            local label="$2"
+
+            if ! gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+              --raw-field "content=${content}" > /dev/null; then
+              echo "::warning::Не удалось поставить служебную реакцию ${label}; запуск ревью продолжается" >&2
+            fi
+          }
+
+          remove_command_reaction() {
+            local reaction_id="$1"
+
+            if ! gh api --method DELETE \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions/${reaction_id}" \
+              > /dev/null; then
+              echo "::warning::Не удалось удалить устаревшую служебную реакцию ${reaction_id}; проверка команды продолжается" >&2
+            fi
+          }
+
           comment_json="$(gh api "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}")"
           comment_issue_number="$(jq -er \
             '.issue_url | capture("/issues/(?<number>[1-9][0-9]*)$").number' \
@@ -78,14 +125,10 @@ jobs:
           fi
 
           if (( RUN_ATTEMPT > 1 )); then
-            reactions="$(gh api --paginate --slurp \
-              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"
+            reactions="$(list_command_reactions)"
             while IFS= read -r reaction_id; do
               [[ -z "${reaction_id}" ]] && continue
-              gh api --method DELETE \
-                -H 'Accept: application/vnd.github+json' \
-                "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions/${reaction_id}" \
-                > /dev/null
+              remove_command_reaction "${reaction_id}"
             done < <(jq -r '
               [.[][]? | select(
                 .user.login == "github-actions[bot]" and
@@ -97,35 +140,27 @@ jobs:
           pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
           if [[ "$(jq -er '.state' <<< "${pr_json}")" != "open" ||
                 "$(jq -r '.draft | tostring' <<< "${pr_json}")" != "false" ]]; then
-            reactions="$(gh api --paginate --slurp \
-              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"
+            reactions="$(list_command_reactions)"
             existing_confused="$(jq -r '
               [.[][]? | select(
                 .user.login == "github-actions[bot]" and .content == "confused"
               )] | first | .id // empty
             ' <<< "${reactions}")"
             if [[ -z "${existing_confused}" ]]; then
-              gh api --method POST \
-                -H 'Accept: application/vnd.github+json' \
-                "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-                --raw-field content='confused' > /dev/null
+              add_command_reaction confused "😕"
             fi
             echo "accepted=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
-          reactions="$(gh api --paginate --slurp \
-            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"
+          reactions="$(list_command_reactions)"
           existing_eyes="$(jq -r '
             [.[][]? | select(
               .user.login == "github-actions[bot]" and .content == "eyes"
             )] | first | .id // empty
           ' <<< "${reactions}")"
           if [[ -z "${existing_eyes}" ]]; then
-            gh api --method POST \
-              -H 'Accept: application/vnd.github+json' \
-              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-              --raw-field content='eyes' > /dev/null
+            add_command_reaction eyes "👀"
           fi
           echo "accepted=true" >> "${GITHUB_OUTPUT}"
 
