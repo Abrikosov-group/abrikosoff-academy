@@ -171,6 +171,10 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     const updated: StoredCheckout = {
       ...checkout,
       status: nextStatus,
+      paymentMethodToken:
+        input.paymentMethodToken ?? checkout.paymentMethodToken,
+      paymentMethodSaved:
+        input.paymentMethodSaved === true || checkout.paymentMethodSaved,
       updatedAt: new Date().toISOString(),
     };
 

@@ -6,6 +6,8 @@ export type SubscriptionPlanId = (typeof subscriptionPlanIds)[number];
 
 export type CurrencyCode = "RUB";
 
+export type BillingMode = "recurring" | "one_time";
+
 export type Money = {
   amountMinor: number;
   currency: CurrencyCode;
@@ -51,6 +53,10 @@ export type CheckoutCommand = {
     acceptedAt: string;
     offerVersion: string;
   };
+  recurringConsent?: {
+    acceptedAt: string;
+    offerVersion: string;
+  };
   idempotencyKey: string;
   publicBaseUrl: string;
 };
@@ -73,8 +79,13 @@ export type CheckoutReservation = {
   money: Money;
   idempotencyKey: string;
   provider: PaymentProviderId;
+  billingMode: BillingMode;
+  subscriptionId?: string;
+  renewalSequence: number;
   offerAcceptedAt: string;
   offerVersion: string;
+  recurringConsentAcceptedAt?: string;
+  recurringConsentOfferVersion?: string;
   receiptContact: ReceiptContact;
   createdAt: string;
   updatedAt: string;
@@ -83,6 +94,8 @@ export type CheckoutReservation = {
 export type StoredCheckout = CheckoutReservation &
   Omit<CheckoutResult, "orderId" | "provider"> & {
     externalPaymentId: string;
+    paymentMethodToken?: string;
+    paymentMethodSaved: boolean;
   };
 
 export type ProviderRoute = {
@@ -90,6 +103,7 @@ export type ProviderRoute = {
   merchantAccountId: string;
   legalEntityId: string;
   currency: CurrencyCode;
+  billingMode?: BillingMode;
   countryCodes?: readonly string[];
   priority: number;
 };

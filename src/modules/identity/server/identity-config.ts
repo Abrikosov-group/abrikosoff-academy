@@ -2,7 +2,7 @@ import "server-only";
 
 import { IdentityError } from "../domain/errors";
 
-export const privacyDocumentVersion = "2026-07-30";
+export const privacyDocumentVersion = "2026-08-31";
 
 export type IdentityConfig = {
   demoAuthEnabled: boolean;

@@ -54,16 +54,16 @@ export default async function CheckoutPage({
       : user.primaryMethod.type === "email"
         ? "электронная почта"
         : "телефон";
-  const accessEndDate = addSubscriptionPeriod(
+  const firstRenewalDate = addSubscriptionPeriod(
     new Date(),
     selectedPlan,
   );
-  const accessEndDateLabel = new Intl.DateTimeFormat("ru-RU", {
+  const firstRenewalDateLabel = new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "long",
     year: "numeric",
     timeZone: "Europe/Moscow",
-  }).format(accessEndDate);
+  }).format(firstRenewalDate);
 
   return (
     <main className="checkout-page">
@@ -100,8 +100,9 @@ export default async function CheckoutPage({
           </div>
 
           <p className="checkout-account">
-            Аккаунт: <strong>{accountLabel}</strong> ({methodLabel}). Доступ
-            действует до {accessEndDateLabel}. Повторного списания не будет.
+            Аккаунт: <strong>{accountLabel}</strong> ({methodLabel}). После
+            оплаты доступ откроется сразу. Следующее списание — {firstRenewalDateLabel};
+            автоматическое продление можно отключить в личном кабинете.
           </p>
 
           <CheckoutButton

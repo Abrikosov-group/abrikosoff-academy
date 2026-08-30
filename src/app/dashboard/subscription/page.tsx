@@ -9,6 +9,7 @@ import {
 import {
   createCabinetAccessPresentation,
 } from "../_lib/cabinet-access-presentation";
+import { SubscriptionRenewalControl } from "@/components/academy/subscription-renewal-control";
 
 export const metadata: Metadata = {
   title: "Подписка",
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
 const included = [
   "Все курсы библиотеки",
   "Новые материалы без доплат",
-  "Без автоматического продления",
+  "Автоматическое продление можно отключить в любой момент",
 ];
 
 export default async function CabinetSubscriptionPage() {
@@ -79,8 +80,8 @@ export default async function CabinetSubscriptionPage() {
               <dt>Продление</dt>
               <dd>
                 {subscription?.autoRenew
-                  ? "Автоматически"
-                  : "Только вручную"}
+                  ? `Автоматически ${periodEnd}`
+                  : "Отключено"}
               </dd>
             </div>
           </dl>
@@ -90,6 +91,11 @@ export default async function CabinetSubscriptionPage() {
           </p>
           {accessPresentation.additionalAccessNote ? (
             <p>{accessPresentation.additionalAccessNote}</p>
+          ) : null}
+          {subscription?.autoRenew || subscription?.recurringAvailable ? (
+            <SubscriptionRenewalControl
+              autoRenew={subscription.autoRenew}
+            />
           ) : null}
           <Link
             className="button button-primary"
@@ -165,8 +171,9 @@ export default async function CabinetSubscriptionPage() {
             </article>
           </div>
           <p className="cabinet-payment-note">
-            Оплата проходит на защищённой странице ЮKassa.
-            Повторных списаний нет.
+            Оплата проходит на защищённой странице ЮKassa. Подписка
+            продлевается автоматически; продление отключается в личном
+            кабинете.
           </p>
         </>
       )}

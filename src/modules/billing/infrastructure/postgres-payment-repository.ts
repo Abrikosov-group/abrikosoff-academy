@@ -13,6 +13,7 @@ import type {
 } from "../application/payment-repository";
 import type {
   CheckoutReservation,
+  BillingMode,
   OrderStatus,
   PaymentProviderId,
   PaymentStatus,
@@ -37,8 +38,15 @@ type CheckoutRow = {
   external_payment_id: string;
   payment_status: PaymentStatus;
   confirmation_url: string | null;
+  payment_method_token: string | null;
+  payment_method_saved: boolean;
+  billing_mode: BillingMode;
+  subscription_id: string | null;
+  renewal_sequence: number;
   offer_accepted_at: Date;
   offer_version: string;
+  recurring_consent_accepted_at: Date | null;
+  recurring_consent_offer_version: string | null;
   receipt_email: string | null;
   receipt_phone: string | null;
   created_at: Date;
@@ -56,8 +64,13 @@ type CheckoutReservationRow = {
   currency: "RUB";
   idempotency_key: string;
   selected_provider: PaymentProviderId;
+  billing_mode: BillingMode;
+  subscription_id: string | null;
+  renewal_sequence: number;
   offer_accepted_at: Date;
   offer_version: string;
+  recurring_consent_accepted_at: Date | null;
+  recurring_consent_offer_version: string | null;
   receipt_email: string | null;
   receipt_phone: string | null;
   created_at: Date;
@@ -98,8 +111,17 @@ function mapCheckoutRow(row: CheckoutRow): StoredCheckout {
     externalPaymentId: row.external_payment_id,
     status: row.payment_status,
     confirmationUrl: row.confirmation_url ?? "",
+    paymentMethodToken: row.payment_method_token ?? undefined,
+    paymentMethodSaved: row.payment_method_saved,
+    billingMode: row.billing_mode,
+    subscriptionId: row.subscription_id ?? undefined,
+    renewalSequence: row.renewal_sequence,
     offerAcceptedAt: row.offer_accepted_at.toISOString(),
     offerVersion: row.offer_version,
+    recurringConsentAcceptedAt:
+      row.recurring_consent_accepted_at?.toISOString(),
+    recurringConsentOfferVersion:
+      row.recurring_consent_offer_version ?? undefined,
     receiptContact: {
       email: row.receipt_email ?? undefined,
       phone: row.receipt_phone ?? undefined,
@@ -125,8 +147,15 @@ const checkoutSelect = `
     payments.external_payment_id,
     payments.status AS payment_status,
     payments.confirmation_url,
+    payments.payment_method_token,
+    payments.payment_method_saved,
+    orders.billing_mode,
+    orders.subscription_id,
+    orders.renewal_sequence,
     orders.offer_accepted_at,
     orders.offer_version,
+    orders.recurring_consent_accepted_at,
+    orders.recurring_consent_offer_version,
     orders.receipt_email,
     orders.receipt_phone,
     orders.created_at,
@@ -153,8 +182,13 @@ const reservationSelect = `
     orders.currency,
     orders.idempotency_key,
     orders.selected_provider,
+    orders.billing_mode,
+    orders.subscription_id,
+    orders.renewal_sequence,
     orders.offer_accepted_at,
     orders.offer_version,
+    orders.recurring_consent_accepted_at,
+    orders.recurring_consent_offer_version,
     orders.receipt_email,
     orders.receipt_phone,
     orders.created_at,
@@ -178,8 +212,15 @@ function mapReservationRow(
     },
     idempotencyKey: row.idempotency_key,
     provider: row.selected_provider,
+    billingMode: row.billing_mode,
+    subscriptionId: row.subscription_id ?? undefined,
+    renewalSequence: row.renewal_sequence,
     offerAcceptedAt: row.offer_accepted_at.toISOString(),
     offerVersion: row.offer_version,
+    recurringConsentAcceptedAt:
+      row.recurring_consent_accepted_at?.toISOString(),
+    recurringConsentOfferVersion:
+      row.recurring_consent_offer_version ?? undefined,
     receiptContact: {
       email: row.receipt_email ?? undefined,
       phone: row.receipt_phone ?? undefined,
@@ -403,8 +444,9 @@ async function rebuildSubscriptionProjection(
             auto_renew = false,
             mandate_id = NULL,
             activated_by_order_id = NULL,
-            cancel_at_period_end = false,
+            cancel_at_period_end = true,
             canceled_at = COALESCE(canceled_at, $2::timestamptz),
+            renewal_due_at = NULL,
             updated_at = now()
           WHERE id = $1
         `,
@@ -436,11 +478,11 @@ async function rebuildSubscriptionProjection(
           status = $3,
           current_period_start = $4,
           current_period_end = $5,
-          auto_renew = false,
-          mandate_id = NULL,
           activated_by_order_id = $6,
-          cancel_at_period_end = false,
-          canceled_at = NULL,
+          renewal_due_at = CASE
+            WHEN auto_renew AND NOT cancel_at_period_end THEN $5::timestamptz
+            ELSE NULL
+          END,
           updated_at = now()
         WHERE id = $1
       `,
@@ -489,8 +531,29 @@ async function activateSubscription(
   activatedAt: Date,
 ) {
   await lockCustomerAccess(client, checkout.customerId);
+  const existing = await client.query<{
+    id: string;
+    current_period_end: Date | null;
+    mandate_id: string | null;
+    cancel_at_period_end: boolean;
+  }>(
+    `
+      SELECT id, current_period_end, mandate_id, cancel_at_period_end
+      FROM billing_subscriptions
+      WHERE customer_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [checkout.customerId],
+  );
+  const current = existing.rows[0];
+  const periodStart =
+    checkout.renewalSequence > 0 && current?.current_period_end
+      ? current.current_period_end
+      : activatedAt;
   const periodEnd = addSubscriptionPeriod(
-    activatedAt,
+    periodStart,
     checkout.planId,
   );
 
@@ -512,16 +575,253 @@ async function activateSubscription(
       checkout.orderId,
       checkout.customerId,
       checkout.planId,
-      activatedAt,
+      periodStart,
       periodEnd,
     ],
   );
 
-  await rebuildSubscriptionProjection(
-    client,
-    checkout.customerId,
-    activatedAt,
+  let mandateId = current?.mandate_id ?? null;
+  const recurringReady =
+    checkout.billingMode === "recurring" &&
+    checkout.paymentMethodSaved &&
+    Boolean(checkout.paymentMethodToken);
+
+  if (recurringReady && checkout.paymentMethodToken) {
+    const existingMandate = await client.query<{ id: string }>(
+      `
+        SELECT id
+        FROM billing_payment_mandates
+        WHERE customer_id = $1
+          AND provider = $2
+          AND merchant_account_id = $3
+          AND provider_payment_method_token = $4
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [
+        checkout.customerId,
+        checkout.provider,
+        checkout.merchantAccountId,
+        checkout.paymentMethodToken,
+      ],
+    );
+
+    mandateId = existingMandate.rows[0]?.id ?? randomUUID();
+
+    await client.query(
+      `
+        UPDATE billing_payment_mandates
+        SET
+          status = 'revoked',
+          revoked_at = COALESCE(revoked_at, $5),
+          updated_at = now()
+        WHERE customer_id = $1
+          AND provider = $2
+          AND merchant_account_id = $3
+          AND status = 'active'
+          AND id <> $4
+      `,
+      [
+        checkout.customerId,
+        checkout.provider,
+        checkout.merchantAccountId,
+        mandateId,
+        activatedAt,
+      ],
+    );
+
+    if (!existingMandate.rows[0]) {
+      await client.query(
+        `
+          INSERT INTO billing_payment_mandates (
+            id,
+            customer_id,
+            provider,
+            merchant_account_id,
+            provider_payment_method_token,
+            status,
+            consent_accepted_at,
+            consent_offer_version,
+            activated_at,
+            last_used_at
+          )
+          VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $8)
+        `,
+        [
+          mandateId,
+          checkout.customerId,
+          checkout.provider,
+          checkout.merchantAccountId,
+          checkout.paymentMethodToken,
+          checkout.recurringConsentAcceptedAt ?? checkout.offerAcceptedAt,
+          checkout.recurringConsentOfferVersion ?? checkout.offerVersion,
+          activatedAt,
+        ],
+      );
+    } else {
+      await client.query(
+        `
+          UPDATE billing_payment_mandates
+          SET
+            status = 'active',
+            consent_accepted_at = $2,
+            consent_offer_version = $3,
+            activated_at = $4,
+            last_used_at = $4,
+            revoked_at = NULL,
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [
+          mandateId,
+          checkout.recurringConsentAcceptedAt ?? checkout.offerAcceptedAt,
+          checkout.recurringConsentOfferVersion ?? checkout.offerVersion,
+          activatedAt,
+        ],
+      );
+    }
+  }
+
+  const autoRenew =
+    recurringReady &&
+    (checkout.renewalSequence === 0 || !current?.cancel_at_period_end);
+  const subscriptionId = current?.id ?? randomUUID();
+
+  if (current) {
+    await client.query(
+      `
+        UPDATE billing_subscriptions
+        SET
+          plan_id = $2,
+          status = 'active',
+          current_period_start = $3,
+          current_period_end = $4,
+          auto_renew = $5,
+          mandate_id = $6,
+          activated_by_order_id = $7,
+          cancel_at_period_end = CASE WHEN $5::boolean THEN false ELSE cancel_at_period_end END,
+          canceled_at = CASE WHEN $5::boolean THEN NULL ELSE canceled_at END,
+          renewal_due_at = CASE WHEN $5::boolean THEN $4::timestamptz ELSE NULL END,
+          renewal_failure_count = 0,
+          last_renewal_attempt_at = CASE WHEN $8::integer > 0 THEN $9::timestamptz ELSE last_renewal_attempt_at END,
+          renewal_error_code = CASE
+            WHEN $5::boolean THEN NULL
+            WHEN $10 = 'recurring' THEN 'PAYMENT_METHOD_NOT_SAVED'
+            ELSE NULL
+          END,
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [
+        subscriptionId,
+        checkout.planId,
+        periodStart,
+        periodEnd,
+        autoRenew,
+        mandateId,
+        checkout.orderId,
+        checkout.renewalSequence,
+        activatedAt,
+        checkout.billingMode,
+      ],
+    );
+  } else {
+    await client.query(
+      `
+        INSERT INTO billing_subscriptions (
+          id,
+          customer_id,
+          plan_id,
+          status,
+          current_period_start,
+          current_period_end,
+          auto_renew,
+          mandate_id,
+          activated_by_order_id,
+          cancel_at_period_end,
+          renewal_due_at,
+          renewal_error_code
+        )
+        VALUES (
+          $1, $2, $3, 'active', $4, $5, $6, $7, $8, false,
+          CASE WHEN $6::boolean THEN $5::timestamptz ELSE NULL END,
+          CASE
+            WHEN $6 THEN NULL
+            WHEN $9 = 'recurring' THEN 'PAYMENT_METHOD_NOT_SAVED'
+            ELSE NULL
+          END
+        )
+      `,
+      [
+        subscriptionId,
+        checkout.customerId,
+        checkout.planId,
+        periodStart,
+        periodEnd,
+        autoRenew,
+        mandateId,
+        checkout.orderId,
+        checkout.billingMode,
+      ],
+    );
+  }
+
+  await client.query(
+    `
+      INSERT INTO billing_subscription_events (
+        id,
+        subscription_id,
+        customer_id,
+        event_type,
+        details,
+        occurred_at
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+    `,
+    [
+      randomUUID(),
+      subscriptionId,
+      checkout.customerId,
+      checkout.renewalSequence > 0
+        ? "subscription.renewed"
+        : "subscription.started",
+      JSON.stringify({
+        orderId: checkout.orderId,
+        planId: checkout.planId,
+        billingMode: checkout.billingMode,
+        autoRenew,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+      }),
+      activatedAt,
+    ],
   );
+
+  await client.query(
+    `
+      UPDATE billing_access_grace_periods
+      SET status = 'revoked', revoked_at = $2, updated_at = now()
+      WHERE subscription_id = $1 AND status = 'active'
+    `,
+    [subscriptionId, activatedAt],
+  );
+
+  if (checkout.renewalSequence > 0) {
+    await client.query(
+      `
+        UPDATE billing_subscription_renewal_attempts
+        SET
+          status = 'succeeded',
+          lease_expires_at = NULL,
+          completed_at = $2,
+          updated_at = now()
+        WHERE order_id = $1
+          AND status IN ('processing', 'retry_scheduled')
+      `,
+      [checkout.orderId, activatedAt],
+    );
+  }
 }
 
 export class PostgresPaymentRepository implements PaymentRepository {
@@ -592,8 +892,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
             idempotency_key,
             selected_provider,
             merchant_account_id,
+            billing_mode,
+            subscription_id,
+            renewal_sequence,
             offer_accepted_at,
             offer_version,
+            recurring_consent_accepted_at,
+            recurring_consent_offer_version,
             receipt_email,
             receipt_phone,
             created_at,
@@ -601,7 +906,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
-            $12, $13, $14, $15, $15
+            $12, $13, $14, $15, $16, $17, $18, $19, $20, $20
           )
           ON CONFLICT (idempotency_key) DO NOTHING
         `,
@@ -616,8 +921,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
           input.idempotencyKey,
           input.provider,
           input.merchantAccountId,
+          input.billingMode,
+          input.subscriptionId ?? null,
+          input.renewalSequence,
           input.offerAcceptedAt,
           input.offerVersion,
+          input.recurringConsentAcceptedAt ?? null,
+          input.recurringConsentOfferVersion ?? null,
           input.receiptContact.email ?? null,
           input.receiptContact.phone ?? null,
           input.createdAt,
@@ -679,13 +989,15 @@ export class PostgresPaymentRepository implements PaymentRepository {
             amount_minor,
             currency,
             confirmation_url,
+            payment_method_token,
+            payment_method_saved,
             paid_at,
             created_at,
             updated_at
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $12
+            $13, $14, $14
           )
         `,
         [
@@ -699,6 +1011,8 @@ export class PostgresPaymentRepository implements PaymentRepository {
           input.money.amountMinor,
           input.money.currency,
           input.confirmationUrl,
+          input.paymentMethodToken ?? null,
+          input.paymentMethodSaved,
           input.status === "succeeded" ? input.updatedAt : null,
           input.createdAt,
         ],
@@ -826,6 +1140,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
       const updatedCheckout: StoredCheckout = {
         ...checkout,
         status: nextStatus,
+        paymentMethodToken:
+          input.paymentMethodToken ?? checkout.paymentMethodToken,
+        paymentMethodSaved:
+          input.paymentMethodSaved === true || checkout.paymentMethodSaved,
         updatedAt: processedAt.toISOString(),
       };
 
@@ -834,6 +1152,8 @@ export class PostgresPaymentRepository implements PaymentRepository {
           UPDATE billing_payments
           SET
             status = $2,
+            payment_method_token = COALESCE($4, payment_method_token),
+            payment_method_saved = payment_method_saved OR $5,
             paid_at = CASE
               WHEN $2 = 'succeeded' THEN COALESCE(paid_at, $3)
               ELSE paid_at
@@ -845,6 +1165,8 @@ export class PostgresPaymentRepository implements PaymentRepository {
           checkout.paymentId,
           nextStatus,
           input.occurredAt,
+          input.paymentMethodToken ?? null,
+          input.paymentMethodSaved === true,
         ],
       );
       await client.query(
@@ -1102,6 +1424,11 @@ export type SubscriptionSummary = {
   planId: SubscriptionPlanId;
   currentPeriodEnd?: string;
   autoRenew: boolean;
+  cancelAtPeriodEnd: boolean;
+  renewalDueAt?: string;
+  renewalErrorCode?: string;
+  gracePeriodEnd?: string;
+  recurringAvailable: boolean;
 };
 
 export async function getSubscriptionSummary(
@@ -1113,12 +1440,27 @@ export async function getSubscriptionSummary(
     plan_id: SubscriptionPlanId;
     current_period_end: Date | null;
     auto_renew: boolean;
+    cancel_at_period_end: boolean;
+    renewal_due_at: Date | null;
+    renewal_error_code: string | null;
+    grace_period_end: Date | null;
   }>(
     `
-      SELECT status, plan_id, current_period_end, auto_renew
-      FROM billing_subscriptions
-      WHERE customer_id = $1
-      ORDER BY created_at DESC
+      SELECT
+        subscriptions.status,
+        subscriptions.plan_id,
+        subscriptions.current_period_end,
+        subscriptions.auto_renew,
+        subscriptions.cancel_at_period_end,
+        subscriptions.renewal_due_at,
+        subscriptions.renewal_error_code,
+        grace.period_end AS grace_period_end
+      FROM billing_subscriptions subscriptions
+      LEFT JOIN billing_access_grace_periods grace
+        ON grace.subscription_id = subscriptions.id
+       AND grace.status = 'active'
+      WHERE subscriptions.customer_id = $1
+      ORDER BY subscriptions.created_at DESC
       LIMIT 1
     `,
     [customerId],
@@ -1132,8 +1474,129 @@ export async function getSubscriptionSummary(
         currentPeriodEnd:
           row.current_period_end?.toISOString(),
         autoRenew: row.auto_renew,
+        cancelAtPeriodEnd: row.cancel_at_period_end,
+        renewalDueAt: row.renewal_due_at?.toISOString(),
+        renewalErrorCode: row.renewal_error_code ?? undefined,
+        gracePeriodEnd: row.grace_period_end?.toISOString(),
+        recurringAvailable: row.auto_renew || row.cancel_at_period_end,
       }
     : null;
+}
+
+export async function setSubscriptionRenewal(
+  pool: Pool,
+  customerId: string,
+  enabled: boolean,
+  changedAt: Date = new Date(),
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await lockCustomerAccess(client, customerId);
+    const result = await client.query<{
+      id: string;
+      status: SubscriptionSummary["status"];
+      current_period_end: Date | null;
+      auto_renew: boolean;
+      cancel_at_period_end: boolean;
+      mandate_id: string | null;
+      mandate_status: string | null;
+    }>(
+      `
+        SELECT
+          subscriptions.id,
+          subscriptions.status,
+          subscriptions.current_period_end,
+          subscriptions.auto_renew,
+          subscriptions.cancel_at_period_end,
+          subscriptions.mandate_id,
+          mandates.status AS mandate_status
+        FROM billing_subscriptions subscriptions
+        LEFT JOIN billing_payment_mandates mandates
+          ON mandates.id = subscriptions.mandate_id
+        WHERE subscriptions.customer_id = $1
+        ORDER BY subscriptions.created_at DESC
+        LIMIT 1
+        FOR UPDATE OF subscriptions
+      `,
+      [customerId],
+    );
+    const subscription = result.rows[0];
+
+    if (
+      !subscription ||
+      !subscription.current_period_end ||
+      subscription.current_period_end.getTime() <= changedAt.getTime()
+    ) {
+      throw new BillingError(
+        "SUBSCRIPTION_NOT_ACTIVE",
+        "Активная подписка не найдена.",
+        409,
+      );
+    }
+
+    if (
+      enabled &&
+      (!subscription.mandate_id || subscription.mandate_status !== "active")
+    ) {
+      throw new BillingError(
+        "PAYMENT_METHOD_NOT_SAVED",
+        "Для автоматического продления требуется заново привязать способ оплаты.",
+        409,
+      );
+    }
+
+    await client.query(
+      `
+        UPDATE billing_subscriptions
+        SET
+          auto_renew = $2::boolean,
+          cancel_at_period_end = NOT $2::boolean,
+          canceled_at = CASE WHEN $2::boolean THEN NULL ELSE $3::timestamptz END,
+          renewal_due_at = CASE WHEN $2::boolean THEN current_period_end ELSE NULL END,
+          renewal_error_code = CASE WHEN $2::boolean THEN NULL ELSE renewal_error_code END,
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [subscription.id, enabled, changedAt],
+    );
+    await client.query(
+      `
+        INSERT INTO billing_subscription_events (
+          id,
+          subscription_id,
+          customer_id,
+          event_type,
+          details,
+          occurred_at
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+      `,
+      [
+        randomUUID(),
+        subscription.id,
+        customerId,
+        enabled
+          ? "subscription.renewal_enabled"
+          : "subscription.renewal_disabled",
+        JSON.stringify({
+          previousAutoRenew: subscription.auto_renew,
+          previousCancelAtPeriodEnd: subscription.cancel_at_period_end,
+        }),
+        changedAt,
+      ],
+    );
+    const summary = await getSubscriptionSummary(client, customerId);
+    await client.query("COMMIT");
+
+    return summary;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export type CustomerOrderHistoryItem = {

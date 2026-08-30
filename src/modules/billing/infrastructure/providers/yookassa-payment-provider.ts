@@ -158,6 +158,12 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
       : typeof payment.created_at === "string"
         ? payment.created_at
         : undefined;
+  const paymentMethod = asRecord(payment.payment_method);
+  const paymentMethodSaved = paymentMethod?.saved === true;
+  const paymentMethodToken =
+    paymentMethodSaved && typeof paymentMethod?.id === "string"
+      ? paymentMethod.id
+      : undefined;
 
   return {
     externalPaymentId: requiredString(payment, "id"),
@@ -165,6 +171,8 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
     money: parseMoney(payment.amount),
     confirmationUrl,
     paidAt,
+    paymentMethodToken,
+    paymentMethodSaved,
   };
 }
 
@@ -403,7 +411,7 @@ export class YooKassaPaymentProvider implements PaymentProvider {
             type: "redirect",
             return_url: input.returnUrl,
           },
-          save_payment_method: false,
+          save_payment_method: input.billingMode === "recurring",
           description: `${input.plan.title} — Академия Абрикософф`,
           receipt: buildReceipt(input.plan, input.receiptContact),
           metadata: {

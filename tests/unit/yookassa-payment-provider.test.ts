@@ -14,6 +14,39 @@ afterEach(() => {
 });
 
 describe("YooKassaPaymentProvider", () => {
+  it("сохраняет способ оплаты при первом рекуррентном платеже", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        id: "payment-first",
+        status: "pending",
+        amount: { value: "1500.00", currency: "RUB" },
+        confirmation: { confirmation_url: "https://pay.example.test/first" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createProvider().createCheckout({
+      orderId: "order-first",
+      customerId: "customer-first",
+      legalEntityId: "ip-fedotova",
+      merchantAccountId: "yookassa-primary",
+      plan: {
+        id: "monthly",
+        title: "Месячный тариф",
+        durationMonths: 1,
+        price: { amountMinor: 150_000, currency: "RUB" },
+        receiptItemName: "Доступ к Академии",
+      },
+      receiptContact: { email: "student@example.test" },
+      idempotencyKey: "first-payment-key",
+      returnUrl: "https://academy.example.test/payment/success",
+      billingMode: "recurring",
+    });
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(request.save_payment_method).toBe(true);
+  });
+
   it("проверяет платёжное уведомление через объект платежа", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({

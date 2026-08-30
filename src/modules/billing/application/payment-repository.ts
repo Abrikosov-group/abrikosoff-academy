@@ -16,6 +16,8 @@ export type ApplyPaymentEventInput = {
   eventType: string;
   externalPaymentId: string;
   status: PaymentStatus;
+  paymentMethodToken?: string;
+  paymentMethodSaved?: boolean;
   occurredAt: string;
   payloadSha256: string;
   payload: unknown;

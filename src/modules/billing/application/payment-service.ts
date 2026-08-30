@@ -94,6 +94,16 @@ export class PaymentService {
           currency: plan.price.currency,
         });
 
+      const billingMode = route.billingMode ?? "one_time";
+
+      if (billingMode === "recurring" && !command.recurringConsent) {
+        throw new BillingError(
+          "INVALID_REQUEST",
+          "Подтвердите автоматическое продление подписки.",
+          400,
+        );
+      }
+
       reservation = await this.options.repository.reserveCheckout({
         orderId: randomUUID(),
         customerId: command.customerId,
@@ -104,8 +114,18 @@ export class PaymentService {
         money: plan.price,
         idempotencyKey: command.idempotencyKey,
         provider: routedProvider.id,
+        billingMode,
+        renewalSequence: 0,
         offerAcceptedAt: command.offerAcceptance.acceptedAt,
         offerVersion: command.offerAcceptance.offerVersion,
+        recurringConsentAcceptedAt:
+          billingMode === "recurring"
+            ? command.recurringConsent?.acceptedAt
+            : undefined,
+        recurringConsentOfferVersion:
+          billingMode === "recurring"
+            ? command.recurringConsent?.offerVersion
+            : undefined,
         receiptContact: command.receiptContact,
         createdAt: reservedAt,
         updatedAt: reservedAt,
@@ -135,6 +155,7 @@ export class PaymentService {
       receiptContact: reservation.receiptContact,
       idempotencyKey: command.idempotencyKey,
       returnUrl: returnUrl.toString(),
+      billingMode: reservation.billingMode,
     });
 
     assertProviderMoneyMatchesCheckout(
@@ -151,6 +172,8 @@ export class PaymentService {
       confirmationUrl:
         providerPayment.confirmationUrl ?? returnUrl.toString(),
       updatedAt: new Date().toISOString(),
+      paymentMethodToken: providerPayment.paymentMethodToken,
+      paymentMethodSaved: providerPayment.paymentMethodSaved === true,
     });
 
     assertCheckoutMatchesCommand(stored, command);
@@ -209,6 +232,8 @@ export class PaymentService {
         eventType: event.eventType,
         externalPaymentId: event.externalPaymentId,
         status: event.payment.status,
+        paymentMethodToken: event.payment.paymentMethodToken,
+        paymentMethodSaved: event.payment.paymentMethodSaved === true,
         occurredAt: event.occurredAt,
         payloadSha256,
         payload: event.auditPayload,
@@ -298,6 +323,8 @@ export class PaymentService {
       eventType: "payment.reconciled",
       externalPaymentId: checkout.externalPaymentId,
       status: payment.status,
+      paymentMethodToken: payment.paymentMethodToken,
+      paymentMethodSaved: payment.paymentMethodSaved === true,
       occurredAt,
       payloadSha256: sha256(serializedPayload),
       payload: auditPayload,

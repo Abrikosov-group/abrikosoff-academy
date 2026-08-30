@@ -81,14 +81,14 @@ export default async function PricingPage({
                 </li>
                 <li>
                   <CheckCircleIcon aria-hidden="true" size={17} weight="fill" />
-                  Без автоматического продления
+                  Автоматическое продление можно отключить
                 </li>
               </ul>
               <Link className="button button-primary" href="/login?plan=annual">
                 Продолжить с годовым
               </Link>
               <p className="plan-note">
-                Разовая оплата · <Link href="/terms">условия</Link>
+                Автопродление раз в год · <Link href="/terms">условия</Link>
               </p>
             </article>
 
@@ -110,7 +110,7 @@ export default async function PricingPage({
                 Выбрать месячный
               </Link>
               <p className="plan-note">
-                Разовая оплата · <Link href="/terms">условия</Link>
+                Автопродление раз в месяц · <Link href="/terms">условия</Link>
               </p>
             </article>
           </div>
@@ -127,8 +127,9 @@ export default async function PricingPage({
           <div className="pricing-mobile-note">
             <InfoIcon aria-hidden="true" size={19} weight="fill" />
             <p>
-              Оплата проходит на защищённой странице ЮKassa. Повторных списаний
-              нет: после окончания периода доступ можно оплатить снова.
+              Оплата проходит на защищённой странице ЮKassa. Подписка
+              продлевается автоматически. Отключить продление можно в личном
+              кабинете; доступ сохранится до конца оплаченного периода.
             </p>
           </div>
         </div>

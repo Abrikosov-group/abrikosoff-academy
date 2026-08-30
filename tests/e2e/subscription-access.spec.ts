@@ -108,9 +108,7 @@ test("вход, оплата и v2-доступ к уроку и кабинет�
 
   await page.goto("/checkout?plan=annual");
   await expect(
-    page.getByText(
-      "Автоматического продления и повторных списаний нет.",
-    ),
+    page.getByText(/14 000 ₽ каждые 12 месяцев/),
   ).toBeVisible();
   await page.getByRole("checkbox").check();
   await page
@@ -229,6 +227,27 @@ test("вход, оплата и v2-доступ к уроку и кабинет�
     page.getByText(
       "Все материалы Академии доступны до конца оплаченного периода.",
     ),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Отключить автоматическое продление",
+    })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Включить автоматическое продление",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("Отключено", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Включить автоматическое продление",
+    })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Отключить автоматическое продление",
+    }),
   ).toBeVisible();
 
   await page.goto("/dashboard/payments");

@@ -44,6 +44,9 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           current_period_start timestamptz,
           current_period_end timestamptz,
           auto_renew boolean NOT NULL DEFAULT true,
+          cancel_at_period_end boolean NOT NULL DEFAULT false,
+          renewal_due_at timestamptz,
+          renewal_error_code text,
           created_at timestamptz NOT NULL
         );
         CREATE TEMP TABLE billing_access_grants (
