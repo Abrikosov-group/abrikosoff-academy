@@ -934,6 +934,63 @@ describe("эффективный доступ с PostgreSQL", () => {
     });
   });
 
+  it("сохраняет историческое основание завершившегося льготного доступа", async () => {
+    const customerId = await insertUser(
+      "Ученик проверки исторического льготного доступа",
+    );
+    const subscriptionId = randomUUID();
+    const periodStart = new Date("2041-08-29T10:00:00.000Z");
+    const insidePeriod = new Date("2041-08-29T10:30:00.000Z");
+    const periodEnd = new Date("2041-08-29T11:00:00.000Z");
+
+    await pool.query(
+      `
+        INSERT INTO billing_subscriptions (
+          id, customer_id, plan_id, status, current_period_start,
+          current_period_end, auto_renew, cancel_at_period_end,
+          canceled_at, created_at, updated_at
+        )
+        VALUES (
+          $1, $2, 'monthly', 'expired', $3, $4, false, true,
+          $4, $3, $4
+        )
+      `,
+      [subscriptionId, customerId, periodStart, periodEnd],
+    );
+    await pool.query(
+      `
+        INSERT INTO billing_access_grace_periods (
+          subscription_id, customer_id, status, period_start, period_end,
+          created_at, updated_at, revoked_at
+        )
+        VALUES ($1, $2, 'expired', $3, $4, $3, $4, $4)
+      `,
+      [subscriptionId, customerId, periodStart, periodEnd],
+    );
+
+    await expect(
+      service.getEffectiveAccess(customerId, insidePeriod),
+    ).resolves.toMatchObject({
+      canReadCourses: true,
+      activeBases: [
+        expect.objectContaining({
+          id: subscriptionId,
+          source: "grace",
+          periodStart: periodStart.toISOString(),
+          periodEnd: periodEnd.toISOString(),
+        }),
+      ],
+    });
+    await expect(
+      service.getEffectiveAccess(customerId, periodEnd),
+    ).resolves.toEqual({
+      evaluatedAt: periodEnd.toISOString(),
+      canReadCourses: false,
+      activePeriod: null,
+      activeBases: [],
+    });
+  });
+
   it("защищает происхождение и жизненный цикл ручного гранта", async () => {
     const actorUserId = await insertUser(
       "Владелец проверки истории гранта",

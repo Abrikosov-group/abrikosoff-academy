@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { processSubscriptionRenewals } from "../../scripts/lib/subscription-renewals.mjs";
 import {
   getSubscriptionSummary,
+  PostgresPaymentRepository,
   setSubscriptionRenewal,
 } from "@/modules/billing/infrastructure/postgres-payment-repository";
 
@@ -158,6 +159,453 @@ describe("автоматическое продление подписок с Po
     });
     expect(counts.rows[0]).toEqual({ orders: "1", grants: "1", attempts: "1" });
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
+  it("не создаёт вторую операцию после временного отказа", async () => {
+    const dueAt = new Date("2043-01-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const unavailableProvider = vi
+      .fn()
+      .mockRejectedValue(new Error("Тестовый временный отказ провайдера"));
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 25,
+          fetchImplementation: unavailableProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 0,
+        rescheduled: 1,
+        failed: 0,
+      });
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => new Date(dueAt.getTime() + 15 * 60_000),
+          batchSize: 25,
+          fetchImplementation: unavailableProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 0,
+        succeeded: 0,
+        rescheduled: 0,
+        failed: 0,
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    const counts = await pool.query<{
+      orders: string;
+      attempts: string;
+    }>(
+      `
+        SELECT
+          (SELECT count(*) FROM billing_orders WHERE subscription_id = $1) AS orders,
+          (
+            SELECT count(*)
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempts
+      `,
+      [fixture.subscriptionId],
+    );
+
+    expect(counts.rows[0]).toEqual({ orders: "1", attempts: "1" });
+    expect(unavailableProvider).toHaveBeenCalledTimes(1);
+    await setSubscriptionRenewal(
+      pool,
+      fixture.userId,
+      false,
+      new Date(dueAt.getTime() + 15 * 60_000),
+    );
+  });
+
+  it("сериализует параллельные worker для одного периода", async () => {
+    const dueAt = new Date("2043-02-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "demo",
+      periodEnd: dueAt,
+    });
+    const firstClient = await pool.connect();
+    const secondClient = await pool.connect();
+    let results;
+
+    try {
+      results = await Promise.all([
+        processSubscriptionRenewals(firstClient, {
+          now: () => dueAt,
+          batchSize: 25,
+        }),
+        processSubscriptionRenewals(secondClient, {
+          now: () => dueAt,
+          batchSize: 25,
+        }),
+      ]);
+    } finally {
+      firstClient.release();
+      secondClient.release();
+    }
+
+    expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1);
+    const counts = await pool.query<{
+      orders: string;
+      attempts: string;
+      grants: string;
+    }>(
+      `
+        SELECT
+          (SELECT count(*) FROM billing_orders WHERE subscription_id = $1) AS orders,
+          (
+            SELECT count(*)
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempts,
+          (
+            SELECT count(*)
+            FROM billing_access_grants grants
+            JOIN billing_orders orders ON orders.id = grants.order_id
+            WHERE orders.subscription_id = $1
+          ) AS grants
+      `,
+      [fixture.subscriptionId],
+    );
+
+    expect(counts.rows[0]).toEqual({
+      orders: "1",
+      attempts: "1",
+      grants: "1",
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
+  it("сохраняет pending и продолжает его через GET без второго POST", async () => {
+    const dueAt = new Date("2043-03-01T10:00:00.000Z");
+    const afterIdempotencyWindow = new Date(
+      dueAt.getTime() + 25 * 60 * 60_000,
+    );
+    const webhookAt = new Date(afterIdempotencyWindow.getTime() + 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const fetchProvider = vi.fn().mockResolvedValue(
+      Response.json({
+        id: "pending-renewal-payment",
+        status: "pending",
+        created_at: dueAt.toISOString(),
+        payment_method: {
+          id: `method-${fixture.userId}`,
+          saved: true,
+        },
+      }),
+    );
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 25,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 0,
+        rescheduled: 1,
+        failed: 0,
+      });
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => afterIdempotencyWindow,
+          batchSize: 25,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 0,
+        rescheduled: 1,
+        failed: 0,
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    expect(fetchProvider.mock.calls.map((call) => call[1]?.method)).toEqual([
+      "POST",
+      "GET",
+    ]);
+    expect(fetchProvider.mock.calls[1]?.[0]).toBe(
+      "https://api.yookassa.ru/v3/payments/pending-renewal-payment",
+    );
+
+    const paymentRepository = new PostgresPaymentRepository(
+      pool,
+      () => webhookAt,
+    );
+    await expect(
+      paymentRepository.applyPaymentEvent({
+        provider: "yookassa",
+        merchantAccountId: "renewal-test",
+        externalEventId: "pending-renewal-succeeded",
+        eventType: "payment.succeeded",
+        externalPaymentId: "pending-renewal-payment",
+        status: "succeeded",
+        occurredAt: webhookAt.toISOString(),
+        payloadSha256: "d".repeat(64),
+        payload: { event: "payment.succeeded" },
+      }),
+    ).resolves.toMatchObject({ outcome: "applied" });
+
+    const counts = await pool.query<{
+      payments: string;
+      grants: string;
+      attempt_status: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(*)
+            FROM billing_payments payments
+            JOIN billing_orders orders ON orders.id = payments.order_id
+            WHERE orders.subscription_id = $1
+          ) AS payments,
+          (
+            SELECT count(*)
+            FROM billing_access_grants grants
+            JOIN billing_orders orders ON orders.id = grants.order_id
+            WHERE orders.subscription_id = $1
+          ) AS grants,
+          (
+            SELECT status
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempt_status
+      `,
+      [fixture.subscriptionId],
+    );
+
+    expect(counts.rows[0]).toEqual({
+      payments: "1",
+      grants: "1",
+      attempt_status: "succeeded",
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, webhookAt);
+  });
+
+  it("создаёт отдельную финансовую попытку после подтверждённого отказа", async () => {
+    const dueAt = new Date("2043-03-15T10:00:00.000Z");
+    const retryAt = new Date(dueAt.getTime() + 60 * 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const fetchProvider = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "renewal-canceled-first",
+          status: "canceled",
+          created_at: dueAt.toISOString(),
+          payment_method: {
+            id: `method-${fixture.userId}`,
+            saved: true,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "renewal-succeeded-second",
+          status: "succeeded",
+          captured_at: retryAt.toISOString(),
+          payment_method: {
+            id: `method-${fixture.userId}`,
+            saved: true,
+          },
+        }),
+      );
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 25,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 0,
+        rescheduled: 1,
+        failed: 0,
+      });
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => retryAt,
+          batchSize: 25,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 1,
+        rescheduled: 0,
+        failed: 0,
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    const operationKeys = fetchProvider.mock.calls.map(
+      (call) => call[1]?.headers?.["Idempotence-Key"],
+    );
+    expect(operationKeys).toHaveLength(2);
+    expect(operationKeys[0]).not.toBe(operationKeys[1]);
+
+    const counts = await pool.query<{
+      orders: string;
+      payments: string;
+      grants: string;
+      attempt_number: number;
+      attempt_status: string;
+    }>(
+      `
+        SELECT
+          (SELECT count(*) FROM billing_orders WHERE subscription_id = $1) AS orders,
+          (
+            SELECT count(*)
+            FROM billing_payments payments
+            JOIN billing_orders orders ON orders.id = payments.order_id
+            WHERE orders.subscription_id = $1
+          ) AS payments,
+          (
+            SELECT count(*)
+            FROM billing_access_grants grants
+            JOIN billing_orders orders ON orders.id = grants.order_id
+            WHERE orders.subscription_id = $1
+          ) AS grants,
+          (
+            SELECT attempt_number
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempt_number,
+          (
+            SELECT status
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempt_status
+      `,
+      [fixture.subscriptionId],
+    );
+
+    expect(counts.rows[0]).toEqual({
+      orders: "1",
+      payments: "2",
+      grants: "1",
+      attempt_number: 2,
+      attempt_status: "succeeded",
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, retryAt);
+  });
+
+  it("отключает продление во время льготного периода", async () => {
+    const dueAt = new Date("2043-04-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const unavailableProvider = vi
+      .fn()
+      .mockRejectedValue(new Error("Тестовый временный отказ провайдера"));
+
+    try {
+      await processSubscriptionRenewals(client, {
+        now: () => dueAt,
+        batchSize: 1,
+        fetchImplementation: unavailableProvider,
+      });
+      const disabled = await setSubscriptionRenewal(
+        pool,
+        fixture.userId,
+        false,
+        new Date(dueAt.getTime() + 5 * 60_000),
+      );
+
+      expect(disabled).toMatchObject({
+        status: "grace_period",
+        autoRenew: false,
+        cancelAtPeriodEnd: true,
+        gracePeriodEnd: new Date(
+          dueAt.getTime() + 7 * 24 * 60 * 60_000,
+        ).toISOString(),
+      });
+
+      unavailableProvider.mockClear();
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => new Date(dueAt.getTime() + 2 * 60 * 60_000),
+          batchSize: 25,
+          fetchImplementation: unavailableProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 0,
+        succeeded: 0,
+        rescheduled: 0,
+        failed: 0,
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    expect(unavailableProvider).not.toHaveBeenCalled();
+    await expect(
+      pool.query(
+        `
+          SELECT status
+          FROM billing_subscription_renewal_attempts
+          WHERE subscription_id = $1
+        `,
+        [fixture.subscriptionId],
+      ),
+    ).resolves.toMatchObject({ rows: [{ status: "canceled" }] });
   });
 
   it("сохраняет доступ семь дней при временной ошибке и затем завершает льготу", async () => {

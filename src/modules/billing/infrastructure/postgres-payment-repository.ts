@@ -1502,6 +1502,8 @@ export async function setSubscriptionRenewal(
       cancel_at_period_end: boolean;
       mandate_id: string | null;
       mandate_status: string | null;
+      grace_period_end: Date | null;
+      has_open_renewal: boolean;
     }>(
       `
         SELECT
@@ -1511,10 +1513,20 @@ export async function setSubscriptionRenewal(
           subscriptions.auto_renew,
           subscriptions.cancel_at_period_end,
           subscriptions.mandate_id,
-          mandates.status AS mandate_status
+          mandates.status AS mandate_status,
+          grace.period_end AS grace_period_end,
+          EXISTS (
+            SELECT 1
+            FROM billing_subscription_renewal_attempts attempts
+            WHERE attempts.subscription_id = subscriptions.id
+              AND attempts.status IN ('processing', 'retry_scheduled')
+          ) AS has_open_renewal
         FROM billing_subscriptions subscriptions
         LEFT JOIN billing_payment_mandates mandates
           ON mandates.id = subscriptions.mandate_id
+        LEFT JOIN billing_access_grace_periods grace
+          ON grace.subscription_id = subscriptions.id
+         AND grace.status = 'active'
         WHERE subscriptions.customer_id = $1
         ORDER BY subscriptions.created_at DESC
         LIMIT 1
@@ -1524,10 +1536,22 @@ export async function setSubscriptionRenewal(
     );
     const subscription = result.rows[0];
 
+    const paidPeriodIsActive = Boolean(
+      subscription?.current_period_end &&
+        subscription.current_period_end.getTime() > changedAt.getTime(),
+    );
+    const gracePeriodIsActive = Boolean(
+      subscription?.grace_period_end &&
+        subscription.grace_period_end.getTime() > changedAt.getTime(),
+    );
+
     if (
       !subscription ||
-      !subscription.current_period_end ||
-      subscription.current_period_end.getTime() <= changedAt.getTime()
+      (enabled
+        ? !paidPeriodIsActive
+        : !paidPeriodIsActive &&
+          !gracePeriodIsActive &&
+          !subscription.has_open_renewal)
     ) {
       throw new BillingError(
         "SUBSCRIPTION_NOT_ACTIVE",
@@ -1561,6 +1585,21 @@ export async function setSubscriptionRenewal(
       `,
       [subscription.id, enabled, changedAt],
     );
+    if (!enabled) {
+      await client.query(
+        `
+          UPDATE billing_subscription_renewal_attempts
+          SET
+            status = 'canceled',
+            lease_expires_at = NULL,
+            completed_at = $2,
+            updated_at = now()
+          WHERE subscription_id = $1
+            AND status IN ('processing', 'retry_scheduled')
+        `,
+        [subscription.id, changedAt],
+      );
+    }
     await client.query(
       `
         INSERT INTO billing_subscription_events (

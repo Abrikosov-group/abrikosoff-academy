@@ -72,7 +72,13 @@ export class PostgresEffectiveAccessRepository
           grace.period_end
         FROM billing_access_grace_periods grace
         WHERE grace.customer_id = $1
-          AND grace.status = 'active'
+          AND (
+            grace.status = 'active'
+            OR (
+              grace.status IN ('revoked', 'expired')
+              AND grace.revoked_at > $2
+            )
+          )
           AND grace.created_at <= $2
           AND grace.period_start <= $2
           AND grace.period_end > $2
