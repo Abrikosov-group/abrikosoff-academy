@@ -1,6 +1,6 @@
 const shadowReadinessSql = `
   WITH observation AS (
-    SELECT clock_timestamp() AS evaluated_at
+    SELECT date_trunc('milliseconds', clock_timestamp()) AS evaluated_at
   ),
   latest_subscription_timestamps AS MATERIALIZED (
     SELECT
@@ -164,22 +164,37 @@ const shadowReadinessSql = `
         )
       )
   ),
+  future_access_expiration_candidates AS MATERIALIZED (
+    SELECT
+      bases.customer_id,
+      date_trunc('milliseconds', bases.effective_end) AS transition_at
+    FROM active_access_bases bases
+
+    UNION
+
+    SELECT
+      bases.customer_id,
+      CASE
+        WHEN bases.effective_end =
+          date_trunc('milliseconds', bases.effective_end)
+          THEN bases.effective_end
+        ELSE date_trunc('milliseconds', bases.effective_end)
+          + interval '1 millisecond'
+      END AS transition_at
+    FROM active_access_bases bases
+  ),
   future_access_expiration_states AS MATERIALIZED (
     SELECT
-      expiring.customer_id,
-      date_trunc('milliseconds', expiring.effective_end) AS transition_at,
+      candidate.customer_id,
+      candidate.transition_at,
       count(remaining.customer_id) > 0 AS v2_can_read,
       min(remaining.period_start) AS period_start,
       max(remaining.period_end) AS period_end
-    FROM (
-      SELECT DISTINCT customer_id, effective_end
-      FROM active_access_bases
-    ) expiring
+    FROM future_access_expiration_candidates candidate
     LEFT JOIN active_access_bases remaining
-      ON remaining.customer_id = expiring.customer_id
-      AND date_trunc('milliseconds', remaining.effective_end)
-        > date_trunc('milliseconds', expiring.effective_end)
-    GROUP BY expiring.customer_id, expiring.effective_end
+      ON remaining.customer_id = candidate.customer_id
+      AND remaining.effective_end > candidate.transition_at
+    GROUP BY candidate.customer_id, candidate.transition_at
   ),
   future_access_expiration_mismatch_customers AS MATERIALIZED (
     SELECT DISTINCT states.customer_id
@@ -190,7 +205,8 @@ const shadowReadinessSql = `
     JOIN effective_periods current_period
       ON current_period.customer_id = states.customer_id
     WHERE subscription.status IN ('active', 'grace_period')
-      AND subscription.current_period_end > observation.evaluated_at
+      AND date_trunc('milliseconds', subscription.current_period_end)
+        > observation.evaluated_at
       AND date_trunc('milliseconds', subscription.current_period_start)
         IS NOT DISTINCT FROM
           date_trunc('milliseconds', current_period.period_start)
@@ -231,7 +247,8 @@ const shadowReadinessSql = `
       users.id,
       COALESCE(
         subscription.status IN ('active', 'grace_period')
-        AND subscription.current_period_end > observation.evaluated_at,
+        AND date_trunc('milliseconds', subscription.current_period_end)
+          > observation.evaluated_at,
         false
       ) AS legacy_can_read,
       effective_periods.customer_id IS NOT NULL AS v2_can_read,
@@ -240,7 +257,8 @@ const shadowReadinessSql = `
         AS ambiguous_latest_subscription,
       (
         subscription.status IN ('active', 'grace_period')
-        AND subscription.current_period_end > observation.evaluated_at
+        AND date_trunc('milliseconds', subscription.current_period_end)
+          > observation.evaluated_at
         AND effective_periods.customer_id IS NOT NULL
         AND (
           date_trunc('milliseconds', subscription.current_period_start)

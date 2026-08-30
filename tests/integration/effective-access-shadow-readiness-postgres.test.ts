@@ -292,11 +292,12 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       const scheduledRevocationUserId = randomUUID();
       const overlappingExpirationUserId = randomUUID();
       const redundantExpirationUserId = randomUUID();
+      const fractionalExpirationUserId = randomUUID();
 
       await client.query(
         `
           INSERT INTO identity_users (id)
-          VALUES ($1), ($2), ($3), ($4), ($5)
+          VALUES ($1), ($2), ($3), ($4), ($5), ($6)
         `,
         [
           futureUserId,
@@ -304,6 +305,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           scheduledRevocationUserId,
           overlappingExpirationUserId,
           redundantExpirationUserId,
+          fractionalExpirationUserId,
         ],
       );
       await client.query(
@@ -364,6 +366,14 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z',
               '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              gen_random_uuid(),
+              $6,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000658Z',
+              '2020-01-01T00:00:00.000Z'
             )
         `,
         [
@@ -372,6 +382,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           scheduledRevocationUserId,
           overlappingExpirationUserId,
           redundantExpirationUserId,
+          fractionalExpirationUserId,
         ],
       );
       await client.query(
@@ -439,6 +450,15 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2025-01-01T00:00:00.000Z',
               '2090-01-01T00:00:00.000Z'
+            ),
+            (
+              $5,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000658Z'
             )
         `,
         [
@@ -446,6 +466,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           scheduledRevocationUserId,
           overlappingExpirationUserId,
           redundantExpirationUserId,
+          fractionalExpirationUserId,
         ],
       );
 
@@ -457,9 +478,9 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       ).resolves.toMatchObject({
         status: "blocked",
         observation: {
-          observedUserCount: 5,
-          mismatchCount: 3,
-          futureV2TransitionCount: 3,
+          observedUserCount: 6,
+          mismatchCount: 4,
+          futureV2TransitionCount: 4,
           ambiguousLatestSubscriptionCount: 1,
           manualGrantHistoryPresent: false,
         },
@@ -490,6 +511,31 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
         canReadCourses: true,
         activePeriod: {
           start: "2020-01-01T00:00:00.000Z",
+          end: "2100-01-01T00:00:00.000Z",
+        },
+      });
+
+      const fractionalTransitionAt = new Date(
+        "2100-01-01T00:00:00.000Z",
+      );
+      const fractionalSubscription = await getSubscriptionSummary(
+        client,
+        fractionalExpirationUserId,
+      );
+      expect(
+        hasCurrentSubscriptionAccess(
+          fractionalSubscription,
+          fractionalTransitionAt,
+        ),
+      ).toBe(false);
+      await expect(
+        service.getEffectiveAccess(
+          fractionalExpirationUserId,
+          fractionalTransitionAt,
+        ),
+      ).resolves.toMatchObject({
+        canReadCourses: true,
+        activePeriod: {
           end: "2100-01-01T00:00:00.000Z",
         },
       });
