@@ -470,7 +470,10 @@ describe("эффективный доступ с PostgreSQL", () => {
           },
           observation: { reportMismatch },
         }),
-      ).resolves.toBe(legacyCanReadCourses);
+      ).resolves.toEqual({
+        canReadCourses: legacyCanReadCourses,
+        appliedEffectiveAccess: null,
+      });
       expect(reportMismatch).toHaveBeenCalledWith(expectedCode);
       expect(reportMismatch).toHaveBeenCalledTimes(1);
     },
@@ -548,7 +551,7 @@ describe("эффективный доступ с PostgreSQL", () => {
         const snapshotService = new EffectiveAccessService(
           new PostgresEffectiveAccessRepository(client),
         );
-        const canReadCourses =
+        const courseAccess =
           await snapshotService.resolveCourseAccess({
             userId,
             at: evaluatedAt,
@@ -563,7 +566,7 @@ describe("эффективный доступ с PostgreSQL", () => {
         return {
           evaluatedAt,
           legacyCanReadCourses,
-          canReadCourses,
+          canReadCourses: courseAccess.canReadCourses,
           reportMismatch,
         };
       },
@@ -787,11 +790,71 @@ describe("эффективный доступ с PostgreSQL", () => {
           subscriptionEnded,
         );
         expect(access.canReadCourses).toBe(true);
+        expect(access.appliedEffectiveAccess).toMatchObject({
+          evaluatedAt: access.evaluatedAt.toISOString(),
+          canReadCourses: true,
+          activePeriod: {
+            start: "2000-01-01T00:00:00.000Z",
+            end: "2100-01-01T00:00:00.000Z",
+          },
+          activeBases: [
+            {
+              source: "manual",
+              periodStart: "2000-01-01T00:00:00.000Z",
+              periodEnd: "2100-01-01T00:00:00.000Z",
+            },
+          ],
+        });
       } finally {
         vi.unstubAllEnvs();
       }
     },
   );
+
+  it("передаёт в кабинет оплаченный v2-грант без активной проекции подписки", async () => {
+    const customerId = await insertUser(
+      `Ученик с v2-оплаченным доступом ${randomUUID()}`,
+    );
+
+    await insertPaidGrant({
+      userId: customerId,
+      periodStart: new Date("2000-01-01T00:00:00.000Z"),
+      periodEnd: new Date("2100-01-01T00:00:00.000Z"),
+      createdAt: new Date("2000-01-01T00:00:00.000Z"),
+    });
+    vi.stubEnv("EFFECTIVE_ACCESS_MODE", "v2");
+    vi.stubEnv("MANUAL_ACCESS_GRANTING_ENABLED", "false");
+
+    try {
+      const access = await readStudentCourseAccess(
+        pool,
+        customerId,
+      );
+
+      expect(access.subscription).toBeNull();
+      expect(access.subscriptionActive).toBe(false);
+      expect(access.subscriptionEnded).toBe(false);
+      expect(access.canReadCourses).toBe(true);
+      expect(access.appliedEffectiveAccess).toMatchObject({
+        evaluatedAt: access.evaluatedAt.toISOString(),
+        canReadCourses: true,
+        activePeriod: {
+          start: "2000-01-01T00:00:00.000Z",
+          end: "2100-01-01T00:00:00.000Z",
+        },
+        activeBases: [
+          {
+            source: "paid",
+            planId: "monthly",
+            periodStart: "2000-01-01T00:00:00.000Z",
+            periodEnd: "2100-01-01T00:00:00.000Z",
+          },
+        ],
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
   it("сохраняет paid и manual основания до точного момента отзыва", async () => {
     const actorUserId = await insertUser(

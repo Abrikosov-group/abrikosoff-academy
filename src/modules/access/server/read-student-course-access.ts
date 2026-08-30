@@ -21,7 +21,7 @@ export async function readStudentCourseAccess(
         subscription,
         evaluatedAt,
       );
-      const canReadCourses = await resolveStudentCourseAccess({
+      const courseAccess = await resolveStudentCourseAccess({
         userId,
         at: evaluatedAt,
         legacyCanReadCourses: subscriptionActive,
@@ -35,7 +35,9 @@ export async function readStudentCourseAccess(
         subscriptionEnded: Boolean(
           subscription?.currentPeriodEnd && !subscriptionActive,
         ),
-        canReadCourses,
+        canReadCourses: courseAccess.canReadCourses,
+        appliedEffectiveAccess:
+          courseAccess.appliedEffectiveAccess,
       };
     },
   );

@@ -93,7 +93,10 @@ describe("EffectiveAccessService", () => {
         },
         observation: { reportMismatch },
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      canReadCourses: false,
+      appliedEffectiveAccess: null,
+    });
     expect(hasManualGrantHistory).toHaveBeenCalledTimes(1);
     expect(listActiveBases).toHaveBeenCalledWith(
       "student-id",
@@ -126,7 +129,10 @@ describe("EffectiveAccessService", () => {
         },
         observation: { reportEvaluationFailure },
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: null,
+    });
     expect(reportEvaluationFailure).toHaveBeenCalledWith(
       evaluationError,
     );
@@ -150,7 +156,10 @@ describe("EffectiveAccessService", () => {
         },
         observation: { reportEvaluationFailure },
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: null,
+    });
     expect(listActiveBases).not.toHaveBeenCalled();
     expect(reportEvaluationFailure).toHaveBeenCalledWith(
       guardError,
@@ -208,6 +217,104 @@ describe("EffectiveAccessService", () => {
     expect(reportEvaluationFailure).not.toHaveBeenCalled();
   });
 
+  it("в v2 возвращает основания и период применённого решения", async () => {
+    const paidBasis: EffectiveAccessBasis = {
+      id: "20000000-0000-4000-8000-000000000002",
+      source: "paid",
+      planId: "monthly",
+      periodStart: "2040-08-15T00:00:00.000Z",
+      periodEnd: "2040-09-15T00:00:00.000Z",
+    };
+    const { service } = createService({
+      bases: [basis, paidBasis],
+    });
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: false,
+        config: {
+          effectiveAccessMode: "v2",
+          manualAccessGrantingEnabled: false,
+        },
+      }),
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: {
+        evaluatedAt: at.toISOString(),
+        canReadCourses: true,
+        activePeriod: {
+          start: basis.periodStart,
+          end: paidBasis.periodEnd,
+        },
+        activeBases: [basis, paidBasis],
+      },
+    });
+  });
+
+  it("в аварийном fallback передаёт только применённую ручную добавку", async () => {
+    const paidBasis: EffectiveAccessBasis = {
+      id: "20000000-0000-4000-8000-000000000002",
+      source: "paid",
+      planId: "monthly",
+      periodStart: "2040-08-15T00:00:00.000Z",
+      periodEnd: "2040-09-15T00:00:00.000Z",
+    };
+    const { service } = createService({
+      bases: [basis, paidBasis],
+    });
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: false,
+        config: {
+          effectiveAccessMode: "legacy_paid_plus_manual",
+          manualAccessGrantingEnabled: false,
+        },
+      }),
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: {
+        evaluatedAt: at.toISOString(),
+        canReadCourses: true,
+        activePeriod: {
+          start: basis.periodStart,
+          end: basis.periodEnd,
+        },
+        activeBases: [basis],
+      },
+    });
+  });
+
+  it("в аварийном fallback не выдаёт неприменённый v2-paid источник за активный", async () => {
+    const paidBasis: EffectiveAccessBasis = {
+      id: "20000000-0000-4000-8000-000000000002",
+      source: "paid",
+      planId: "monthly",
+      periodStart: "2040-08-15T00:00:00.000Z",
+      periodEnd: "2040-09-15T00:00:00.000Z",
+    };
+    const { service } = createService({ bases: [paidBasis] });
+
+    await expect(
+      service.resolveCourseAccess({
+        userId: "student-id",
+        at,
+        legacyCanReadCourses: true,
+        config: {
+          effectiveAccessMode: "legacy_paid_plus_manual",
+          manualAccessGrantingEnabled: false,
+        },
+      }),
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: null,
+    });
+  });
+
   it("в legacy не выполняет новое чтение", async () => {
     const { listActiveBases, service } = createService();
 
@@ -221,7 +328,10 @@ describe("EffectiveAccessService", () => {
           manualAccessGrantingEnabled: false,
         },
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({
+      canReadCourses: true,
+      appliedEffectiveAccess: null,
+    });
     expect(listActiveBases).not.toHaveBeenCalled();
   });
 

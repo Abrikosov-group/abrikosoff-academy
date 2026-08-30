@@ -6,7 +6,10 @@ import { getUserInitials } from "@/modules/identity/domain/user-presentation";
 import {
   createCabinetAccessPresentation,
 } from "./_lib/cabinet-access-presentation";
-import { getCabinetContext } from "./_lib/cabinet-context";
+import {
+  getCabinetAccessBasisPresentation,
+  getCabinetContext,
+} from "./_lib/cabinet-context";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,13 +26,17 @@ export default async function DashboardLayout({
     canReadCourses,
     subscriptionActive,
     subscriptionEnded,
+    appliedEffectiveAccess,
   } = await getCabinetContext();
+  const accessBasisPresentation =
+    getCabinetAccessBasisPresentation(appliedEffectiveAccess);
   const accessPresentation = createCabinetAccessPresentation({
     canReadCourses,
     subscriptionActive,
     subscriptionEnded,
     hasSubscription: Boolean(subscription),
     formattedPeriodEnd: null,
+    ...accessBasisPresentation,
   });
 
   return (

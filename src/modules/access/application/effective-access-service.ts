@@ -3,6 +3,7 @@ import { AccessConfigurationError } from "../domain/errors";
 import {
   createEffectiveAccessDecision,
   resolveCanReadCourses,
+  type EffectiveAccessDecision,
   type EffectiveAccessMismatchCode,
   type EffectiveAccessMode,
 } from "../domain/effective-access";
@@ -20,6 +21,43 @@ type ShadowObservation = {
     code: EffectiveAccessMismatchCode,
   ) => void | Promise<void>;
 };
+
+export type CourseAccessResolution = {
+  canReadCourses: boolean;
+  appliedEffectiveAccess: EffectiveAccessDecision | null;
+};
+
+function createLegacyResolution(
+  canReadCourses: boolean,
+): CourseAccessResolution {
+  return {
+    canReadCourses,
+    appliedEffectiveAccess: null,
+  };
+}
+
+function getAppliedEffectiveAccess(
+  mode: EffectiveAccessMode,
+  effectiveAccess: EffectiveAccessDecision,
+  at: Date,
+) {
+  if (mode === "v2") {
+    return effectiveAccess;
+  }
+
+  if (mode !== "legacy_paid_plus_manual") {
+    return null;
+  }
+
+  const manualAccess = createEffectiveAccessDecision(
+    at,
+    effectiveAccess.activeBases.filter(
+      (basis) => basis.source === "manual",
+    ),
+  );
+
+  return manualAccess.canReadCourses ? manualAccess : null;
+}
 
 function reportShadowEvaluationFailure(
   reporter: ShadowObservation["reportEvaluationFailure"],
@@ -62,14 +100,16 @@ export class EffectiveAccessService {
     legacyCanReadCourses: boolean;
     config: AccessRolloutConfig;
     observation?: ShadowObservation;
-  }) {
-    let effectiveAccess;
+  }): Promise<CourseAccessResolution> {
+    let effectiveAccess: EffectiveAccessDecision;
 
     try {
       await this.assertRolloutConfiguration(input.config);
 
       if (input.config.effectiveAccessMode === "legacy") {
-        return input.legacyCanReadCourses;
+        return createLegacyResolution(
+          input.legacyCanReadCourses,
+        );
       }
 
       effectiveAccess = await this.getEffectiveAccess(
@@ -89,15 +129,26 @@ export class EffectiveAccessService {
         error,
       );
 
-      return input.legacyCanReadCourses;
+      return createLegacyResolution(
+        input.legacyCanReadCourses,
+      );
     }
 
-    return resolveCanReadCourses({
+    const canReadCourses = resolveCanReadCourses({
       mode: input.config.effectiveAccessMode,
       legacyCanReadCourses: input.legacyCanReadCourses,
       effectiveAccess,
       reportMismatch: input.observation?.reportMismatch,
     });
+
+    return {
+      canReadCourses,
+      appliedEffectiveAccess: getAppliedEffectiveAccess(
+        input.config.effectiveAccessMode,
+        effectiveAccess,
+        input.at,
+      ),
+    };
   }
 
   async assertRolloutConfiguration(config: AccessRolloutConfig) {

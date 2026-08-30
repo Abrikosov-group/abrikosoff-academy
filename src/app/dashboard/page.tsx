@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   formatCabinetDate,
+  getCabinetAccessBasisPresentation,
   getCabinetContext,
 } from "./_lib/cabinet-context";
 import {
@@ -26,16 +27,20 @@ export default async function DashboardPage() {
     canReadCourses,
     subscriptionActive,
     subscriptionEnded,
+    appliedEffectiveAccess,
   } = await getCabinetContext();
   const periodEnd = subscription?.currentPeriodEnd
     ? formatCabinetDate(subscription.currentPeriodEnd)
     : null;
+  const accessBasisPresentation =
+    getCabinetAccessBasisPresentation(appliedEffectiveAccess);
   const accessPresentation = createCabinetAccessPresentation({
     canReadCourses,
     subscriptionActive,
     subscriptionEnded,
     hasSubscription: Boolean(subscription),
     formattedPeriodEnd: periodEnd,
+    ...accessBasisPresentation,
   });
   const firstName = user.displayName.split(/\s+/)[0] || "ученик";
 
@@ -94,6 +99,9 @@ export default async function DashboardPage() {
           ) : (
             <p>{accessPresentation.inactiveSubscriptionSummary}</p>
           )}
+          {accessPresentation.additionalAccessNote ? (
+            <p>{accessPresentation.additionalAccessNote}</p>
+          ) : null}
           <Link href="/dashboard/subscription">
             {subscriptionActive
               ? "Управление подпиской"
