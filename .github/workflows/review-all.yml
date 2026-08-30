@@ -1,0 +1,304 @@
+name: Организационное двойное ИИ-ревью
+
+"on":
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    branches: [main]
+    types: [opened, ready_for_review, synchronize, reopened, edited]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  acknowledge-manual:
+    name: Подтвердить ручную команду
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/review-all' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      issues: write
+      pull-requests: read
+    outputs:
+      accepted: ${{ steps.ack.outputs.accepted }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+      TRIGGER_ACTOR: ${{ github.actor }}
+      AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+      RUN_ATTEMPT: ${{ github.run_attempt }}
+
+    steps:
+      - name: Проверить и подтвердить ручную команду
+        id: ack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ||
+                ! "${COMMENT_ID}" =~ ^[1-9][0-9]*$ ||
+                ! "${RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::GitHub передал некорректные параметры ручной команды"
+            exit 1
+          fi
+
+          case "${AUTHOR_ASSOCIATION}" in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *)
+              echo "::error::Автор комментария не имеет права запускать ревью"
+              exit 1
+              ;;
+          esac
+
+          list_command_reactions() {
+            local reactions
+            local normalized_reactions
+
+            if ! reactions="$(gh api --paginate --slurp \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"; then
+              echo "::warning::Не удалось получить служебные реакции; проверка команды продолжается" >&2
+              printf '[]\n'
+              return
+            fi
+            if ! normalized_reactions="$(jq -ce '
+              if type == "array" and
+                 all(.[]; type == "array" and all(.[]; type == "object"))
+              then .
+              else error("unexpected reactions response")
+              end
+            ' <<< "${reactions}")"; then
+              echo "::warning::Не удалось разобрать служебные реакции; проверка команды продолжается" >&2
+              printf '[]\n'
+              return
+            fi
+            printf '%s\n' "${normalized_reactions}"
+          }
+
+          add_command_reaction() {
+            local content="$1"
+            local label="$2"
+
+            if ! gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+              --raw-field "content=${content}" > /dev/null; then
+              echo "::warning::Не удалось поставить служебную реакцию ${label}; запуск ревью продолжается" >&2
+            fi
+          }
+
+          remove_command_reaction() {
+            local reaction_id="$1"
+
+            if ! gh api --method DELETE \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions/${reaction_id}" \
+              > /dev/null; then
+              echo "::warning::Не удалось удалить устаревшую служебную реакцию ${reaction_id}; проверка команды продолжается" >&2
+            fi
+          }
+
+          comment_json="$(gh api "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}")"
+          comment_issue_number="$(jq -er \
+            '.issue_url | capture("/issues/(?<number>[1-9][0-9]*)$").number' \
+            <<< "${comment_json}")"
+          comment_body="$(jq -er '.body' <<< "${comment_json}")"
+          comment_author="$(jq -er '.user.login' <<< "${comment_json}")"
+          if [[ "${comment_issue_number}" != "${PR_NUMBER}" ||
+                "${comment_body}" != "/review-all" ||
+                "${comment_author}" != "${TRIGGER_ACTOR}" ]]; then
+            echo "::error::Комментарий не совпадает с событием ручной команды"
+            exit 1
+          fi
+
+          if (( RUN_ATTEMPT > 1 )); then
+            reactions="$(list_command_reactions)"
+            while IFS= read -r reaction_id; do
+              [[ -z "${reaction_id}" ]] && continue
+              remove_command_reaction "${reaction_id}"
+            done < <(jq -r '
+              [.[][]? | select(
+                .user.login == "github-actions[bot]" and
+                (.content == "eyes" or .content == "rocket" or .content == "confused")
+              )] | .[].id
+            ' <<< "${reactions}")
+          fi
+
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          if [[ "$(jq -er '.state' <<< "${pr_json}")" != "open" ||
+                "$(jq -r '.draft | tostring' <<< "${pr_json}")" != "false" ]]; then
+            reactions="$(list_command_reactions)"
+            existing_confused="$(jq -r '
+              [.[][]? | select(
+                .user.login == "github-actions[bot]" and .content == "confused"
+              )] | first | .id // empty
+            ' <<< "${reactions}")"
+            if [[ -z "${existing_confused}" ]]; then
+              add_command_reaction confused "😕"
+            fi
+            echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          reactions="$(list_command_reactions)"
+          existing_eyes="$(jq -r '
+            [.[][]? | select(
+              .user.login == "github-actions[bot]" and .content == "eyes"
+            )] | first | .id // empty
+          ' <<< "${reactions}")"
+          if [[ -z "${existing_eyes}" ]]; then
+            add_command_reaction eyes "👀"
+          fi
+          echo "accepted=true" >> "${GITHUB_OUTPUT}"
+
+  manual-review:
+    name: Повторить двойное ревью вручную
+    needs: acknowledge-manual
+    if: needs.acknowledge-manual.outputs.accepted == 'true'
+    # Обновляйте SHA только отдельным PR после проверки центрального workflow.
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
+    with:
+      trigger: manual
+      command: ${{ github.event.comment.body }}
+      repository: ${{ github.repository }}
+      trusted_workflow_repository: Abrikosov-group/.github
+      trusted_workflow_sha: 5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
+      pr_number: ${{ github.event.issue.number }}
+      comment_id: ${{ github.event.comment.id }}
+      author_association: ${{ github.event.comment.author_association }}
+      automatic_base_refs: main
+      manual_base_refs: "*"
+      review_runner_group: abrikosoff-academy-review
+      orchestration_runner_label: abrikosoff-academy-review-orchestration
+      codex_runner_label: abrikosoff-academy-review-codex
+      claude_runner_label: abrikosoff-academy-review-claude
+      expected_orchestration_runner_name: abrikosoff-academy-review-orchestration-01
+      expected_codex_runner_name: abrikosoff-academy-review-codex-01
+      expected_claude_runner_name: abrikosoff-academy-review-claude-01
+      reuse_existing_reviews: true
+      review_gate_context: Двойное ИИ-ревью
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  finalize-manual-ack:
+    name: Завершить отображение ручной команды
+    needs: [acknowledge-manual, manual-review]
+    if: ${{ always() && needs.acknowledge-manual.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      COMMENT_ID: ${{ github.event.comment.id }}
+
+    steps:
+      - name: Завершить отображение ручной команды
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [[ ! "${COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::warning::Не удалось определить комментарий ручной команды"
+            exit 0
+          fi
+          if ! reactions="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions?per_page=100")"; then
+            echo "::warning::Не удалось получить реакции ручной команды"
+            exit 0
+          fi
+          if ! bot_reactions="$(jq -c '
+            [.[][]? | select(
+              .user.login == "github-actions[bot]" and
+              (.content == "eyes" or .content == "rocket" or .content == "confused")
+            )]
+          ' <<< "${reactions}")"; then
+            echo "::warning::Не удалось разобрать реакции ручной команды"
+            exit 0
+          fi
+          if ! eyes_ids="$(jq -r '.[] | select(.content == "eyes") | .id' \
+            <<< "${bot_reactions}")" ||
+             ! has_rocket="$(jq -r 'any(.content == "rocket")' \
+            <<< "${bot_reactions}")" ||
+             ! has_confused="$(jq -r 'any(.content == "confused")' \
+            <<< "${bot_reactions}")"; then
+            echo "::warning::Не удалось определить состояние реакций ручной команды"
+            exit 0
+          fi
+
+          while IFS= read -r reaction_id; do
+            [[ -z "${reaction_id}" ]] && continue
+            if ! gh api --method DELETE \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions/${reaction_id}" \
+              > /dev/null; then
+              echo "::warning::Не удалось удалить устаревшую реакцию 👀 (${reaction_id})"
+            fi
+          done <<< "${eyes_ids}"
+
+          if [[ "${has_rocket}" == "true" ]]; then
+            exit 0
+          fi
+          if [[ "${has_confused}" != "true" ]]; then
+            if ! gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+              --raw-field content='confused' > /dev/null; then
+              echo "::warning::Не удалось поставить реакцию 😕"
+            fi
+          fi
+
+  automatic-review:
+    name: Проверить новый снимок PR автоматически
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        github.event.action != 'edited' ||
+        (
+          github.event.changes.base.ref.from != null &&
+          github.event.changes.base.ref.from != github.event.pull_request.base.ref
+        )
+      )
+    concurrency:
+      group: organizational-review-caller-auto-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      cancel-in-progress: true
+    # Обновляйте SHA только отдельным PR после проверки центрального workflow.
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
+    with:
+      trigger: automatic
+      command: /review-all
+      repository: ${{ github.repository }}
+      trusted_workflow_repository: Abrikosov-group/.github
+      trusted_workflow_sha: 5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f
+      pr_number: ${{ github.event.pull_request.number }}
+      expected_head_sha: ${{ github.event.pull_request.head.sha }}
+      automatic_base_refs: main
+      manual_base_refs: "*"
+      review_runner_group: abrikosoff-academy-review
+      orchestration_runner_label: abrikosoff-academy-review-orchestration
+      codex_runner_label: abrikosoff-academy-review-codex
+      claude_runner_label: abrikosoff-academy-review-claude
+      expected_orchestration_runner_name: abrikosoff-academy-review-orchestration-01
+      expected_codex_runner_name: abrikosoff-academy-review-codex-01
+      expected_claude_runner_name: abrikosoff-academy-review-claude-01
+      reuse_existing_reviews: true
+      review_gate_context: Двойное ИИ-ревью
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

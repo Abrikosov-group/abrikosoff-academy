@@ -112,6 +112,54 @@ test("infrastructure-no-deploy проходит только для статич
   );
 });
 
+test("контур организационного ревью разрешён как infrastructure-no-deploy", () => {
+  assert.doesNotThrow(() =>
+    validateInfrastructureFiles([
+      { filename: ".github/workflows/review-all.yml", status: "added" },
+      {
+        filename: ".github/workflows/self-hosted-runner-health-check.yml",
+        status: "added",
+      },
+      {
+        filename: "infra/github-runners/abrikosoff-academy-review/README.md",
+        status: "added",
+      },
+      {
+        filename:
+          "infra/github-runners/abrikosoff-academy-review/claude-runner-override.conf",
+        status: "added",
+      },
+      {
+        filename:
+          "infra/github-runners/abrikosoff-academy-review/cleanup-model-job.sh",
+        status: "added",
+      },
+      {
+        filename:
+          "infra/github-runners/abrikosoff-academy-review/codex-runner-override.conf",
+        status: "added",
+      },
+      {
+        filename: "infra/github-runners/abrikosoff-academy-review/install.sh",
+        status: "added",
+      },
+      {
+        filename:
+          "infra/github-runners/abrikosoff-academy-review/orchestration-runner-override.conf",
+        status: "added",
+      },
+      {
+        filename: "infra/github-runners/abrikosoff-academy-review/verify-job.sh",
+        status: "added",
+      },
+      {
+        filename: "tests/unit/organizational-review-workflow.test.ts",
+        status: "added",
+      },
+    ]),
+  );
+});
+
 test("rename проверяет новый и предыдущий путь", () => {
   assert.throws(
     () =>
