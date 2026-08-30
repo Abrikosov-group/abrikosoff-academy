@@ -34,7 +34,12 @@ const shadowReadinessSql = `
     SELECT
       grants.customer_id,
       grants.period_start,
-      grants.period_end
+      grants.period_end,
+      CASE
+        WHEN grants.status = 'revoked'
+          THEN least(grants.period_end, grants.revoked_at)
+        ELSE grants.period_end
+      END AS effective_end
     FROM billing_access_grants grants
     CROSS JOIN observation
     WHERE (
@@ -54,7 +59,12 @@ const shadowReadinessSql = `
     SELECT
       grants.customer_id,
       grants.period_start,
-      grants.period_end
+      grants.period_end,
+      CASE
+        WHEN grants.status = 'revoked'
+          THEN least(grants.period_end, grants.revoked_at)
+        ELSE grants.period_end
+      END AS effective_end
     FROM access_manual_grants grants
     CROSS JOIN observation
     WHERE (
@@ -69,7 +79,15 @@ const shadowReadinessSql = `
       AND grants.period_start <= observation.evaluated_at
       AND grants.period_end > observation.evaluated_at
   ),
-  future_access_transition_customers AS MATERIALIZED (
+  effective_periods AS MATERIALIZED (
+    SELECT
+      bases.customer_id,
+      min(bases.period_start) AS period_start,
+      max(bases.period_end) AS period_end
+    FROM active_access_bases bases
+    GROUP BY bases.customer_id
+  ),
+  future_access_activation_or_revocation_customers AS MATERIALIZED (
     SELECT grants.customer_id
     FROM billing_access_grants grants
     CROSS JOIN observation
@@ -146,13 +164,67 @@ const shadowReadinessSql = `
         )
       )
   ),
-  effective_periods AS (
+  future_access_expiration_states AS MATERIALIZED (
     SELECT
-      bases.customer_id,
-      min(bases.period_start) AS period_start,
-      max(bases.period_end) AS period_end
-    FROM active_access_bases bases
-    GROUP BY bases.customer_id
+      expiring.customer_id,
+      date_trunc('milliseconds', expiring.effective_end) AS transition_at,
+      count(remaining.customer_id) > 0 AS v2_can_read,
+      min(remaining.period_start) AS period_start,
+      max(remaining.period_end) AS period_end
+    FROM (
+      SELECT DISTINCT customer_id, effective_end
+      FROM active_access_bases
+    ) expiring
+    LEFT JOIN active_access_bases remaining
+      ON remaining.customer_id = expiring.customer_id
+      AND date_trunc('milliseconds', remaining.effective_end)
+        > date_trunc('milliseconds', expiring.effective_end)
+    GROUP BY expiring.customer_id, expiring.effective_end
+  ),
+  future_access_expiration_mismatch_customers AS MATERIALIZED (
+    SELECT DISTINCT states.customer_id
+    FROM future_access_expiration_states states
+    CROSS JOIN observation
+    LEFT JOIN latest_subscriptions subscription
+      ON subscription.customer_id = states.customer_id
+    JOIN effective_periods current_period
+      ON current_period.customer_id = states.customer_id
+    WHERE subscription.status IN ('active', 'grace_period')
+      AND subscription.current_period_end > observation.evaluated_at
+      AND date_trunc('milliseconds', subscription.current_period_start)
+        IS NOT DISTINCT FROM
+          date_trunc('milliseconds', current_period.period_start)
+      AND date_trunc('milliseconds', subscription.current_period_end)
+        IS NOT DISTINCT FROM
+          date_trunc('milliseconds', current_period.period_end)
+      AND (
+        (
+          date_trunc('milliseconds', subscription.current_period_end)
+            > states.transition_at
+        ) IS DISTINCT FROM states.v2_can_read
+        OR (
+          states.v2_can_read
+          AND date_trunc('milliseconds', subscription.current_period_end)
+            > states.transition_at
+          AND (
+            date_trunc('milliseconds', subscription.current_period_start)
+              IS DISTINCT FROM
+                date_trunc('milliseconds', states.period_start)
+            OR date_trunc('milliseconds', subscription.current_period_end)
+              IS DISTINCT FROM
+                date_trunc('milliseconds', states.period_end)
+          )
+        )
+      )
+  ),
+  future_access_transition_customers AS MATERIALIZED (
+    SELECT customer_id
+    FROM future_access_activation_or_revocation_customers
+
+    UNION
+
+    SELECT customer_id
+    FROM future_access_expiration_mismatch_customers
   ),
   observed_users AS (
     SELECT

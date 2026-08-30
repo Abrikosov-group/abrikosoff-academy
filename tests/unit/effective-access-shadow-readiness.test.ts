@@ -92,6 +92,9 @@ describe("локальная готовность effective access v2", () => {
       "future_access_transition_customers AS MATERIALIZED",
     );
     expect(client.query.mock.calls[1]?.[0]).toContain(
+      "future_access_expiration_states AS MATERIALIZED",
+    );
+    expect(client.query.mock.calls[1]?.[0]).toContain(
       "ambiguous_latest_subscriptions AS MATERIALIZED",
     );
     expect(client.query.mock.calls[1]?.[0]).not.toContain(

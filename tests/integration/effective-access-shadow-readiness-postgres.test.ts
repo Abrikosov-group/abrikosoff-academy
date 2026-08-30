@@ -290,16 +290,20 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       const futureUserId = randomUUID();
       const ambiguousSubscriptionUserId = randomUUID();
       const scheduledRevocationUserId = randomUUID();
+      const overlappingExpirationUserId = randomUUID();
+      const redundantExpirationUserId = randomUUID();
 
       await client.query(
         `
           INSERT INTO identity_users (id)
-          VALUES ($1), ($2), ($3)
+          VALUES ($1), ($2), ($3), ($4), ($5)
         `,
         [
           futureUserId,
           ambiguousSubscriptionUserId,
           scheduledRevocationUserId,
+          overlappingExpirationUserId,
+          redundantExpirationUserId,
         ],
       );
       await client.query(
@@ -344,12 +348,30 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z',
               '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              gen_random_uuid(),
+              $4,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              gen_random_uuid(),
+              $5,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
             )
         `,
         [
           ambiguousSubscriptionUserId,
           futureUserId,
           scheduledRevocationUserId,
+          overlappingExpirationUserId,
+          redundantExpirationUserId,
         ],
       );
       await client.query(
@@ -381,9 +403,50 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2020-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z'
+            ),
+            (
+              $3,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2090-01-01T00:00:00.000Z'
+            ),
+            (
+              $3,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2025-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z'
+            ),
+            (
+              $4,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z'
+            ),
+            (
+              $4,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2025-01-01T00:00:00.000Z',
+              '2090-01-01T00:00:00.000Z'
             )
         `,
-        [futureUserId, scheduledRevocationUserId],
+        [
+          futureUserId,
+          scheduledRevocationUserId,
+          overlappingExpirationUserId,
+          redundantExpirationUserId,
+        ],
       );
 
       await expect(
@@ -394,9 +457,9 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       ).resolves.toMatchObject({
         status: "blocked",
         observation: {
-          observedUserCount: 3,
-          mismatchCount: 2,
-          futureV2TransitionCount: 2,
+          observedUserCount: 5,
+          mismatchCount: 3,
+          futureV2TransitionCount: 3,
           ambiguousLatestSubscriptionCount: 1,
           manualGrantHistoryPresent: false,
         },
@@ -404,6 +467,31 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           "EFFECTIVE_ACCESS_FUTURE_TRANSITION",
           "LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS",
         ],
+      });
+
+      await expect(
+        service.getEffectiveAccess(
+          overlappingExpirationUserId,
+          new Date("2090-01-01T00:00:00.000Z"),
+        ),
+      ).resolves.toMatchObject({
+        canReadCourses: true,
+        activePeriod: {
+          start: "2025-01-01T00:00:00.000Z",
+          end: "2100-01-01T00:00:00.000Z",
+        },
+      });
+      await expect(
+        service.getEffectiveAccess(
+          redundantExpirationUserId,
+          new Date("2090-01-01T00:00:00.000Z"),
+        ),
+      ).resolves.toMatchObject({
+        canReadCourses: true,
+        activePeriod: {
+          start: "2020-01-01T00:00:00.000Z",
+          end: "2100-01-01T00:00:00.000Z",
+        },
       });
     } finally {
       client.release();
