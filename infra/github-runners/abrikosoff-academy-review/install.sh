@@ -13,7 +13,6 @@ readonly CACHE_DIRECTORY='/var/cache/github-actions-runner'
 readonly ARCHIVE_PATH="${CACHE_DIRECTORY}/${RUNNER_ARCHIVE}"
 readonly HOOK_GROUP='academyreview'
 readonly HOOK_DIRECTORY='/usr/local/libexec/abrikosoff-academy-review'
-readonly CODEX_AUTH_SOURCE='/var/lib/sawabook-review-codex/.codex/auth.json'
 readonly CODEX_VERSION='codex-cli 0.147.0'
 readonly CLAUDE_VERSION='2.1.226 (Claude Code)'
 readonly SERVICE_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
@@ -32,6 +31,8 @@ readonly CODEX_HOME='/var/lib/abrikosoff-academy-review-codex'
 readonly CODEX_ROOT='/var/lib/github-actions-runner-abrikosoff-academy-review-codex'
 readonly CODEX_NAME='abrikosoff-academy-review-codex-01'
 readonly CODEX_LABEL='abrikosoff-academy-review-codex'
+readonly CODEX_AUTH_PATH="${CODEX_HOME}/.codex/auth.json"
+readonly CODEX_SHELL='/usr/sbin/nologin'
 
 readonly CLAUDE_USER='academyreviewclaude'
 readonly CLAUDE_GROUP='academyreviewclaude'
@@ -80,6 +81,73 @@ validate_token "${ORCHESTRATION_NAME}" "${orchestration_token}"
 validate_token "${CODEX_NAME}" "${codex_token}"
 validate_token "${CLAUDE_NAME}" "${claude_token}"
 
+fail_codex_identity() {
+  printf 'Отдельная identity Codex для Academy не подготовлена: %s\n' "$1" >&2
+  exit 1
+}
+
+validate_codex_identity() {
+  local account_name home_directory login_shell passwd_record
+  local actual_groups expected_groups primary_group user_id
+
+  passwd_record="$(getent passwd "${CODEX_USER}")" ||
+    fail_codex_identity "Unix-пользователь ${CODEX_USER} отсутствует"
+  IFS=: read -r account_name _ _ _ _ home_directory login_shell \
+    <<< "${passwd_record}"
+  [[ "${account_name}" == "${CODEX_USER}" ]] ||
+    fail_codex_identity 'неожиданное имя Unix-пользователя'
+  [[ "${home_directory}" == "${CODEX_HOME}" ]] ||
+    fail_codex_identity 'неожиданный home-каталог'
+  [[ "${login_shell}" == "${CODEX_SHELL}" ]] ||
+    fail_codex_identity 'неожиданная login shell'
+
+  user_id="$(id -u "${CODEX_USER}")" ||
+    fail_codex_identity 'не удалось определить UID'
+  [[ "${user_id}" =~ ^[1-9][0-9]*$ ]] && (( user_id < 1000 )) ||
+    fail_codex_identity 'Unix-пользователь не является системным'
+  primary_group="$(id -gn "${CODEX_USER}")" ||
+    fail_codex_identity 'не удалось определить primary group'
+  [[ "${primary_group}" == "${CODEX_GROUP}" ]] ||
+    fail_codex_identity 'неожиданная primary group'
+  actual_groups="$(id -nG "${CODEX_USER}" | tr ' ' '\n' | sort -u)"
+  expected_groups="$(printf '%s\n%s\n' "${CODEX_GROUP}" "${HOOK_GROUP}" | sort -u)"
+  [[ "${actual_groups}" == "${expected_groups}" ]] ||
+    fail_codex_identity 'обнаружен неожиданный набор Unix-групп'
+
+  [[ -d "${CODEX_HOME}" && ! -L "${CODEX_HOME}" ]] ||
+    fail_codex_identity 'home отсутствует либо является символьной ссылкой'
+  [[ "$(stat -c '%U:%G:%a' -- "${CODEX_HOME}")" == \
+     "${CODEX_USER}:${CODEX_GROUP}:700" ]] ||
+    fail_codex_identity 'home имеет небезопасные права'
+  [[ -d "${CODEX_HOME}/.codex" && ! -L "${CODEX_HOME}/.codex" ]] ||
+    fail_codex_identity 'каталог .codex отсутствует либо является символьной ссылкой'
+  [[ "$(stat -c '%U:%G:%a' -- "${CODEX_HOME}/.codex")" == \
+     "${CODEX_USER}:${CODEX_GROUP}:700" ]] ||
+    fail_codex_identity 'каталог .codex имеет небезопасные права'
+}
+
+verify_codex_login() {
+  local codex_status
+
+  if ! codex_status="$(
+    # Переменную HOME раскрывает дочерний shell уже после смены пользователя.
+    # shellcheck disable=SC2016
+    runuser -u "${CODEX_USER}" -- env -i \
+      HOME="${CODEX_HOME}" \
+      CODEX_HOME="${CODEX_HOME}/.codex" \
+      PATH="${SERVICE_PATH}" \
+      LANG='C.UTF-8' \
+      sh -c 'cd -- "$HOME" && codex login status' 2>&1
+  )"; then
+    printf 'Отдельная авторизация Codex для Academy недействительна.\n' >&2
+    exit 1
+  fi
+  grep -Fx 'Logged in using ChatGPT' <<< "${codex_status}" >/dev/null || {
+    printf 'Codex для Academy не авторизован через ChatGPT.\n' >&2
+    exit 1
+  }
+}
+
 exec 9>"${BOOTSTRAP_LOCK}"
 flock --exclusive --nonblock 9 || {
   printf 'Установка Academy review-runners уже выполняется.\n' >&2
@@ -126,18 +194,27 @@ done < <(
     --type=service --no-legend --no-pager | awk '{print $1}'
 )
 
-[[ -f "${CODEX_AUTH_SOURCE}" && ! -L "${CODEX_AUTH_SOURCE}" ]] || {
-  printf 'Проверенный источник Codex OAuth отсутствует.\n' >&2
+validate_codex_identity
+[[ -f "${CODEX_AUTH_PATH}" && ! -L "${CODEX_AUTH_PATH}" ]] || {
+  printf 'Отдельный Academy Codex OAuth отсутствует.\n' >&2
   exit 1
 }
-[[ "$(stat -c '%U:%G:%a' -- "${CODEX_AUTH_SOURCE}")" == \
-   'sawabookreviewcodex:sawabookreviewcodex:600' ]] || {
-  printf 'Источник Codex OAuth имеет небезопасные права.\n' >&2
+[[ "$(stat -c '%U:%G:%a' -- "${CODEX_AUTH_PATH}")" == \
+   "${CODEX_USER}:${CODEX_GROUP}:600" ]] || {
+  printf 'Отдельный Academy Codex OAuth имеет небезопасные права.\n' >&2
   exit 1
 }
-auth_size="$(stat -c '%s' -- "${CODEX_AUTH_SOURCE}")"
+[[ "$(stat -c '%h' -- "${CODEX_AUTH_PATH}")" == '1' ]] || {
+  printf 'Отдельный Academy Codex OAuth имеет дополнительные жёсткие ссылки.\n' >&2
+  exit 1
+}
+[[ "$(realpath -e -- "${CODEX_AUTH_PATH}")" == "${CODEX_AUTH_PATH}" ]] || {
+  printf 'Отдельный Academy Codex OAuth имеет неожиданный канонический путь.\n' >&2
+  exit 1
+}
+auth_size="$(stat -c '%s' -- "${CODEX_AUTH_PATH}")"
 if [[ ! "${auth_size}" =~ ^[1-9][0-9]*$ ]] || (( auth_size > 1048576 )); then
-  printf 'Источник Codex OAuth имеет небезопасный размер.\n' >&2
+  printf 'Отдельный Academy Codex OAuth имеет небезопасный размер.\n' >&2
   exit 1
 fi
 
@@ -149,6 +226,7 @@ fi
   printf 'На сервере установлена неподдерживаемая версия Claude Code.\n' >&2
   exit 1
 }
+verify_codex_login
 
 bash -n "${BUNDLE_DIRECTORY}/verify-job.sh"
 bash -n "${BUNDLE_DIRECTORY}/cleanup-model-job.sh"
@@ -196,21 +274,17 @@ ensure_identity() {
   install -d -o "${user_name}" -g "${private_group}" -m 0700 "${home_directory}"
 }
 
-getent group "${HOOK_GROUP}" >/dev/null || groupadd --system "${HOOK_GROUP}"
+getent group "${HOOK_GROUP}" >/dev/null || {
+  printf 'Группа %s для заранее подготовленной Codex identity отсутствует.\n' \
+    "${HOOK_GROUP}" >&2
+  exit 1
+}
 ensure_identity \
   "${ORCHESTRATION_USER}" "${ORCHESTRATION_GROUP}" "${ORCHESTRATION_HOME}" \
   'GitHub runner оркестрации ревью Academy'
 ensure_identity \
-  "${CODEX_USER}" "${CODEX_GROUP}" "${CODEX_HOME}" \
-  'GitHub runner Codex для Academy'
-ensure_identity \
   "${CLAUDE_USER}" "${CLAUDE_GROUP}" "${CLAUDE_HOME}" \
   'GitHub runner Claude для Academy'
-
-install -d -o "${CODEX_USER}" -g "${CODEX_GROUP}" -m 0700 \
-  "${CODEX_HOME}/.codex"
-install -o "${CODEX_USER}" -g "${CODEX_GROUP}" -m 0600 \
-  "${CODEX_AUTH_SOURCE}" "${CODEX_HOME}/.codex/auth.json"
 
 install -d -o root -g "${HOOK_GROUP}" -m 0750 "${HOOK_DIRECTORY}"
 install -o root -g "${HOOK_GROUP}" -m 0750 \
@@ -236,21 +310,28 @@ configure_runner() {
 
   (
     cd -- "${runner_root}"
-    runuser -u "${user_name}" -- env -i \
-      HOME="${home_directory}" \
-      PATH="${SERVICE_PATH}" \
-      LANG='C.UTF-8' \
-      ./config.sh \
-        --unattended \
-        --url "https://github.com/${ORGANIZATION}" \
-        --token "${registration_token}" \
-        --name "${runner_name}" \
-        --runnergroup "${RUNNER_GROUP}" \
-        --labels "${runner_label}" \
-        --work '_work' \
-        --disableupdate
+    printf '%s\n' "${registration_token}" |
+      runuser -u "${user_name}" -- env -i \
+        HOME="${home_directory}" \
+        PATH="${SERVICE_PATH}" \
+        LANG='C.UTF-8' \
+        bash --noprofile --norc -c '
+          set -euo pipefail
+          IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
+          (( ${#ACTIONS_RUNNER_INPUT_TOKEN} >= 20 ))
+          export ACTIONS_RUNNER_INPUT_TOKEN
+          exec ./config.sh "$@"
+        ' -- \
+          --unattended \
+          --url "https://github.com/${ORGANIZATION}" \
+          --name "${runner_name}" \
+          --runnergroup "${RUNNER_GROUP}" \
+          --labels "${runner_label}" \
+          --work '_work' \
+          --disableupdate
     ./svc.sh install "${user_name}"
   )
+  registration_token=''
 
   service_name="$(tr -d '\r\n' < "${runner_root}/.service")"
   [[ "${service_name}" == "actions.runner.${ORGANIZATION}.${runner_name}.service" ]] || {
@@ -296,16 +377,6 @@ for runner_name in "${RUNNER_NAMES[@]}"; do
      'invisible' ]]
 done
 
-codex_status="$(
-  # Переменную HOME раскрывает дочерний shell уже после смены пользователя.
-  # shellcheck disable=SC2016
-  runuser -u "${CODEX_USER}" -- env -i \
-    HOME="${CODEX_HOME}" \
-    CODEX_HOME="${CODEX_HOME}/.codex" \
-    PATH="${SERVICE_PATH}" \
-    LANG='C.UTF-8' \
-    sh -c 'cd -- "$HOME" && codex login status' 2>&1
-)"
-grep -Fx 'Logged in using ChatGPT' <<< "${codex_status}" >/dev/null
+verify_codex_login
 
 printf 'Три изолированных Academy review-runner зарегистрированы и запущены.\n'
