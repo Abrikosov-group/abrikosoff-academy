@@ -1,9 +1,8 @@
 import "server-only";
 
 import { getDatabasePool } from "@/lib/database";
-import { getSubscriptionSummary } from "@/modules/billing/infrastructure/postgres-payment-repository";
-import { hasCurrentSubscriptionAccess } from "@/modules/billing/domain/subscription-access";
 import { getCurrentUser } from "@/modules/identity/server/session";
+import { readStudentCourseAccess } from "./read-student-course-access";
 
 export async function getAccessContext() {
   const user = await getCurrentUser();
@@ -16,7 +15,7 @@ export async function getAccessContext() {
     };
   }
 
-  const subscription = await getSubscriptionSummary(
+  const { subscription, canReadCourses } = await readStudentCourseAccess(
     getDatabasePool(),
     user.id,
   );
@@ -24,6 +23,6 @@ export async function getAccessContext() {
   return {
     user,
     subscription,
-    canReadCourses: hasCurrentSubscriptionAccess(subscription),
+    canReadCourses,
   };
 }

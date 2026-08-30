@@ -3,7 +3,13 @@ import Link from "next/link";
 import { AccountMenu } from "@/components/academy/account-menu";
 import { CabinetNavigation } from "@/components/academy/cabinet-navigation";
 import { getUserInitials } from "@/modules/identity/domain/user-presentation";
-import { getCabinetContext } from "./_lib/cabinet-context";
+import {
+  createCabinetAccessPresentation,
+} from "./_lib/cabinet-access-presentation";
+import {
+  getCabinetAccessBasisPresentation,
+  getCabinetContext,
+} from "./_lib/cabinet-context";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,9 +22,22 @@ export default async function DashboardLayout({
   const {
     user,
     canAccessAdministration,
+    subscription,
+    canReadCourses,
     subscriptionActive,
     subscriptionEnded,
+    appliedEffectiveAccess,
   } = await getCabinetContext();
+  const accessBasisPresentation =
+    getCabinetAccessBasisPresentation(appliedEffectiveAccess);
+  const accessPresentation = createCabinetAccessPresentation({
+    canReadCourses,
+    subscriptionActive,
+    subscriptionEnded,
+    hasSubscription: Boolean(subscription),
+    formattedPeriodEnd: null,
+    ...accessBasisPresentation,
+  });
 
   return (
     <main className="cabinet-page">
@@ -38,14 +57,12 @@ export default async function DashboardLayout({
         <div className="cabinet-header-actions">
           <span
             className={`badge ${
-              subscriptionActive ? "badge-success" : "badge-neutral"
+              accessPresentation.headerStatus.active
+                ? "badge-success"
+                : "badge-neutral"
             }`}
           >
-            {subscriptionActive
-              ? "Подписка активна"
-              : subscriptionEnded
-                ? "Доступ завершён"
-                : "Нет подписки"}
+            {accessPresentation.headerStatus.label}
           </span>
           <AccountMenu
             avatarUrl={user.avatarUrl}

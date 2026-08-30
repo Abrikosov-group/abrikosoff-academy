@@ -3,8 +3,12 @@ import Link from "next/link";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/ssr";
 import {
   formatCabinetDate,
+  getCabinetAccessBasisPresentation,
   getCabinetContext,
 } from "../_lib/cabinet-context";
+import {
+  createCabinetAccessPresentation,
+} from "../_lib/cabinet-access-presentation";
 
 export const metadata: Metadata = {
   title: "Подписка",
@@ -20,12 +24,24 @@ const included = [
 export default async function CabinetSubscriptionPage() {
   const {
     subscription,
+    canReadCourses,
     subscriptionActive,
     subscriptionEnded,
+    appliedEffectiveAccess,
   } = await getCabinetContext();
   const periodEnd = subscription?.currentPeriodEnd
     ? formatCabinetDate(subscription.currentPeriodEnd)
     : null;
+  const accessBasisPresentation =
+    getCabinetAccessBasisPresentation(appliedEffectiveAccess);
+  const accessPresentation = createCabinetAccessPresentation({
+    canReadCourses,
+    subscriptionActive,
+    subscriptionEnded,
+    hasSubscription: Boolean(subscription),
+    formattedPeriodEnd: periodEnd,
+    ...accessBasisPresentation,
+  });
 
   return (
     <>
@@ -72,6 +88,9 @@ export default async function CabinetSubscriptionPage() {
             Все материалы Академии доступны до конца оплаченного
             периода.
           </p>
+          {accessPresentation.additionalAccessNote ? (
+            <p>{accessPresentation.additionalAccessNote}</p>
+          ) : null}
           <Link
             className="button button-primary"
             href="/dashboard/courses"
@@ -81,10 +100,9 @@ export default async function CabinetSubscriptionPage() {
         </section>
       ) : (
         <>
-          {subscriptionEnded ? (
+          {accessPresentation.subscriptionStatusNote ? (
             <p className="cabinet-status-note">
-              Предыдущий оплаченный период завершился {periodEnd}.
-              Выберите новый тариф, чтобы восстановить доступ.
+              {accessPresentation.subscriptionStatusNote}
             </p>
           ) : null}
 
