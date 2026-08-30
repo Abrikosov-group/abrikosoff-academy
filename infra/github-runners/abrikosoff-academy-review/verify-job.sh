@@ -161,7 +161,7 @@ elif event_name == "issue_comment":
     comment = payload.get("comment")
     if not isinstance(issue, dict) or not isinstance(issue.get("pull_request"), dict):
         raise SystemExit(13)
-    if not isinstance(comment, dict) or comment.get("body") not in {"/review-all", "/review-claude"}:
+    if not isinstance(comment, dict) or comment.get("body") != "/review-all":
         raise SystemExit(14)
     if comment.get("author_association") not in {"OWNER", "MEMBER", "COLLABORATOR"}:
         raise SystemExit(15)

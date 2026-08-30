@@ -139,6 +139,10 @@ describe("организационное двойное ИИ-ревью", () => 
     expect(workflow).toContain("trigger: manual");
     expect(workflow).toContain("trigger: automatic");
     expect(workflow).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(runnerPolicy).toContain(
+      'comment.get("body") != "/review-all"',
+    );
+    expect(runnerPolicy).not.toContain("/review-claude");
   });
 
   it("не отменяет ручное ревью из-за недоступной служебной реакции", () => {

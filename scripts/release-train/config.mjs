@@ -65,6 +65,7 @@ export const INFRASTRUCTURE_NO_DEPLOY_PATHS = Object.freeze(
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
     ".github/workflows/review-all.yml",
+    ".github/workflows/self-hosted-runner-health-check.yml",
     ".github/workflows/train-lifecycle.yml",
     "AGENTS.md",
     "README.md",

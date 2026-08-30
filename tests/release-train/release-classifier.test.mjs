@@ -117,6 +117,10 @@ test("контур организационного ревью разрешён 
     validateInfrastructureFiles([
       { filename: ".github/workflows/review-all.yml", status: "added" },
       {
+        filename: ".github/workflows/self-hosted-runner-health-check.yml",
+        status: "added",
+      },
+      {
         filename: "infra/github-runners/abrikosoff-academy-review/README.md",
         status: "added",
       },
