@@ -41,23 +41,33 @@ export async function resolveStudentCourseAccess(input: {
   at: Date;
   legacyCanReadCourses: boolean;
   database?: Pool | PoolClient;
+  onShadowFallbackApplied?: () => void;
 }) {
-  const { database, ...accessInput } = input;
+  const {
+    database,
+    onShadowFallbackApplied,
+    ...accessInput
+  } = input;
   const runtime = getEffectiveAccessRuntime(database);
 
   return runtime.service.resolveCourseAccess({
     ...accessInput,
     config: runtime.config,
     observation: {
-      reportEvaluationFailure:
-        reportEffectiveAccessShadowEvaluationFailure,
+      reportEvaluationFailure: (error) => {
+        onShadowFallbackApplied?.();
+
+        return reportEffectiveAccessShadowEvaluationFailure(error);
+      },
       reportMismatch: reportEffectiveAccessShadowMismatch,
     },
   });
 }
 
-export async function validateEffectiveAccessConfiguration() {
-  const runtime = getEffectiveAccessRuntime();
+export async function validateEffectiveAccessConfiguration(
+  database: Pool | PoolClient = getDatabasePool(),
+) {
+  const runtime = getEffectiveAccessRuntime(database);
 
   await runtime.service.assertRolloutConfiguration(runtime.config);
 }
