@@ -156,6 +156,22 @@ test("контур организационного ревью разрешён 
   );
 });
 
+test("документация QA-процесса разрешена как infrastructure-no-deploy", () => {
+  assert.doesNotThrow(() =>
+    validateInfrastructureFiles([
+      { filename: "docs/architecture.md", status: "modified" },
+      {
+        filename: "docs/design/admin-student-card-v2.md",
+        status: "modified",
+      },
+      {
+        filename: "docs/operations/local-public-development.md",
+        status: "modified",
+      },
+    ]),
+  );
+});
+
 test("rename проверяет новый и предыдущий путь", () => {
   assert.throws(
     () =>
