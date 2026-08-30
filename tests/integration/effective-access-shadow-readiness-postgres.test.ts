@@ -29,6 +29,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
     const legacyOnlyUserId = randomUUID();
     const v2OnlyUserId = randomUUID();
     const boundaryMismatchUserId = randomUUID();
+    const nullPeriodEndUserId = randomUUID();
 
     try {
       await client.query(`
@@ -36,6 +37,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           id uuid PRIMARY KEY
         );
         CREATE TEMP TABLE billing_subscriptions (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           customer_id uuid NOT NULL,
           plan_id text NOT NULL DEFAULT 'monthly',
           status text NOT NULL,
@@ -69,7 +71,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       await client.query(
         `
           INSERT INTO identity_users (id)
-          VALUES ($1), ($2), ($3), ($4), ($5)
+          VALUES ($1), ($2), ($3), ($4), ($5), ($6)
         `,
         [
           noAccessUserId,
@@ -77,6 +79,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           legacyOnlyUserId,
           v2OnlyUserId,
           boundaryMismatchUserId,
+          nullPeriodEndUserId,
         ],
       );
       await client.query(
@@ -109,9 +112,21 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z',
               now()
+            ),
+            (
+              $4,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              NULL,
+              now()
             )
         `,
-        [matchingUserId, legacyOnlyUserId, boundaryMismatchUserId],
+        [
+          matchingUserId,
+          legacyOnlyUserId,
+          boundaryMismatchUserId,
+          nullPeriodEndUserId,
+        ],
       );
       await client.query(
         `
@@ -163,13 +178,15 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       expect(report).toMatchObject({
         status: "blocked",
         observation: {
-          observedUserCount: 5,
+          observedUserCount: 6,
           legacyCanReadCount: 3,
           v2CanReadCount: 3,
           mismatchCount: 3,
           legacyOnlyCount: 1,
           v2OnlyCount: 1,
           periodBoundaryMismatchCount: 1,
+          futureV2ActivationCount: 0,
+          ambiguousLatestSubscriptionCount: 0,
           manualGrantHistoryPresent: false,
         },
         blockers: [
@@ -194,6 +211,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
         legacyOnlyUserId,
         v2OnlyUserId,
         boundaryMismatchUserId,
+        nullPeriodEndUserId,
       ]) {
         const subscription = await getSubscriptionSummary(client, userId);
         const effectiveAccess = await service.getEffectiveAccess(
@@ -227,11 +245,21 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
         ),
       ).toHaveLength(report.observation.v2OnlyCount);
 
+      const nullPeriodEndSubscription =
+        await getSubscriptionSummary(client, nullPeriodEndUserId);
+      expect(nullPeriodEndSubscription?.currentPeriodEnd).toBeUndefined();
+      expect(
+        hasCurrentSubscriptionAccess(
+          nullPeriodEndSubscription,
+          evaluatedAt,
+        ),
+      ).toBe(false);
+
       const rowsAfterCheck = await client.query<{ count: string }>(
         "SELECT count(*) FROM identity_users",
       );
 
-      expect(rowsAfterCheck.rows[0]?.count).toBe("5");
+      expect(rowsAfterCheck.rows[0]?.count).toBe("6");
 
       await client.query(`
         TRUNCATE
@@ -252,9 +280,101 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           observedUserCount: 0,
           mismatchCount: 0,
           periodBoundaryMismatchCount: 0,
+          futureV2ActivationCount: 0,
+          ambiguousLatestSubscriptionCount: 0,
           manualGrantHistoryPresent: false,
         },
         blockers: [],
+      });
+
+      const futureUserId = randomUUID();
+      const ambiguousSubscriptionUserId = randomUUID();
+
+      await client.query(
+        `
+          INSERT INTO identity_users (id)
+          VALUES ($1), ($2)
+        `,
+        [futureUserId, ambiguousSubscriptionUserId],
+      );
+      await client.query(
+        `
+          INSERT INTO billing_subscriptions (
+            id,
+            customer_id,
+            status,
+            current_period_start,
+            current_period_end,
+            created_at
+          )
+          VALUES
+            (
+              '00000000-0000-0000-0000-000000000001',
+              $1,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              '00000000-0000-0000-0000-000000000002',
+              $1,
+              'canceled',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              gen_random_uuid(),
+              $2,
+              'pending',
+              '2090-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
+            )
+        `,
+        [ambiguousSubscriptionUserId, futureUserId],
+      );
+      await client.query(
+        `
+          INSERT INTO billing_access_grants (
+            customer_id,
+            status,
+            granted_at,
+            created_at,
+            period_start,
+            period_end
+          )
+          VALUES (
+            $1,
+            'granted',
+            '2020-01-01T00:00:00.000Z',
+            '2020-01-01T00:00:00.000Z',
+            '2090-01-01T00:00:00.000Z',
+            '2100-01-01T00:00:00.000Z'
+          )
+        `,
+        [futureUserId],
+      );
+
+      await expect(
+        inspectEffectiveAccessShadowReadiness(client, {
+          effectiveAccessMode: "shadow",
+          manualAccessGrantingEnabled: false,
+        }),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        observation: {
+          observedUserCount: 2,
+          mismatchCount: 1,
+          futureV2ActivationCount: 1,
+          ambiguousLatestSubscriptionCount: 1,
+          manualGrantHistoryPresent: false,
+        },
+        blockers: [
+          "EFFECTIVE_ACCESS_FUTURE_ACTIVATION",
+          "LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS",
+        ],
       });
     } finally {
       client.release();

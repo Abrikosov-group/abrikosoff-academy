@@ -2,6 +2,22 @@ const shadowReadinessSql = `
   WITH observation AS (
     SELECT clock_timestamp() AS evaluated_at
   ),
+  latest_subscription_timestamps AS MATERIALIZED (
+    SELECT
+      subscriptions.customer_id,
+      max(subscriptions.created_at) AS created_at
+    FROM billing_subscriptions subscriptions
+    GROUP BY subscriptions.customer_id
+  ),
+  ambiguous_latest_subscriptions AS MATERIALIZED (
+    SELECT subscriptions.customer_id
+    FROM billing_subscriptions subscriptions
+    JOIN latest_subscription_timestamps latest
+      ON latest.customer_id = subscriptions.customer_id
+      AND latest.created_at = subscriptions.created_at
+    GROUP BY subscriptions.customer_id
+    HAVING count(*) > 1
+  ),
   latest_subscriptions AS MATERIALIZED (
     SELECT DISTINCT ON (subscriptions.customer_id)
       subscriptions.customer_id,
@@ -9,7 +25,10 @@ const shadowReadinessSql = `
       subscriptions.current_period_start,
       subscriptions.current_period_end
     FROM billing_subscriptions subscriptions
-    ORDER BY subscriptions.customer_id, subscriptions.created_at DESC
+    ORDER BY
+      subscriptions.customer_id,
+      subscriptions.created_at DESC,
+      subscriptions.id DESC
   ),
   active_access_bases AS MATERIALIZED (
     SELECT
@@ -50,6 +69,59 @@ const shadowReadinessSql = `
       AND grants.period_start <= observation.evaluated_at
       AND grants.period_end > observation.evaluated_at
   ),
+  future_access_customers AS MATERIALIZED (
+    SELECT grants.customer_id
+    FROM billing_access_grants grants
+    CROSS JOIN observation
+    WHERE greatest(
+        grants.period_start,
+        grants.granted_at,
+        grants.created_at
+      ) > observation.evaluated_at
+      AND grants.period_end > greatest(
+        grants.period_start,
+        grants.granted_at,
+        grants.created_at
+      )
+      AND (
+        grants.status = 'granted'
+        OR (
+          grants.status = 'revoked'
+          AND grants.revoked_at > greatest(
+            grants.period_start,
+            grants.granted_at,
+            grants.created_at
+          )
+        )
+      )
+
+    UNION
+
+    SELECT grants.customer_id
+    FROM access_manual_grants grants
+    CROSS JOIN observation
+    WHERE greatest(
+        grants.period_start,
+        grants.granted_at,
+        grants.created_at
+      ) > observation.evaluated_at
+      AND grants.period_end > greatest(
+        grants.period_start,
+        grants.granted_at,
+        grants.created_at
+      )
+      AND (
+        grants.status = 'granted'
+        OR (
+          grants.status = 'revoked'
+          AND grants.revoked_at > greatest(
+            grants.period_start,
+            grants.granted_at,
+            grants.created_at
+          )
+        )
+      )
+  ),
   effective_periods AS (
     SELECT
       bases.customer_id,
@@ -67,6 +139,9 @@ const shadowReadinessSql = `
         false
       ) AS legacy_can_read,
       effective_periods.customer_id IS NOT NULL AS v2_can_read,
+      future_access.customer_id IS NOT NULL AS future_v2_activation,
+      ambiguous_subscription.customer_id IS NOT NULL
+        AS ambiguous_latest_subscription,
       (
         subscription.status IN ('active', 'grace_period')
         AND subscription.current_period_end > observation.evaluated_at
@@ -86,6 +161,10 @@ const shadowReadinessSql = `
       ON subscription.customer_id = users.id
     LEFT JOIN effective_periods
       ON effective_periods.customer_id = users.id
+    LEFT JOIN future_access_customers future_access
+      ON future_access.customer_id = users.id
+    LEFT JOIN ambiguous_latest_subscriptions ambiguous_subscription
+      ON ambiguous_subscription.customer_id = users.id
   ),
   summary AS (
     SELECT
@@ -100,7 +179,13 @@ const shadowReadinessSql = `
       ) AS v2_only_count,
       count(*) FILTER (
         WHERE period_boundary_mismatch
-      ) AS period_boundary_mismatch_count
+      ) AS period_boundary_mismatch_count,
+      count(*) FILTER (
+        WHERE future_v2_activation
+      ) AS future_v2_activation_count,
+      count(*) FILTER (
+        WHERE ambiguous_latest_subscription
+      ) AS ambiguous_latest_subscription_count
     FROM observed_users
   )
   SELECT
@@ -114,7 +199,9 @@ const shadowReadinessSql = `
     summary.v2_can_read_count,
     summary.legacy_only_count,
     summary.v2_only_count,
-    summary.period_boundary_mismatch_count
+    summary.period_boundary_mismatch_count,
+    summary.future_v2_activation_count,
+    summary.ambiguous_latest_subscription_count
   FROM summary
   CROSS JOIN observation
 `;
@@ -221,6 +308,14 @@ function createReport(row, configuration) {
     "period_boundary_mismatch_count",
     row.period_boundary_mismatch_count,
   );
+  const futureV2ActivationCount = parseCount(
+    "future_v2_activation_count",
+    row.future_v2_activation_count,
+  );
+  const ambiguousLatestSubscriptionCount = parseCount(
+    "ambiguous_latest_subscription_count",
+    row.ambiguous_latest_subscription_count,
+  );
   const blockers = [];
 
   if (row.manual_grant_history_present === true) {
@@ -235,6 +330,12 @@ function createReport(row, configuration) {
   if (periodBoundaryMismatchCount > 0) {
     blockers.push("EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH");
   }
+  if (futureV2ActivationCount > 0) {
+    blockers.push("EFFECTIVE_ACCESS_FUTURE_ACTIVATION");
+  }
+  if (ambiguousLatestSubscriptionCount > 0) {
+    blockers.push("LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS");
+  }
 
   return {
     status: blockers.length === 0 ? "ready" : "blocked",
@@ -247,10 +348,13 @@ function createReport(row, configuration) {
       mismatchCount:
         legacyOnlyCount +
         v2OnlyCount +
-        periodBoundaryMismatchCount,
+        periodBoundaryMismatchCount +
+        futureV2ActivationCount,
       legacyOnlyCount,
       v2OnlyCount,
       periodBoundaryMismatchCount,
+      futureV2ActivationCount,
+      ambiguousLatestSubscriptionCount,
       manualGrantHistoryPresent:
         row.manual_grant_history_present === true,
     },
