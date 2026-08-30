@@ -7,7 +7,7 @@ const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
   "postgresql://academy:academy-local-only@127.0.0.1:5432/academy_test";
 
-test("вход, оплата и доступ к уроку работают как единый сценарий", async ({
+test("вход, оплата и v2-доступ к уроку и кабинету работают как единый сценарий", async ({
   page,
 }) => {
   const invalidDemoLogin = await page.request.post("/api/auth/demo", {
@@ -215,6 +215,22 @@ test("вход, оплата и доступ к уроку работают ка
     ).toHaveAttribute("aria-current", "page");
   }
 
+  await page.goto("/dashboard/courses");
+  await expect(
+    page.getByRole("link", {
+      name: "Открыть первый урок",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", lessonPath);
+
+  await page.goto("/dashboard/subscription");
+  await expect(page.getByText("Доступ оплачен до")).toBeVisible();
+  await expect(
+    page.getByText(
+      "Все материалы Академии доступны до конца оплаченного периода.",
+    ),
+  ).toBeVisible();
+
   await page.goto("/dashboard/payments");
   await expect(page.getByText("Оплачен", { exact: true })).toBeVisible();
   await expect(page.getByText("14 000 ₽", { exact: true })).toBeVisible();
@@ -332,16 +348,37 @@ test("вход, оплата и доступ к уроку работают ка
   try {
     await database.query("BEGIN");
     await database.query(`
+      UPDATE billing_subscriptions
+      SET
+        status = 'expired',
+        current_period_end = now() - interval '1 second'
+      WHERE status = 'active'
+    `);
+    await database.query("COMMIT");
+
+    await page.goto(lessonPath);
+    await expect(page).toHaveURL(new RegExp(`${lessonPath}$`));
+
+    await page.goto("/dashboard/courses");
+    await expect(
+      page.getByRole("link", {
+        name: "Открыть первый урок",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", lessonPath);
+
+    await page.goto("/dashboard/subscription");
+    await expect(
+      page.getByText(/Оплаченный доступ действует до/),
+    ).toBeVisible();
+
+    await database.query("BEGIN");
+    await database.query(`
       UPDATE billing_access_grants
       SET
         period_start = now() - interval '2 seconds',
         period_end = now() - interval '1 second'
       WHERE status = 'granted'
-    `);
-    await database.query(`
-      UPDATE billing_subscriptions
-      SET current_period_end = now() - interval '1 second'
-      WHERE status = 'active'
     `);
     await database.query("COMMIT");
   } catch (error) {
