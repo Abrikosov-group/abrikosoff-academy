@@ -57,6 +57,9 @@ describe("YooKassaPaymentProvider", () => {
           currency: "RUB",
         },
         captured_at: "2026-07-28T10:05:00.000Z",
+        metadata: {
+          internal_order_id: "order-renewal-001",
+        },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -82,6 +85,7 @@ describe("YooKassaPaymentProvider", () => {
       merchantAccountId: "yookassa-primary",
       payment: {
         status: "succeeded",
+        internalOrderId: "order-renewal-001",
       },
     });
     expect(String(fetchMock.mock.calls[0][0])).toBe(

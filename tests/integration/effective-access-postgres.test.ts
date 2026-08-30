@@ -991,6 +991,76 @@ describe("эффективный доступ с PostgreSQL", () => {
     });
   });
 
+  it("сохраняет первый льготный период после создания второго", async () => {
+    const customerId = await insertUser(
+      "Ученик проверки двух льготных периодов",
+    );
+    const subscriptionId = randomUUID();
+    const firstStart = new Date("2041-06-01T10:00:00.000Z");
+    const firstInside = new Date("2041-06-02T10:00:00.000Z");
+    const firstEnd = new Date("2041-06-08T10:00:00.000Z");
+    const secondStart = new Date("2041-07-01T10:00:00.000Z");
+    const secondEnd = new Date("2041-07-08T10:00:00.000Z");
+
+    await pool.query(
+      `
+        INSERT INTO billing_subscriptions (
+          id, customer_id, plan_id, status, current_period_start,
+          current_period_end, auto_renew, cancel_at_period_end,
+          created_at, updated_at
+        )
+        VALUES (
+          $1, $2, 'monthly', 'grace_period', $3, $4, false, true,
+          $3, $5
+        )
+      `,
+      [subscriptionId, customerId, firstStart, firstEnd, secondStart],
+    );
+    await pool.query(
+      `
+        INSERT INTO billing_access_grace_periods (
+          subscription_id, customer_id, status, period_start, period_end,
+          created_at, updated_at, revoked_at
+        )
+        VALUES
+          ($1, $2, 'expired', $3, $4, $3, $4, $4),
+          ($1, $2, 'active', $5, $6, $5, $5, NULL)
+      `,
+      [
+        subscriptionId,
+        customerId,
+        firstStart,
+        firstEnd,
+        secondStart,
+        secondEnd,
+      ],
+    );
+
+    await expect(
+      service.getEffectiveAccess(customerId, firstInside),
+    ).resolves.toMatchObject({
+      canReadCourses: true,
+      activeBases: [
+        expect.objectContaining({
+          id: subscriptionId,
+          source: "grace",
+          periodStart: firstStart.toISOString(),
+          periodEnd: firstEnd.toISOString(),
+        }),
+      ],
+    });
+    await expect(
+      pool.query(
+        `
+          SELECT count(*)::integer AS count
+          FROM billing_access_grace_periods
+          WHERE subscription_id = $1
+        `,
+        [subscriptionId],
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 2 }] });
+  });
+
   it("защищает происхождение и жизненный цикл ручного гранта", async () => {
     const actorUserId = await insertUser(
       "Владелец проверки истории гранта",

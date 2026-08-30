@@ -122,8 +122,6 @@ CREATE TABLE billing_subscription_renewal_attempts (
   order_id uuid REFERENCES billing_orders(id),
   renewal_sequence integer NOT NULL CHECK (renewal_sequence > 0),
   attempt_number integer NOT NULL CHECK (attempt_number > 0),
-  transport_retry_count integer NOT NULL DEFAULT 0
-    CHECK (transport_retry_count >= 0),
   idempotency_key text NOT NULL UNIQUE,
   status text NOT NULL CHECK (
     status IN ('processing', 'retry_scheduled', 'succeeded', 'failed', 'canceled')
@@ -140,16 +138,12 @@ CREATE TABLE billing_subscription_renewal_attempts (
   UNIQUE (subscription_id, renewal_sequence, attempt_number)
 );
 
-CREATE UNIQUE INDEX billing_subscription_renewal_attempts_one_open_idx
-  ON billing_subscription_renewal_attempts (subscription_id)
-  WHERE status IN ('processing', 'retry_scheduled');
-
 CREATE INDEX billing_subscription_renewal_attempts_ready_idx
   ON billing_subscription_renewal_attempts (next_attempt_at, id)
   WHERE status IN ('processing', 'retry_scheduled');
 
 COMMENT ON TABLE billing_subscription_renewal_attempts IS
-  'Операции автоматического продления: одна незавершённая операция на подписку, отдельный ключ каждой финансовой попытки.';
+  'Идемпотентные попытки автоматического продления с постоянным ключом операции.';
 
 COMMENT ON COLUMN billing_orders.billing_mode IS
   'recurring для сохраняемого способа оплаты; one_time для криптовалюты и других разовых способов.';

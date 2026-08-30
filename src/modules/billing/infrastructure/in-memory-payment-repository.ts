@@ -59,6 +59,14 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     );
   }
 
+  async findCheckoutReservationByOrderId(orderId: string) {
+    for (const reservation of this.state.reservationsByIdempotencyKey.values()) {
+      if (reservation.orderId === orderId) return reservation;
+    }
+
+    return null;
+  }
+
   async reserveCheckout(
     input: ReserveCheckoutInput,
   ): Promise<CheckoutReservation> {

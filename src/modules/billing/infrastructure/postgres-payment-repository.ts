@@ -242,6 +242,18 @@ async function findReservationByIdempotencyKey(
   return result.rows[0] ? mapReservationRow(result.rows[0]) : null;
 }
 
+async function findReservationByOrderId(
+  client: Pool | PoolClient,
+  orderId: string,
+) {
+  const result = await client.query<CheckoutReservationRow>(
+    `${reservationSelect} WHERE orders.id = $1 LIMIT 1`,
+    [orderId],
+  );
+
+  return result.rows[0] ? mapReservationRow(result.rows[0]) : null;
+}
+
 async function findByIdempotencyKey(
   client: Pool | PoolClient,
   idempotencyKey: string,
@@ -817,7 +829,11 @@ async function activateSubscription(
           completed_at = $2,
           updated_at = now()
         WHERE order_id = $1
-          AND status IN ('processing', 'retry_scheduled')
+          AND status IN (
+            'processing',
+            'retry_scheduled',
+            'reconciliation_required'
+          )
       `,
       [checkout.orderId, activatedAt],
     );
@@ -837,6 +853,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
       this.pool,
       idempotencyKey,
     );
+  }
+
+  async findCheckoutReservationByOrderId(orderId: string) {
+    return findReservationByOrderId(this.pool, orderId);
   }
 
   async reserveCheckout(input: ReserveCheckoutInput) {
@@ -1519,7 +1539,11 @@ export async function setSubscriptionRenewal(
             SELECT 1
             FROM billing_subscription_renewal_attempts attempts
             WHERE attempts.subscription_id = subscriptions.id
-              AND attempts.status IN ('processing', 'retry_scheduled')
+              AND attempts.status IN (
+                'processing',
+                'retry_scheduled',
+                'reconciliation_required'
+              )
           ) AS has_open_renewal
         FROM billing_subscriptions subscriptions
         LEFT JOIN billing_payment_mandates mandates
@@ -1595,7 +1619,11 @@ export async function setSubscriptionRenewal(
             completed_at = $2,
             updated_at = now()
           WHERE subscription_id = $1
-            AND status IN ('processing', 'retry_scheduled')
+            AND status IN (
+              'processing',
+              'retry_scheduled',
+              'reconciliation_required'
+            )
         `,
         [subscription.id, changedAt],
       );

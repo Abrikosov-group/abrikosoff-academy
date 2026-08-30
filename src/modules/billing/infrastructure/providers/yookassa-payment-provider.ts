@@ -164,11 +164,17 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
     paymentMethodSaved && typeof paymentMethod?.id === "string"
       ? paymentMethod.id
       : undefined;
+  const metadata = asRecord(payment.metadata);
+  const internalOrderId =
+    metadata && typeof metadata.internal_order_id === "string"
+      ? metadata.internal_order_id
+      : undefined;
 
   return {
     externalPaymentId: requiredString(payment, "id"),
     status: mapPaymentStatus(requiredString(payment, "status")),
     money: parseMoney(payment.amount),
+    internalOrderId,
     confirmationUrl,
     paidAt,
     paymentMethodToken,

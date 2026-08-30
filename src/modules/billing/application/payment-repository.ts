@@ -49,6 +49,10 @@ export interface PaymentRepository {
     idempotencyKey: string,
   ): Promise<CheckoutReservation | null>;
 
+  findCheckoutReservationByOrderId(
+    orderId: string,
+  ): Promise<CheckoutReservation | null>;
+
   reserveCheckout(
     input: ReserveCheckoutInput,
   ): Promise<CheckoutReservation>;

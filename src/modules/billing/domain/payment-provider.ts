@@ -30,6 +30,7 @@ export type ProviderPayment = {
   externalPaymentId: string;
   status: PaymentStatus;
   money: Money;
+  internalOrderId?: string;
   confirmationUrl?: string;
   paidAt?: string;
   paymentMethodToken?: string;

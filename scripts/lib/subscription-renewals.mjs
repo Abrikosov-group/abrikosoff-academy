@@ -78,35 +78,40 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
     throw new Error("RENEWAL_PROVIDER_NOT_CONFIGURED");
   }
 
-  const response = await fetchImplementation(
-    "https://api.yookassa.ru/v3/payments",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString("base64")}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "Idempotence-Key": row.idempotency_key,
-      },
-      body: JSON.stringify({
-        amount: formatMoney(row.amount_minor, row.currency),
-        capture: true,
-        payment_method_id: row.provider_payment_method_token,
-        description: `Продление: ${row.plan_id === "annual" ? "Годовой" : "Месячный"} тариф — Академия Абрикософф`,
-        receipt: receiptFor(row),
-        metadata: {
-          internal_order_id: row.order_id,
-          customer_id: row.customer_id,
-          plan_id: row.plan_id,
-          legal_entity_id: row.legal_entity_id,
-          operation: "subscription_renewal",
+  let response;
+
+  try {
+    response = await fetchImplementation(
+      "https://api.yookassa.ru/v3/payments",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString("base64")}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Idempotence-Key": row.idempotency_key,
         },
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    },
-  );
-  const payload = await response.json();
+        body: JSON.stringify({
+          amount: formatMoney(row.amount_minor, row.currency),
+          capture: true,
+          payment_method_id: row.provider_payment_method_token,
+          description: `Продление: ${row.plan_id === "annual" ? "Годовой" : "Месячный"} тариф — Академия Абрикософф`,
+          receipt: receiptFor(row),
+          metadata: {
+            internal_order_id: row.order_id,
+            customer_id: row.customer_id,
+            plan_id: row.plan_id,
+            legal_entity_id: row.legal_entity_id,
+            operation: "subscription_renewal",
+          },
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+  } catch (error) {
+    throw new Error("RENEWAL_PROVIDER_OUTCOME_UNKNOWN", { cause: error });
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -114,6 +119,24 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
         ? "RENEWAL_PROVIDER_TEMPORARY_FAILURE"
         : "RENEWAL_PROVIDER_REJECTED",
     );
+  }
+
+  let payload;
+
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new Error("RENEWAL_PROVIDER_OUTCOME_UNKNOWN", { cause: error });
+  }
+
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    typeof payload.id !== "string" ||
+    payload.id.length === 0 ||
+    typeof payload.status !== "string"
+  ) {
+    throw new Error("RENEWAL_PROVIDER_OUTCOME_UNKNOWN");
   }
 
   return {
@@ -260,7 +283,11 @@ async function claimRenewal(client, now) {
               SELECT 1
               FROM billing_subscription_renewal_attempts open_attempts
               WHERE open_attempts.subscription_id = subscriptions.id
-                AND open_attempts.status IN ('processing', 'retry_scheduled')
+                AND open_attempts.status IN (
+                  'processing',
+                  'retry_scheduled',
+                  'reconciliation_required'
+                )
             )
           ORDER BY subscriptions.renewal_due_at, subscriptions.id
           LIMIT 1
@@ -488,10 +515,110 @@ async function renewalStillAllowed(client, row) {
   }
 }
 
+async function createOrRefreshGracePeriod(
+  client,
+  row,
+  periodEnd,
+  now,
+) {
+  await client.query(
+    `
+      UPDATE billing_access_grace_periods
+      SET status = 'expired', revoked_at = $4, updated_at = now()
+      WHERE subscription_id = $1
+        AND status = 'active'
+        AND (period_start, period_end) <> ($2::timestamptz, $3::timestamptz)
+    `,
+    [row.subscription_id, row.period_start, periodEnd, now],
+  );
+  await client.query(
+    `
+      INSERT INTO billing_access_grace_periods (
+        subscription_id, customer_id, status, period_start, period_end
+      )
+      VALUES ($1, $2, 'active', $3, $4)
+      ON CONFLICT (subscription_id, period_start, period_end)
+      DO UPDATE SET
+        status = 'active',
+        revoked_at = NULL,
+        updated_at = now()
+    `,
+    [row.subscription_id, row.customer_id, row.period_start, periodEnd],
+  );
+}
+
+async function expireEndedGracePeriods(client, now) {
+  await client.query("BEGIN");
+
+  try {
+    const expired = await client.query(
+      `
+        UPDATE billing_access_grace_periods grace
+        SET status = 'expired', revoked_at = $1, updated_at = now()
+        FROM billing_subscription_renewal_attempts attempts
+        WHERE grace.status = 'active'
+          AND grace.period_end <= $1
+          AND attempts.subscription_id = grace.subscription_id
+          AND attempts.status = 'reconciliation_required'
+        RETURNING grace.subscription_id, grace.customer_id, grace.period_end
+      `,
+      [now],
+    );
+
+    for (const row of expired.rows) {
+      const subscription = await client.query(
+        `
+          UPDATE billing_subscriptions
+          SET status = 'past_due', updated_at = now()
+          WHERE id = $1 AND status = 'grace_period'
+          RETURNING id
+        `,
+        [row.subscription_id],
+      );
+
+      if (subscription.rowCount) {
+        await client.query(
+          `
+            INSERT INTO billing_subscription_events (
+              id, subscription_id, customer_id, event_type, details, occurred_at
+            )
+            VALUES ($1, $2, $3, 'subscription.expired', $4::jsonb, $5)
+          `,
+          [
+            randomUUID(),
+            row.subscription_id,
+            row.customer_id,
+            JSON.stringify({ gracePeriodEnd: row.period_end.toISOString() }),
+            now,
+          ],
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
 async function completeRenewal(client, row, payment, now) {
   await client.query("BEGIN");
 
   try {
+    const previousPayment = await client.query(
+      `
+        SELECT id, status
+        FROM billing_payments
+        WHERE provider = $1
+          AND merchant_account_id = $2
+          AND provider_operation_key = $3
+        FOR UPDATE
+      `,
+      [row.provider, row.merchant_account_id, row.idempotency_key],
+    );
+    const previousStatus = previousPayment.rows[0]?.status ?? null;
+    const paymentId = previousPayment.rows[0]?.id ?? randomUUID();
     const savedPayment = await client.query(
       `
         INSERT INTO billing_payments (
@@ -511,7 +638,7 @@ async function completeRenewal(client, row, payment, now) {
         RETURNING id
       `,
       [
-        randomUUID(), row.order_id, row.provider, row.merchant_account_id,
+        paymentId, row.order_id, row.provider, row.merchant_account_id,
         payment.externalPaymentId, row.idempotency_key, payment.status,
         row.amount_minor, row.currency, payment.paymentMethodToken,
         payment.paidAt,
@@ -520,6 +647,29 @@ async function completeRenewal(client, row, payment, now) {
 
     if (!savedPayment.rowCount) {
       throw new Error("RENEWAL_PROVIDER_OPERATION_MISMATCH");
+    }
+    if (previousStatus !== payment.status) {
+      await client.query(
+        `
+          INSERT INTO billing_payment_events (
+            id, payment_id, event_type, from_status, to_status, details,
+            occurred_at
+          )
+          VALUES ($1, $2, 'payment.renewal_provider_result', $3, $4, $5::jsonb, $6)
+        `,
+        [
+          randomUUID(),
+          savedPayment.rows[0].id,
+          previousStatus,
+          payment.status,
+          JSON.stringify({
+            source: "subscription_renewal",
+            renewalSequence: row.renewal_sequence,
+            attemptNumber: row.attempt_number,
+          }),
+          now,
+        ],
+      );
     }
     await client.query(
       "UPDATE billing_orders SET status = $2, updated_at = now() WHERE id = $1",
@@ -610,24 +760,13 @@ async function completeRenewal(client, row, payment, now) {
         `,
         [row.subscription_id, now],
       );
-      await client.query(
-        `
-          INSERT INTO billing_access_grace_periods (
-            subscription_id, customer_id, status, period_start, period_end
-          )
-          VALUES (
-            $1, $2, 'active', $3,
-            $3::timestamptz + interval '7 days'
-          )
-          ON CONFLICT (subscription_id)
-          DO UPDATE SET
-            status = 'active',
-            period_start = EXCLUDED.period_start,
-            period_end = EXCLUDED.period_end,
-            revoked_at = NULL,
-            updated_at = now()
-        `,
-        [row.subscription_id, row.customer_id, row.period_start],
+      await createOrRefreshGracePeriod(
+        client,
+        row,
+        new Date(
+          new Date(row.period_start).getTime() + gracePeriodMilliseconds,
+        ),
+        now,
       );
     }
 
@@ -642,11 +781,15 @@ async function failRenewal(client, row, errorCode, now) {
   await client.query("BEGIN");
 
   try {
+    const reconciliationRequired =
+      errorCode === "RENEWAL_PROVIDER_OUTCOME_UNKNOWN";
     const startsNewFinancialAttempt =
       errorCode === "RENEWAL_PROVIDER_REJECTED";
     const finalFailure =
-      (startsNewFinancialAttempt && row.attempt_number >= maxAttempts) ||
-      now.getTime() >= new Date(row.period_start).getTime() + gracePeriodMilliseconds;
+      !reconciliationRequired &&
+      ((startsNewFinancialAttempt && row.attempt_number >= maxAttempts) ||
+        now.getTime() >=
+          new Date(row.period_start).getTime() + gracePeriodMilliseconds);
     const graceEnd = new Date(
       new Date(row.period_start).getTime() + gracePeriodMilliseconds,
     );
@@ -666,7 +809,7 @@ async function failRenewal(client, row, errorCode, now) {
     const retryOrdinal = startsNewFinancialAttempt
       ? row.attempt_number - 1
       : row.transport_retry_count;
-    const retryAt = finalFailure
+    const retryAt = reconciliationRequired || finalFailure
       ? now
       : new Date(
           Math.min(
@@ -698,13 +841,23 @@ async function failRenewal(client, row, errorCode, now) {
       `,
       [
         row.id,
-        finalFailure ? "failed" : "retry_scheduled",
+        reconciliationRequired
+          ? "reconciliation_required"
+          : finalFailure
+            ? "failed"
+            : "retry_scheduled",
         retryAt,
         errorCode,
         now,
-        finalFailure ? row.attempt_number : nextAttemptNumber,
-        finalFailure ? row.transport_retry_count : nextTransportRetryCount,
-        finalFailure ? row.idempotency_key : nextIdempotencyKey,
+        reconciliationRequired || finalFailure
+          ? row.attempt_number
+          : nextAttemptNumber,
+        reconciliationRequired || finalFailure
+          ? row.transport_retry_count
+          : nextTransportRetryCount,
+        reconciliationRequired || finalFailure
+          ? row.idempotency_key
+          : nextIdempotencyKey,
       ],
     );
     await client.query(
@@ -732,22 +885,7 @@ async function failRenewal(client, row, errorCode, now) {
     );
 
     if (!finalFailure) {
-      await client.query(
-        `
-          INSERT INTO billing_access_grace_periods (
-            subscription_id, customer_id, status, period_start, period_end
-          )
-          VALUES ($1, $2, 'active', $3, $4)
-          ON CONFLICT (subscription_id)
-          DO UPDATE SET
-            status = 'active',
-            period_start = EXCLUDED.period_start,
-            period_end = EXCLUDED.period_end,
-            revoked_at = NULL,
-            updated_at = now()
-        `,
-        [row.subscription_id, row.customer_id, row.period_start, graceEnd],
-      );
+      await createOrRefreshGracePeriod(client, row, graceEnd, now);
     } else {
       await client.query(
         "UPDATE billing_orders SET status = 'canceled', updated_at = now() WHERE id = $1",
@@ -779,7 +917,10 @@ async function failRenewal(client, row, errorCode, now) {
           renewalSequence: row.renewal_sequence,
           attemptNumber: row.attempt_number,
           errorCode,
-          nextAttemptAt: finalFailure ? null : retryAt.toISOString(),
+          nextAttemptAt:
+            reconciliationRequired || finalFailure
+              ? null
+              : retryAt.toISOString(),
         }),
         now,
       ],
@@ -804,6 +945,8 @@ export async function processSubscriptionRenewals(
   let succeeded = 0;
   let rescheduled = 0;
   let failed = 0;
+
+  await expireEndedGracePeriods(client, now());
 
   while (processed < batchSize) {
     const startedAt = now();

@@ -187,20 +187,12 @@ export class PaymentService {
   ) {
     const provider = this.options.router.getProvider(providerId);
     const reference = provider.parseWebhookReference(rawBody, headers);
-    const knownCheckout =
+    let knownCheckout =
       await this.options.repository.findCheckoutByExternalPaymentId(
         providerId,
         reference.merchantAccountId,
         reference.externalPaymentId,
       );
-
-    if (!knownCheckout) {
-      throw new BillingError(
-        "WEBHOOK_NOT_READY",
-        "Платёж пока не найден. Уведомление будет обработано повторно.",
-        503,
-      );
-    }
 
     const event = await provider.parseAndVerifyWebhook(rawBody, headers);
     const payloadSha256 = sha256(rawBody);
@@ -219,6 +211,44 @@ export class PaymentService {
     }
 
     if (event.kind === "payment") {
+      if (!knownCheckout && event.payment.internalOrderId) {
+        const reservation =
+          await this.options.repository.findCheckoutReservationByOrderId(
+            event.payment.internalOrderId,
+          );
+
+        if (
+          reservation &&
+          reservation.provider === providerId &&
+          reservation.merchantAccountId === event.merchantAccountId
+        ) {
+          assertProviderMoneyMatchesCheckout(
+            reservation,
+            event.payment.money.amountMinor,
+            event.payment.money.currency,
+          );
+          knownCheckout = await this.options.repository.saveCheckout({
+            ...reservation,
+            paymentId: randomUUID(),
+            externalPaymentId: event.payment.externalPaymentId,
+            status: event.payment.status,
+            confirmationUrl: event.payment.confirmationUrl ?? "",
+            updatedAt: event.occurredAt,
+            paymentMethodToken: event.payment.paymentMethodToken,
+            paymentMethodSaved:
+              event.payment.paymentMethodSaved === true,
+          });
+        }
+      }
+
+      if (!knownCheckout) {
+        throw new BillingError(
+          "WEBHOOK_NOT_READY",
+          "Платёж пока не найден. Уведомление будет обработано повторно.",
+          503,
+        );
+      }
+
       assertProviderMoneyMatchesCheckout(
         knownCheckout,
         event.payment.money.amountMinor,
@@ -238,6 +268,14 @@ export class PaymentService {
         payloadSha256,
         payload: event.auditPayload,
       });
+    }
+
+    if (!knownCheckout) {
+      throw new BillingError(
+        "WEBHOOK_NOT_READY",
+        "Платёж пока не найден. Уведомление будет обработано повторно.",
+        503,
+      );
     }
 
     if (
