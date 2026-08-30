@@ -69,29 +69,41 @@ const shadowReadinessSql = `
       AND grants.period_start <= observation.evaluated_at
       AND grants.period_end > observation.evaluated_at
   ),
-  future_access_customers AS MATERIALIZED (
+  future_access_transition_customers AS MATERIALIZED (
     SELECT grants.customer_id
     FROM billing_access_grants grants
     CROSS JOIN observation
-    WHERE greatest(
-        grants.period_start,
-        grants.granted_at,
-        grants.created_at
-      ) > observation.evaluated_at
-      AND grants.period_end > greatest(
-        grants.period_start,
-        grants.granted_at,
-        grants.created_at
-      )
-      AND (
-        grants.status = 'granted'
-        OR (
-          grants.status = 'revoked'
-          AND grants.revoked_at > greatest(
-            grants.period_start,
-            grants.granted_at,
-            grants.created_at
+    WHERE (
+        greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
+        ) > observation.evaluated_at
+        AND grants.period_end > greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
+        )
+        AND (
+          grants.status = 'granted'
+          OR (
+            grants.status = 'revoked'
+            AND grants.revoked_at > greatest(
+              grants.period_start,
+              grants.granted_at,
+              grants.created_at
+            )
           )
+        )
+      )
+      OR (
+        grants.status = 'revoked'
+        AND grants.revoked_at > observation.evaluated_at
+        AND grants.revoked_at < grants.period_end
+        AND grants.revoked_at > greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
         )
       )
 
@@ -100,25 +112,37 @@ const shadowReadinessSql = `
     SELECT grants.customer_id
     FROM access_manual_grants grants
     CROSS JOIN observation
-    WHERE greatest(
-        grants.period_start,
-        grants.granted_at,
-        grants.created_at
-      ) > observation.evaluated_at
-      AND grants.period_end > greatest(
-        grants.period_start,
-        grants.granted_at,
-        grants.created_at
-      )
-      AND (
-        grants.status = 'granted'
-        OR (
-          grants.status = 'revoked'
-          AND grants.revoked_at > greatest(
-            grants.period_start,
-            grants.granted_at,
-            grants.created_at
+    WHERE (
+        greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
+        ) > observation.evaluated_at
+        AND grants.period_end > greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
+        )
+        AND (
+          grants.status = 'granted'
+          OR (
+            grants.status = 'revoked'
+            AND grants.revoked_at > greatest(
+              grants.period_start,
+              grants.granted_at,
+              grants.created_at
+            )
           )
+        )
+      )
+      OR (
+        grants.status = 'revoked'
+        AND grants.revoked_at > observation.evaluated_at
+        AND grants.revoked_at < grants.period_end
+        AND grants.revoked_at > greatest(
+          grants.period_start,
+          grants.granted_at,
+          grants.created_at
         )
       )
   ),
@@ -139,7 +163,7 @@ const shadowReadinessSql = `
         false
       ) AS legacy_can_read,
       effective_periods.customer_id IS NOT NULL AS v2_can_read,
-      future_access.customer_id IS NOT NULL AS future_v2_activation,
+      future_transition.customer_id IS NOT NULL AS future_v2_transition,
       ambiguous_subscription.customer_id IS NOT NULL
         AS ambiguous_latest_subscription,
       (
@@ -161,8 +185,8 @@ const shadowReadinessSql = `
       ON subscription.customer_id = users.id
     LEFT JOIN effective_periods
       ON effective_periods.customer_id = users.id
-    LEFT JOIN future_access_customers future_access
-      ON future_access.customer_id = users.id
+    LEFT JOIN future_access_transition_customers future_transition
+      ON future_transition.customer_id = users.id
     LEFT JOIN ambiguous_latest_subscriptions ambiguous_subscription
       ON ambiguous_subscription.customer_id = users.id
   ),
@@ -181,8 +205,8 @@ const shadowReadinessSql = `
         WHERE period_boundary_mismatch
       ) AS period_boundary_mismatch_count,
       count(*) FILTER (
-        WHERE future_v2_activation
-      ) AS future_v2_activation_count,
+        WHERE future_v2_transition
+      ) AS future_v2_transition_count,
       count(*) FILTER (
         WHERE ambiguous_latest_subscription
       ) AS ambiguous_latest_subscription_count
@@ -200,7 +224,7 @@ const shadowReadinessSql = `
     summary.legacy_only_count,
     summary.v2_only_count,
     summary.period_boundary_mismatch_count,
-    summary.future_v2_activation_count,
+    summary.future_v2_transition_count,
     summary.ambiguous_latest_subscription_count
   FROM summary
   CROSS JOIN observation
@@ -308,9 +332,9 @@ function createReport(row, configuration) {
     "period_boundary_mismatch_count",
     row.period_boundary_mismatch_count,
   );
-  const futureV2ActivationCount = parseCount(
-    "future_v2_activation_count",
-    row.future_v2_activation_count,
+  const futureV2TransitionCount = parseCount(
+    "future_v2_transition_count",
+    row.future_v2_transition_count,
   );
   const ambiguousLatestSubscriptionCount = parseCount(
     "ambiguous_latest_subscription_count",
@@ -330,8 +354,8 @@ function createReport(row, configuration) {
   if (periodBoundaryMismatchCount > 0) {
     blockers.push("EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH");
   }
-  if (futureV2ActivationCount > 0) {
-    blockers.push("EFFECTIVE_ACCESS_FUTURE_ACTIVATION");
+  if (futureV2TransitionCount > 0) {
+    blockers.push("EFFECTIVE_ACCESS_FUTURE_TRANSITION");
   }
   if (ambiguousLatestSubscriptionCount > 0) {
     blockers.push("LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS");
@@ -349,11 +373,11 @@ function createReport(row, configuration) {
         legacyOnlyCount +
         v2OnlyCount +
         periodBoundaryMismatchCount +
-        futureV2ActivationCount,
+        futureV2TransitionCount,
       legacyOnlyCount,
       v2OnlyCount,
       periodBoundaryMismatchCount,
-      futureV2ActivationCount,
+      futureV2TransitionCount,
       ambiguousLatestSubscriptionCount,
       manualGrantHistoryPresent:
         row.manual_grant_history_present === true,

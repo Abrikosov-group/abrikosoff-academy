@@ -29,7 +29,7 @@ const readyRow = {
   legacy_only_count: "0",
   v2_only_count: "0",
   period_boundary_mismatch_count: "0",
-  future_v2_activation_count: "0",
+  future_v2_transition_count: "0",
   ambiguous_latest_subscription_count: "0",
 };
 
@@ -70,7 +70,7 @@ describe("локальная готовность effective access v2", () => {
         legacyOnlyCount: 0,
         v2OnlyCount: 0,
         periodBoundaryMismatchCount: 0,
-        futureV2ActivationCount: 0,
+        futureV2TransitionCount: 0,
         ambiguousLatestSubscriptionCount: 0,
         manualGrantHistoryPresent: false,
       },
@@ -89,7 +89,7 @@ describe("локальная готовность effective access v2", () => {
       "active_access_bases AS MATERIALIZED",
     );
     expect(client.query.mock.calls[1]?.[0]).toContain(
-      "future_access_customers AS MATERIALIZED",
+      "future_access_transition_customers AS MATERIALIZED",
     );
     expect(client.query.mock.calls[1]?.[0]).toContain(
       "ambiguous_latest_subscriptions AS MATERIALIZED",
@@ -109,7 +109,7 @@ describe("локальная готовность effective access v2", () => {
       legacy_only_count: "2",
       v2_only_count: "1",
       period_boundary_mismatch_count: "1",
-      future_v2_activation_count: "1",
+      future_v2_transition_count: "1",
       ambiguous_latest_subscription_count: "1",
     });
 
@@ -125,13 +125,13 @@ describe("локальная готовность effective access v2", () => {
         "EFFECTIVE_ACCESS_LEGACY_ONLY",
         "EFFECTIVE_ACCESS_V2_ONLY",
         "EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH",
-        "EFFECTIVE_ACCESS_FUTURE_ACTIVATION",
+        "EFFECTIVE_ACCESS_FUTURE_TRANSITION",
         "LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS",
       ],
       observation: {
         mismatchCount: 5,
         periodBoundaryMismatchCount: 1,
-        futureV2ActivationCount: 1,
+        futureV2TransitionCount: 1,
         ambiguousLatestSubscriptionCount: 1,
         manualGrantHistoryPresent: true,
       },

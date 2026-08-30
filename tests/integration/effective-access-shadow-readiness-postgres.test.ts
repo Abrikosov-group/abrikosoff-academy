@@ -185,7 +185,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           legacyOnlyCount: 1,
           v2OnlyCount: 1,
           periodBoundaryMismatchCount: 1,
-          futureV2ActivationCount: 0,
+          futureV2TransitionCount: 0,
           ambiguousLatestSubscriptionCount: 0,
           manualGrantHistoryPresent: false,
         },
@@ -280,7 +280,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           observedUserCount: 0,
           mismatchCount: 0,
           periodBoundaryMismatchCount: 0,
-          futureV2ActivationCount: 0,
+          futureV2TransitionCount: 0,
           ambiguousLatestSubscriptionCount: 0,
           manualGrantHistoryPresent: false,
         },
@@ -289,13 +289,18 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
 
       const futureUserId = randomUUID();
       const ambiguousSubscriptionUserId = randomUUID();
+      const scheduledRevocationUserId = randomUUID();
 
       await client.query(
         `
           INSERT INTO identity_users (id)
-          VALUES ($1), ($2)
+          VALUES ($1), ($2), ($3)
         `,
-        [futureUserId, ambiguousSubscriptionUserId],
+        [
+          futureUserId,
+          ambiguousSubscriptionUserId,
+          scheduledRevocationUserId,
+        ],
       );
       await client.query(
         `
@@ -331,30 +336,54 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2090-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z',
               '2020-01-01T00:00:00.000Z'
+            ),
+            (
+              gen_random_uuid(),
+              $3,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z'
             )
         `,
-        [ambiguousSubscriptionUserId, futureUserId],
+        [
+          ambiguousSubscriptionUserId,
+          futureUserId,
+          scheduledRevocationUserId,
+        ],
       );
       await client.query(
         `
           INSERT INTO billing_access_grants (
             customer_id,
             status,
+            revoked_at,
             granted_at,
             created_at,
             period_start,
             period_end
           )
-          VALUES (
-            $1,
-            'granted',
-            '2020-01-01T00:00:00.000Z',
-            '2020-01-01T00:00:00.000Z',
-            '2090-01-01T00:00:00.000Z',
-            '2100-01-01T00:00:00.000Z'
-          )
+          VALUES
+            (
+              $1,
+              'granted',
+              NULL,
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2090-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z'
+            ),
+            (
+              $2,
+              'revoked',
+              '2090-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z'
+            )
         `,
-        [futureUserId],
+        [futureUserId, scheduledRevocationUserId],
       );
 
       await expect(
@@ -365,14 +394,14 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       ).resolves.toMatchObject({
         status: "blocked",
         observation: {
-          observedUserCount: 2,
-          mismatchCount: 1,
-          futureV2ActivationCount: 1,
+          observedUserCount: 3,
+          mismatchCount: 2,
+          futureV2TransitionCount: 2,
           ambiguousLatestSubscriptionCount: 1,
           manualGrantHistoryPresent: false,
         },
         blockers: [
-          "EFFECTIVE_ACCESS_FUTURE_ACTIVATION",
+          "EFFECTIVE_ACCESS_FUTURE_TRANSITION",
           "LEGACY_SUBSCRIPTION_ORDER_AMBIGUOUS",
         ],
       });
