@@ -28,6 +28,7 @@ const readyRow = {
   v2_can_read_count: "2",
   legacy_only_count: "0",
   v2_only_count: "0",
+  period_boundary_mismatch_count: "0",
 };
 
 describe("локальная готовность effective access v2", () => {
@@ -66,6 +67,7 @@ describe("локальная готовность effective access v2", () => {
         mismatchCount: 0,
         legacyOnlyCount: 0,
         v2OnlyCount: 0,
+        periodBoundaryMismatchCount: 0,
         manualGrantHistoryPresent: false,
       },
       blockers: [],
@@ -75,6 +77,15 @@ describe("локальная готовность effective access v2", () => {
     );
     expect(client.query.mock.calls[1]?.[0]).toContain(
       "billing_access_grants",
+    );
+    expect(client.query.mock.calls[1]?.[0]).toContain(
+      "latest_subscriptions AS MATERIALIZED",
+    );
+    expect(client.query.mock.calls[1]?.[0]).toContain(
+      "active_access_bases AS MATERIALIZED",
+    );
+    expect(client.query.mock.calls[1]?.[0]).not.toContain(
+      "LEFT JOIN LATERAL",
     );
     expect(client.query.mock.calls[2]?.[0]).toBe("COMMIT");
   });
@@ -87,6 +98,7 @@ describe("локальная готовность effective access v2", () => {
       v2_can_read_count: "2",
       legacy_only_count: "2",
       v2_only_count: "1",
+      period_boundary_mismatch_count: "1",
     });
 
     await expect(
@@ -100,9 +112,11 @@ describe("локальная готовность effective access v2", () => {
         "MANUAL_GRANT_HISTORY_PRESENT",
         "EFFECTIVE_ACCESS_LEGACY_ONLY",
         "EFFECTIVE_ACCESS_V2_ONLY",
+        "EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH",
       ],
       observation: {
-        mismatchCount: 3,
+        mismatchCount: 4,
+        periodBoundaryMismatchCount: 1,
         manualGrantHistoryPresent: true,
       },
     });

@@ -2,6 +2,62 @@ const shadowReadinessSql = `
   WITH observation AS (
     SELECT clock_timestamp() AS evaluated_at
   ),
+  latest_subscriptions AS MATERIALIZED (
+    SELECT DISTINCT ON (subscriptions.customer_id)
+      subscriptions.customer_id,
+      subscriptions.status,
+      subscriptions.current_period_start,
+      subscriptions.current_period_end
+    FROM billing_subscriptions subscriptions
+    ORDER BY subscriptions.customer_id, subscriptions.created_at DESC
+  ),
+  active_access_bases AS MATERIALIZED (
+    SELECT
+      grants.customer_id,
+      grants.period_start,
+      grants.period_end
+    FROM billing_access_grants grants
+    CROSS JOIN observation
+    WHERE (
+        grants.status = 'granted'
+        OR (
+          grants.status = 'revoked'
+          AND grants.revoked_at > observation.evaluated_at
+        )
+      )
+      AND grants.granted_at <= observation.evaluated_at
+      AND grants.created_at <= observation.evaluated_at
+      AND grants.period_start <= observation.evaluated_at
+      AND grants.period_end > observation.evaluated_at
+
+    UNION ALL
+
+    SELECT
+      grants.customer_id,
+      grants.period_start,
+      grants.period_end
+    FROM access_manual_grants grants
+    CROSS JOIN observation
+    WHERE (
+        grants.status = 'granted'
+        OR (
+          grants.status = 'revoked'
+          AND grants.revoked_at > observation.evaluated_at
+        )
+      )
+      AND grants.granted_at <= observation.evaluated_at
+      AND grants.created_at <= observation.evaluated_at
+      AND grants.period_start <= observation.evaluated_at
+      AND grants.period_end > observation.evaluated_at
+  ),
+  effective_periods AS (
+    SELECT
+      bases.customer_id,
+      min(bases.period_start) AS period_start,
+      max(bases.period_end) AS period_end
+    FROM active_access_bases bases
+    GROUP BY bases.customer_id
+  ),
   observed_users AS (
     SELECT
       users.id,
@@ -10,49 +66,26 @@ const shadowReadinessSql = `
         AND subscription.current_period_end > observation.evaluated_at,
         false
       ) AS legacy_can_read,
+      effective_periods.customer_id IS NOT NULL AS v2_can_read,
       (
-        EXISTS (
-          SELECT 1
-          FROM billing_access_grants grants
-          WHERE grants.customer_id = users.id
-            AND (
-              grants.status = 'granted'
-              OR (
-                grants.status = 'revoked'
-                AND grants.revoked_at > observation.evaluated_at
-              )
-            )
-            AND grants.granted_at <= observation.evaluated_at
-            AND grants.created_at <= observation.evaluated_at
-            AND grants.period_start <= observation.evaluated_at
-            AND grants.period_end > observation.evaluated_at
+        subscription.status IN ('active', 'grace_period')
+        AND subscription.current_period_end > observation.evaluated_at
+        AND effective_periods.customer_id IS NOT NULL
+        AND (
+          date_trunc('milliseconds', subscription.current_period_start)
+            IS DISTINCT FROM
+              date_trunc('milliseconds', effective_periods.period_start)
+          OR date_trunc('milliseconds', subscription.current_period_end)
+            IS DISTINCT FROM
+              date_trunc('milliseconds', effective_periods.period_end)
         )
-        OR EXISTS (
-          SELECT 1
-          FROM access_manual_grants grants
-          WHERE grants.customer_id = users.id
-            AND (
-              grants.status = 'granted'
-              OR (
-                grants.status = 'revoked'
-                AND grants.revoked_at > observation.evaluated_at
-              )
-            )
-            AND grants.granted_at <= observation.evaluated_at
-            AND grants.created_at <= observation.evaluated_at
-            AND grants.period_start <= observation.evaluated_at
-            AND grants.period_end > observation.evaluated_at
-        )
-      ) AS v2_can_read
+      ) AS period_boundary_mismatch
     FROM identity_users users
     CROSS JOIN observation
-    LEFT JOIN LATERAL (
-      SELECT status, current_period_end
-      FROM billing_subscriptions
-      WHERE customer_id = users.id
-      ORDER BY created_at DESC
-      LIMIT 1
-    ) subscription ON true
+    LEFT JOIN latest_subscriptions subscription
+      ON subscription.customer_id = users.id
+    LEFT JOIN effective_periods
+      ON effective_periods.customer_id = users.id
   ),
   summary AS (
     SELECT
@@ -64,7 +97,10 @@ const shadowReadinessSql = `
       ) AS legacy_only_count,
       count(*) FILTER (
         WHERE v2_can_read AND NOT legacy_can_read
-      ) AS v2_only_count
+      ) AS v2_only_count,
+      count(*) FILTER (
+        WHERE period_boundary_mismatch
+      ) AS period_boundary_mismatch_count
     FROM observed_users
   )
   SELECT
@@ -77,7 +113,8 @@ const shadowReadinessSql = `
     summary.legacy_can_read_count,
     summary.v2_can_read_count,
     summary.legacy_only_count,
-    summary.v2_only_count
+    summary.v2_only_count,
+    summary.period_boundary_mismatch_count
   FROM summary
   CROSS JOIN observation
 `;
@@ -180,6 +217,10 @@ function createReport(row, configuration) {
     "v2_only_count",
     row.v2_only_count,
   );
+  const periodBoundaryMismatchCount = parseCount(
+    "period_boundary_mismatch_count",
+    row.period_boundary_mismatch_count,
+  );
   const blockers = [];
 
   if (row.manual_grant_history_present === true) {
@@ -191,6 +232,9 @@ function createReport(row, configuration) {
   if (v2OnlyCount > 0) {
     blockers.push("EFFECTIVE_ACCESS_V2_ONLY");
   }
+  if (periodBoundaryMismatchCount > 0) {
+    blockers.push("EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH");
+  }
 
   return {
     status: blockers.length === 0 ? "ready" : "blocked",
@@ -200,9 +244,13 @@ function createReport(row, configuration) {
       observedUserCount,
       legacyCanReadCount,
       v2CanReadCount,
-      mismatchCount: legacyOnlyCount + v2OnlyCount,
+      mismatchCount:
+        legacyOnlyCount +
+        v2OnlyCount +
+        periodBoundaryMismatchCount,
       legacyOnlyCount,
       v2OnlyCount,
+      periodBoundaryMismatchCount,
       manualGrantHistoryPresent:
         row.manual_grant_history_present === true,
     },

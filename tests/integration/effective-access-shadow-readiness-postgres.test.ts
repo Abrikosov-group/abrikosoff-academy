@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import { inspectEffectiveAccessShadowReadiness } from "../../scripts/lib/effective-access-shadow-readiness.mjs";
+import { EffectiveAccessService } from "../../src/modules/access/application/effective-access-service";
+import { PostgresEffectiveAccessRepository } from "../../src/modules/access/infrastructure/postgres-effective-access-repository";
+import { hasCurrentSubscriptionAccess } from "../../src/modules/billing/domain/subscription-access";
+import { getSubscriptionSummary } from "../../src/modules/billing/infrastructure/postgres-payment-repository";
 
 const testDatabaseUrl =
   process.env.TEST_DATABASE_URL ??
@@ -24,6 +28,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
     const matchingUserId = randomUUID();
     const legacyOnlyUserId = randomUUID();
     const v2OnlyUserId = randomUUID();
+    const boundaryMismatchUserId = randomUUID();
 
     try {
       await client.query(`
@@ -32,12 +37,17 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
         );
         CREATE TEMP TABLE billing_subscriptions (
           customer_id uuid NOT NULL,
+          plan_id text NOT NULL DEFAULT 'monthly',
           status text NOT NULL,
+          current_period_start timestamptz,
           current_period_end timestamptz,
+          auto_renew boolean NOT NULL DEFAULT true,
           created_at timestamptz NOT NULL
         );
         CREATE TEMP TABLE billing_access_grants (
+          order_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           customer_id uuid NOT NULL,
+          plan_id text NOT NULL DEFAULT 'monthly',
           status text NOT NULL,
           revoked_at timestamptz,
           granted_at timestamptz NOT NULL,
@@ -46,6 +56,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           period_end timestamptz NOT NULL
         );
         CREATE TEMP TABLE access_manual_grants (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           customer_id uuid NOT NULL,
           status text NOT NULL,
           revoked_at timestamptz,
@@ -58,13 +69,14 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
       await client.query(
         `
           INSERT INTO identity_users (id)
-          VALUES ($1), ($2), ($3), ($4)
+          VALUES ($1), ($2), ($3), ($4), ($5)
         `,
         [
           noAccessUserId,
           matchingUserId,
           legacyOnlyUserId,
           v2OnlyUserId,
+          boundaryMismatchUserId,
         ],
       );
       await client.query(
@@ -72,14 +84,34 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
           INSERT INTO billing_subscriptions (
             customer_id,
             status,
+            current_period_start,
             current_period_end,
             created_at
           )
           VALUES
-            ($1, 'active', '2100-01-01T00:00:00.000Z', now()),
-            ($2, 'grace_period', '2100-01-01T00:00:00.000Z', now())
+            (
+              $1,
+              'active',
+              '2020-01-01T00:00:00.000658Z',
+              '2100-01-01T00:00:00.000658Z',
+              now()
+            ),
+            (
+              $2,
+              'grace_period',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              now()
+            ),
+            (
+              $3,
+              'active',
+              '2020-01-01T00:00:00.000Z',
+              '2100-01-01T00:00:00.000Z',
+              now()
+            )
         `,
-        [matchingUserId, legacyOnlyUserId],
+        [matchingUserId, legacyOnlyUserId, boundaryMismatchUserId],
       );
       await client.query(
         `
@@ -107,38 +139,99 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
               '2020-01-01T00:00:00.000Z',
               '2020-01-01T00:00:00.000Z',
               '2100-01-01T00:00:00.000Z'
+            ),
+            (
+              $3,
+              'granted',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2020-01-01T00:00:00.000Z',
+              '2099-01-01T00:00:00.000Z'
             )
         `,
-        [matchingUserId, v2OnlyUserId],
+        [matchingUserId, v2OnlyUserId, boundaryMismatchUserId],
       );
 
-      await expect(
-        inspectEffectiveAccessShadowReadiness(client, {
+      const report = await inspectEffectiveAccessShadowReadiness(
+        client,
+        {
           effectiveAccessMode: "shadow",
           manualAccessGrantingEnabled: false,
-        }),
-      ).resolves.toMatchObject({
+        },
+      );
+
+      expect(report).toMatchObject({
         status: "blocked",
         observation: {
-          observedUserCount: 4,
-          legacyCanReadCount: 2,
-          v2CanReadCount: 2,
-          mismatchCount: 2,
+          observedUserCount: 5,
+          legacyCanReadCount: 3,
+          v2CanReadCount: 3,
+          mismatchCount: 3,
           legacyOnlyCount: 1,
           v2OnlyCount: 1,
+          periodBoundaryMismatchCount: 1,
           manualGrantHistoryPresent: false,
         },
         blockers: [
           "EFFECTIVE_ACCESS_LEGACY_ONLY",
           "EFFECTIVE_ACCESS_V2_ONLY",
+          "EFFECTIVE_ACCESS_PERIOD_BOUNDARY_MISMATCH",
         ],
       });
+
+      const evaluatedAt = new Date(report.evaluatedAt);
+      const service = new EffectiveAccessService(
+        new PostgresEffectiveAccessRepository(client),
+      );
+      const actualDecisions: Array<{
+        legacyCanRead: boolean;
+        v2CanRead: boolean;
+      }> = [];
+
+      for (const userId of [
+        noAccessUserId,
+        matchingUserId,
+        legacyOnlyUserId,
+        v2OnlyUserId,
+        boundaryMismatchUserId,
+      ]) {
+        const subscription = await getSubscriptionSummary(client, userId);
+        const effectiveAccess = await service.getEffectiveAccess(
+          userId,
+          evaluatedAt,
+        );
+
+        actualDecisions.push({
+          legacyCanRead: hasCurrentSubscriptionAccess(
+            subscription,
+            evaluatedAt,
+          ),
+          v2CanRead: effectiveAccess.canReadCourses,
+        });
+      }
+
+      expect(
+        actualDecisions.filter((decision) => decision.legacyCanRead),
+      ).toHaveLength(report.observation.legacyCanReadCount);
+      expect(
+        actualDecisions.filter((decision) => decision.v2CanRead),
+      ).toHaveLength(report.observation.v2CanReadCount);
+      expect(
+        actualDecisions.filter(
+          (decision) => decision.legacyCanRead && !decision.v2CanRead,
+        ),
+      ).toHaveLength(report.observation.legacyOnlyCount);
+      expect(
+        actualDecisions.filter(
+          (decision) => decision.v2CanRead && !decision.legacyCanRead,
+        ),
+      ).toHaveLength(report.observation.v2OnlyCount);
 
       const rowsAfterCheck = await client.query<{ count: string }>(
         "SELECT count(*) FROM identity_users",
       );
 
-      expect(rowsAfterCheck.rows[0]?.count).toBe("4");
+      expect(rowsAfterCheck.rows[0]?.count).toBe("5");
 
       await client.query(`
         TRUNCATE
@@ -158,6 +251,7 @@ describe("shadow-проверка effective access с PostgreSQL", () => {
         observation: {
           observedUserCount: 0,
           mismatchCount: 0,
+          periodBoundaryMismatchCount: 0,
           manualGrantHistoryPresent: false,
         },
         blockers: [],
