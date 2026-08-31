@@ -145,6 +145,8 @@ type StudentGracePeriodRow = {
   status: "active" | "expired" | "revoked";
   period_start: Date;
   period_end: Date;
+  created_at: Date;
+  revoked_at: Date | null;
 };
 
 function recordFromUnknown(
@@ -669,7 +671,9 @@ export class PostgresAdministrationStudentReadRepository
             END AS renewal_attempt_id,
             grace.status,
             grace.period_start,
-            grace.period_end
+            grace.period_end,
+            grace.created_at,
+            grace.revoked_at
           FROM billing_access_grace_periods grace
           WHERE grace.customer_id = $1
           ORDER BY grace.period_start DESC, grace.id DESC
@@ -740,7 +744,11 @@ export class PostgresAdministrationStudentReadRepository
         periodStart: grace.period_start.toISOString(),
         periodEnd: grace.period_end.toISOString(),
         effectiveNow:
-          grace.status === "active" &&
+          grace.created_at.getTime() <= input.at.getTime() &&
+          (grace.status === "active" ||
+            ((grace.status === "expired" || grace.status === "revoked") &&
+              grace.revoked_at !== null &&
+              grace.revoked_at.getTime() > input.at.getTime())) &&
           grace.period_start.getTime() <= input.at.getTime() &&
           grace.period_end.getTime() > input.at.getTime(),
         ...(input.scope.billingContext

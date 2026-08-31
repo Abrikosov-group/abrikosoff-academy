@@ -836,6 +836,37 @@ describe("ручной доступ с PostgreSQL", () => {
     );
   });
 
+  it("сохраняет историческую активность уже завершённого grace", async () => {
+    const customerId = await insertUser("Ученик исторического grace");
+    const now = Date.now();
+    const at = new Date(now - 2 * 60 * 60_000);
+    const grace = await insertGracePeriod({
+      customerId,
+      periodStart: new Date(now - 3 * 60 * 60_000),
+      periodEnd: new Date(now - 60 * 60_000),
+      status: "expired",
+    });
+    const studentRead = new AdministrationStudentReadService(
+      new PostgresAdministrationStudentReadRepository(pool),
+    );
+    const detail = await studentRead.findStudentDetail({
+      userId: customerId,
+      permissions: new Set(["users.read", "access.read"] as const),
+      at,
+    });
+
+    expect(detail).toMatchObject({
+      effectiveAccess: { state: "active" },
+      gracePeriods: [
+        expect.objectContaining({
+          id: grace.graceId,
+          status: "expired",
+          effectiveNow: true,
+        }),
+      ],
+    });
+  });
+
   it("показывает единственный завершённый grace как завершённый доступ", async () => {
     const customerId = await insertUser("Ученик завершённого grace");
     const at = new Date();
