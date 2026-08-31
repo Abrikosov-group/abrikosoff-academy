@@ -603,6 +603,7 @@ async function activateSubscription(
   client: PoolClient,
   checkout: StoredCheckout,
   activatedAt: Date,
+  fixedPeriod?: { start: Date; end: Date },
 ) {
   await lockCustomerAccess(client, checkout.customerId);
   const existing = await client.query<{
@@ -610,9 +611,15 @@ async function activateSubscription(
     current_period_end: Date | null;
     mandate_id: string | null;
     cancel_at_period_end: boolean;
+    auto_renew: boolean;
   }>(
     `
-      SELECT id, current_period_end, mandate_id, cancel_at_period_end
+      SELECT
+        id,
+        current_period_end,
+        mandate_id,
+        cancel_at_period_end,
+        auto_renew
       FROM billing_subscriptions
       WHERE customer_id = $1
       ORDER BY created_at DESC
@@ -623,13 +630,13 @@ async function activateSubscription(
   );
   const current = existing.rows[0];
   const periodStart =
-    checkout.renewalSequence > 0 && current?.current_period_end
+    fixedPeriod?.start ??
+    (checkout.renewalSequence > 0 && current?.current_period_end
       ? current.current_period_end
-      : activatedAt;
-  const periodEnd = addSubscriptionPeriod(
-    periodStart,
-    checkout.planId,
-  );
+      : activatedAt);
+  const periodEnd =
+    fixedPeriod?.end ??
+    addSubscriptionPeriod(periodStart, checkout.planId);
 
   const activeGrant = await client.query<{
     period_start: Date;
@@ -675,6 +682,10 @@ async function activateSubscription(
   const activePeriodEnd = activeGrant.rows[0].period_end;
   const paidPeriodIsCurrent =
     activePeriodEnd.getTime() > activatedAt.getTime();
+  const advancesSubscriptionProjection = Boolean(
+    !current?.current_period_end ||
+      activePeriodEnd.getTime() > current.current_period_end.getTime(),
+  );
 
   let mandateId = current?.mandate_id ?? null;
   const recurringReady =
@@ -682,7 +693,11 @@ async function activateSubscription(
     checkout.paymentMethodSaved &&
     Boolean(checkout.paymentMethodToken);
 
-  if (recurringReady && checkout.paymentMethodToken) {
+  if (
+    advancesSubscriptionProjection &&
+    recurringReady &&
+    checkout.paymentMethodToken
+  ) {
     const existingMandate = await client.query<{ id: string }>(
       `
         SELECT id
@@ -779,13 +794,14 @@ async function activateSubscription(
     }
   }
 
-  const autoRenew =
-    paidPeriodIsCurrent &&
-    recurringReady &&
-    (checkout.renewalSequence === 0 || !current?.cancel_at_period_end);
+  const autoRenew = advancesSubscriptionProjection
+    ? paidPeriodIsCurrent &&
+      recurringReady &&
+      (checkout.renewalSequence === 0 || !current?.cancel_at_period_end)
+    : (current?.auto_renew ?? false);
   const subscriptionId = current?.id ?? randomUUID();
 
-  if (current) {
+  if (current && advancesSubscriptionProjection) {
     await client.query(
       `
         UPDATE billing_subscriptions
@@ -829,7 +845,7 @@ async function activateSubscription(
         paidPeriodIsCurrent,
       ],
     );
-  } else {
+  } else if (!current) {
     await client.query(
       `
         INSERT INTO billing_subscriptions (
@@ -901,14 +917,16 @@ async function activateSubscription(
     ],
   );
 
-  await client.query(
-    `
-      UPDATE billing_access_grace_periods
-      SET status = 'revoked', revoked_at = $2, updated_at = now()
-      WHERE subscription_id = $1 AND status = 'active'
-    `,
-    [subscriptionId, activatedAt],
-  );
+  if (advancesSubscriptionProjection) {
+    await client.query(
+      `
+        UPDATE billing_access_grace_periods
+        SET status = 'revoked', revoked_at = $2, updated_at = now()
+        WHERE subscription_id = $1 AND status = 'active'
+      `,
+      [subscriptionId, activatedAt],
+    );
+  }
 
   if (checkout.renewalSequence > 0) {
     await client.query(
@@ -1612,7 +1630,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
       };
 
       if (nextStatus === "succeeded" && previousStatus !== "succeeded") {
-        await activateSubscription(client, checkout, processedAt);
+        await activateSubscription(client, checkout, processedAt, {
+          start: attemptRow.period_start,
+          end: attemptRow.period_end,
+        });
       } else if (nextStatus === "pending") {
         await client.query(
           `
@@ -2127,6 +2148,14 @@ export async function setSubscriptionRenewal(
       throw new BillingError(
         "PAYMENT_METHOD_NOT_SAVED",
         "Для автоматического продления требуется заново привязать способ оплаты.",
+        409,
+      );
+    }
+
+    if (enabled && subscription.has_open_renewal) {
+      throw new BillingError(
+        "RENEWAL_RECONCILIATION_REQUIRED",
+        "Дождитесь завершения проверки предыдущего платежа перед включением автоматического продления.",
         409,
       );
     }

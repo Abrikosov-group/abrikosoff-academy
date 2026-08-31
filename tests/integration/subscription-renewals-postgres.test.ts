@@ -101,6 +101,76 @@ afterAll(async () => {
 });
 
 describe("автоматическое продление подписок с PostgreSQL", () => {
+  it("берёт реквизиты из заказа, активировавшего подписку", async () => {
+    const dueAt = new Date("2041-12-31T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "demo",
+      periodEnd: dueAt,
+    });
+    const unrelatedOrderId = randomUUID();
+
+    await pool.query(
+      `
+        INSERT INTO billing_orders (
+          id, customer_id, plan_id, legal_entity_id, country_code,
+          amount_minor, currency, status, idempotency_key,
+          selected_provider, merchant_account_id, billing_mode,
+          renewal_sequence, offer_accepted_at, offer_version,
+          recurring_consent_accepted_at, recurring_consent_offer_version,
+          receipt_email, created_at, updated_at
+        )
+        VALUES (
+          $1, $2, 'annual', 'unrelated-entity', 'BR', 1400000, 'RUB',
+          'pending', $3, 'demo', 'renewal-test', 'recurring', 0,
+          $4, '2026-08-31', $4, '2026-08-31', $5, $4, $4
+        )
+      `,
+      [
+        unrelatedOrderId,
+        fixture.userId,
+        `unrelated-${unrelatedOrderId}`,
+        new Date(dueAt.getTime() - 60_000),
+        `unrelated-${fixture.userId}@example.test`,
+      ],
+    );
+
+    const client = await pool.connect();
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+        }),
+      ).resolves.toMatchObject({ processed: 1, succeeded: 1 });
+    } finally {
+      client.release();
+    }
+
+    await expect(
+      pool.query<{
+        legal_entity_id: string;
+        country_code: string;
+        receipt_email: string;
+      }>(
+        `
+          SELECT legal_entity_id, country_code, receipt_email
+          FROM billing_orders
+          WHERE subscription_id = $1
+        `,
+        [fixture.subscriptionId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          legal_entity_id: "ip-fedotova",
+          country_code: "RU",
+          receipt_email: `renewal-${fixture.userId}@example.test`,
+        },
+      ],
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
   it("идемпотентно создаёт новый оплаченный период", async () => {
     const dueAt = new Date("2042-01-31T10:00:00.000Z");
     const fixture = await createRecurringSubscription({
@@ -268,6 +338,53 @@ describe("автоматическое продление подписок с Po
         reenabledAt,
       );
     }
+  });
+
+  it("не включает автопродление до завершения сверки отправленного платежа", async () => {
+    const dueAt = new Date("2042-02-28T12:00:00.000Z");
+    const disabledAt = new Date(dueAt.getTime() + 60 * 60_000);
+    const reenabledAt = new Date(dueAt.getTime() + 2 * 60 * 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: vi
+            .fn()
+            .mockRejectedValue(new Error("Результат платежа неизвестен")),
+        }),
+      ).resolves.toMatchObject({ processed: 1, rescheduled: 1 });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    await setSubscriptionRenewal(pool, fixture.userId, false, disabledAt);
+    await expect(
+      setSubscriptionRenewal(pool, fixture.userId, true, reenabledAt),
+    ).rejects.toMatchObject({
+      code: "RENEWAL_RECONCILIATION_REQUIRED",
+      httpStatus: 409,
+    });
+    await expect(
+      getSubscriptionSummary(pool, fixture.userId),
+    ).resolves.toMatchObject({
+      autoRenew: false,
+      cancelAtPeriodEnd: true,
+    });
   });
 
   it("сохраняет новый токен способа оплаты в активном мандате", async () => {
@@ -2918,6 +3035,185 @@ describe("автоматическое продление подписок с Po
       if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
       else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
     }
+  });
+
+  it("не продлевает новый цикл поздним успехом старой попытки", async () => {
+    const dueAt = new Date("2045-01-01T10:00:00.000Z");
+    const graceEnd = new Date("2045-01-08T10:00:00.000Z");
+    const freshPeriodStart = new Date("2045-01-10T10:00:00.000Z");
+    const freshPeriodEnd = new Date("2045-02-10T10:00:00.000Z");
+    const recoveredAt = new Date("2045-01-15T10:00:00.000Z");
+    const oldPeriodEnd = new Date("2045-02-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: vi
+            .fn()
+            .mockRejectedValue(new Error("Ответ провайдера потерян")),
+        }),
+      ).resolves.toMatchObject({ processed: 1, rescheduled: 1 });
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => graceEnd,
+          batchSize: 1,
+          fetchImplementation: vi.fn(),
+        }),
+      ).resolves.toMatchObject({ processed: 0 });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    const oldAttempt = await pool.query<{
+      id: string;
+      order_id: string;
+    }>(
+      `
+        SELECT id, order_id
+        FROM billing_subscription_renewal_attempts
+        WHERE subscription_id = $1
+      `,
+      [fixture.subscriptionId],
+    );
+    const freshOrderId = randomUUID();
+
+    await pool.query(
+      `
+        INSERT INTO billing_orders (
+          id, customer_id, plan_id, legal_entity_id, country_code,
+          amount_minor, currency, status, idempotency_key,
+          selected_provider, merchant_account_id, billing_mode,
+          renewal_sequence, offer_accepted_at, offer_version,
+          recurring_consent_accepted_at, recurring_consent_offer_version,
+          receipt_email
+        )
+        VALUES (
+          $1, $2, 'monthly', 'ip-fedotova', 'RU', 150000, 'RUB', 'paid',
+          $3, 'yookassa', 'renewal-test', 'recurring', 0,
+          $4, '2026-08-31', $4, '2026-08-31', $5
+        )
+      `,
+      [
+        freshOrderId,
+        fixture.userId,
+        `fresh-${freshOrderId}`,
+        freshPeriodStart,
+        `renewal-${fixture.userId}@example.test`,
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO billing_access_grants (
+          order_id, customer_id, plan_id, status,
+          period_start, period_end, granted_at
+        )
+        VALUES ($1, $2, 'monthly', 'granted', $3, $4, $3)
+      `,
+      [freshOrderId, fixture.userId, freshPeriodStart, freshPeriodEnd],
+    );
+    await pool.query(
+      `
+        UPDATE billing_subscriptions
+        SET
+          status = 'active',
+          current_period_start = $2,
+          current_period_end = $3,
+          auto_renew = true,
+          cancel_at_period_end = false,
+          renewal_due_at = $3,
+          activated_by_order_id = $4
+        WHERE id = $1
+      `,
+      [
+        fixture.subscriptionId,
+        freshPeriodStart,
+        freshPeriodEnd,
+        freshOrderId,
+      ],
+    );
+
+    const repository = new PostgresPaymentRepository(
+      pool,
+      () => recoveredAt,
+    );
+    await expect(
+      repository.applyRecoveredRenewalPaymentEvent({
+        provider: "yookassa",
+        merchantAccountId: "renewal-test",
+        externalEventId: "late-old-success-after-fresh-checkout-event",
+        eventType: "payment.succeeded",
+        externalPaymentId: "late-old-success-after-fresh-checkout",
+        status: "succeeded",
+        paymentMethodToken: `method-${fixture.userId}`,
+        paymentMethodSaved: true,
+        occurredAt: dueAt.toISOString(),
+        payloadSha256: "d".repeat(64),
+        payload: { event: "payment.succeeded" },
+        internalOrderId: oldAttempt.rows[0].order_id,
+        internalRenewalAttemptId: oldAttempt.rows[0].id,
+        money: { amountMinor: 150_000, currency: "RUB" },
+      }),
+    ).resolves.toMatchObject({ outcome: "applied" });
+
+    await expect(
+      pool.query<{
+        status: string;
+        current_period_start: Date;
+        current_period_end: Date;
+        auto_renew: boolean;
+        activated_by_order_id: string;
+        attempt_status: string;
+        old_grant_start: Date;
+        old_grant_end: Date;
+      }>(
+        `
+          SELECT
+            subscriptions.status,
+            subscriptions.current_period_start,
+            subscriptions.current_period_end,
+            subscriptions.auto_renew,
+            subscriptions.activated_by_order_id,
+            attempts.status AS attempt_status,
+            grants.period_start AS old_grant_start,
+            grants.period_end AS old_grant_end
+          FROM billing_subscriptions subscriptions
+          JOIN billing_subscription_renewal_attempts attempts
+            ON attempts.subscription_id = subscriptions.id
+          JOIN billing_access_grants grants
+            ON grants.order_id = attempts.order_id
+          WHERE subscriptions.id = $1
+        `,
+        [fixture.subscriptionId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          status: "active",
+          current_period_start: freshPeriodStart,
+          current_period_end: freshPeriodEnd,
+          auto_renew: true,
+          activated_by_order_id: freshOrderId,
+          attempt_status: "succeeded",
+          old_grant_start: dueAt,
+          old_grant_end: oldPeriodEnd,
+        },
+      ],
+    });
   });
 
   it("завершает льготу с известным pending без нового POST и без повторного события", async () => {

@@ -292,13 +292,9 @@ async function claimRenewal(client, now) {
           JOIN billing_payment_mandates mandates
             ON mandates.id = subscriptions.mandate_id
            AND mandates.status = 'active'
-          JOIN LATERAL (
-            SELECT legal_entity_id, country_code, receipt_email, receipt_phone
-            FROM billing_orders
-            WHERE customer_id = subscriptions.customer_id
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-          ) latest_order ON true
+          JOIN billing_orders latest_order
+            ON latest_order.id = subscriptions.activated_by_order_id
+           AND latest_order.customer_id = subscriptions.customer_id
           WHERE subscriptions.auto_renew
             AND NOT subscriptions.cancel_at_period_end
             AND subscriptions.renewal_due_at <= $1
