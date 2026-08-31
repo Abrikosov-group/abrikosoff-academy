@@ -1707,6 +1707,13 @@ describe("автоматическое продление подписок с Po
         repository.applyRecoveredRenewalPaymentEvent(event),
       ).resolves.toMatchObject({ outcome: "duplicate" });
       await expect(
+        repository.applyRecoveredRenewalPaymentEvent({
+          ...event,
+          externalEventId: "recovery-terminal-attempt-4-duplicate-event",
+          payloadSha256: "9".repeat(64),
+        }),
+      ).resolves.toMatchObject({ outcome: "applied" });
+      await expect(
         processSubscriptionRenewals(client, {
           now: () => new Date(webhookAt.getTime() + 60_000),
           batchSize: 25,
@@ -1736,6 +1743,7 @@ describe("автоматическое продление подписок с Po
       status: "grace_period",
       autoRenew: false,
       cancelAtPeriodEnd: true,
+      renewalErrorCode: "RENEWAL_PROVIDER_REJECTED",
       gracePeriodEnd: graceEnd.toISOString(),
     });
     await expect(
@@ -1747,6 +1755,10 @@ describe("автоматическое продление подписок с Po
         payments: string;
         payment_events: string;
         active_grace_periods: string;
+        renewal_failure_count: number;
+        last_renewal_attempt_at: Date;
+        attempt_error_code: string;
+        renewal_failed_events: string;
       }>(
         `
           SELECT
@@ -1790,7 +1802,28 @@ describe("автоматическое продление подписок с Po
               SELECT count(*)
               FROM billing_access_grace_periods
               WHERE subscription_id = $1 AND status = 'active'
-            ) AS active_grace_periods
+            ) AS active_grace_periods,
+            (
+              SELECT renewal_failure_count
+              FROM billing_subscriptions
+              WHERE id = $1
+            ) AS renewal_failure_count,
+            (
+              SELECT last_renewal_attempt_at
+              FROM billing_subscriptions
+              WHERE id = $1
+            ) AS last_renewal_attempt_at,
+            (
+              SELECT last_error_code
+              FROM billing_subscription_renewal_attempts
+              WHERE subscription_id = $1 AND attempt_number = 4
+            ) AS attempt_error_code,
+            (
+              SELECT count(*)
+              FROM billing_subscription_events
+              WHERE subscription_id = $1
+                AND event_type = 'subscription.renewal_failed'
+            ) AS renewal_failed_events
         `,
         [fixture.subscriptionId],
       ),
@@ -1804,6 +1837,10 @@ describe("автоматическое продление подписок с Po
           payments: "4",
           payment_events: "4",
           active_grace_periods: "1",
+          renewal_failure_count: 4,
+          last_renewal_attempt_at: webhookAt,
+          attempt_error_code: "RENEWAL_PROVIDER_REJECTED",
+          renewal_failed_events: "1",
         },
       ],
     });

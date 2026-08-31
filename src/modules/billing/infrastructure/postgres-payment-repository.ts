@@ -1686,10 +1686,17 @@ export class PostgresPaymentRepository implements PaymentRepository {
               financialDecision.nextAttemptAt,
             ],
           );
-        } else if (
-          renewalStatusAllowsFinancialDecision &&
-          financialDecision.kind === "exhausted"
-        ) {
+        } else if (financialDecision.kind === "exhausted") {
+          await client.query(
+            `
+              UPDATE billing_subscription_renewal_attempts
+              SET
+                last_error_code = 'RENEWAL_PROVIDER_REJECTED',
+                updated_at = now()
+              WHERE id = $1
+            `,
+            [attemptRow.attempt_id],
+          );
           await client.query(
             `
               UPDATE billing_subscriptions
@@ -1697,11 +1704,47 @@ export class PostgresPaymentRepository implements PaymentRepository {
                 auto_renew = false,
                 cancel_at_period_end = true,
                 renewal_due_at = NULL,
+                renewal_failure_count = GREATEST(
+                  renewal_failure_count,
+                  $2
+                ),
+                last_renewal_attempt_at = $3,
+                renewal_error_code = 'RENEWAL_PROVIDER_REJECTED',
                 updated_at = now()
               WHERE id = $1
             `,
-            [attemptRow.subscription_id],
+            [
+              attemptRow.subscription_id,
+              attemptRow.attempt_number,
+              processedAt,
+            ],
           );
+
+          if (previousStatus !== nextStatus) {
+            await client.query(
+              `
+                INSERT INTO billing_subscription_events (
+                  id, subscription_id, customer_id, event_type,
+                  details, occurred_at
+                )
+                VALUES (
+                  $1, $2, $3, 'subscription.renewal_failed', $4::jsonb, $5
+                )
+              `,
+              [
+                randomUUID(),
+                attemptRow.subscription_id,
+                attemptRow.customer_id,
+                JSON.stringify({
+                  renewalSequence: attemptRow.renewal_sequence,
+                  attemptNumber: attemptRow.attempt_number,
+                  errorCode: "RENEWAL_PROVIDER_REJECTED",
+                  nextAttemptAt: null,
+                }),
+                processedAt,
+              ],
+            );
+          }
         }
       }
 
