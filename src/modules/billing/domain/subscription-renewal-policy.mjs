@@ -1,5 +1,6 @@
 export const maximumRenewalAttempts = 4;
 export const renewalGracePeriodMilliseconds = 7 * 24 * 60 * 60 * 1000;
+export const renewalWorkerIntervalMilliseconds = 15 * 60 * 1000;
 
 const financialRetryDelaysMilliseconds = [
   60 * 60 * 1000,
@@ -9,6 +10,7 @@ const financialRetryDelaysMilliseconds = [
 
 /**
  * @param {{ attemptNumber: number; processedAt: Date; graceEnd: Date }} input
+ * @returns {Date | null}
  */
 export function nextFinancialRenewalAttemptAt(input) {
   const delay =
@@ -19,7 +21,14 @@ export function nextFinancialRenewalAttemptAt(input) {
       )
     ];
 
-  return new Date(
-    Math.min(input.processedAt.getTime() + delay, input.graceEnd.getTime()),
+  const lastSafeAttemptAt =
+    input.graceEnd.getTime() - renewalWorkerIntervalMilliseconds;
+  const nextAttemptAt = Math.min(
+    input.processedAt.getTime() + delay,
+    lastSafeAttemptAt,
   );
+
+  return nextAttemptAt > input.processedAt.getTime()
+    ? new Date(nextAttemptAt)
+    : null;
 }

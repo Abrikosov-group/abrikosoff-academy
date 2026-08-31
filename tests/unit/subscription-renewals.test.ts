@@ -3,6 +3,7 @@ import {
   createYooKassaRenewal,
   getYooKassaRenewal,
 } from "../../scripts/lib/subscription-renewals.mjs";
+import { nextFinancialRenewalAttemptAt } from "../../src/modules/billing/domain/subscription-renewal-policy.mjs";
 
 const originalShopId = process.env.YOOKASSA_SHOP_ID;
 const originalSecretKey = process.env.YOOKASSA_SECRET_KEY;
@@ -16,6 +17,30 @@ afterEach(() => {
 });
 
 describe("worker автоматического продления", () => {
+  it("назначает четвёртую попытку на последний запуск перед окончанием льготы", () => {
+    const graceEnd = new Date("2042-01-08T10:00:00.000Z");
+
+    expect(
+      nextFinancialRenewalAttemptAt({
+        attemptNumber: 3,
+        processedAt: new Date("2042-01-02T11:00:00.000Z"),
+        graceEnd,
+      }),
+    ).toEqual(new Date("2042-01-08T09:45:00.000Z"));
+  });
+
+  it("не создаёт финансовую попытку после последнего безопасного запуска", () => {
+    const graceEnd = new Date("2042-01-08T10:00:00.000Z");
+
+    expect(
+      nextFinancialRenewalAttemptAt({
+        attemptNumber: 3,
+        processedAt: new Date("2042-01-08T09:50:00.000Z"),
+        graceEnd,
+      }),
+    ).toBeNull();
+  });
+
   it("передаёт ЮKassa сохранённый способ и постоянный ключ операции", async () => {
     process.env.YOOKASSA_SHOP_ID = "test-shop";
     process.env.YOOKASSA_SECRET_KEY = "test-secret";

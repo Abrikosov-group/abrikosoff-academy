@@ -99,6 +99,16 @@ function orderStatusForPayment(status: PaymentStatus): OrderStatus {
   }
 }
 
+function paymentStatusAfterWebhook(
+  previousStatus: PaymentStatus,
+  incomingStatus: PaymentStatus,
+): PaymentStatus {
+  return previousStatus === "partially_refunded" ||
+    previousStatus === "refunded"
+    ? previousStatus
+    : incomingStatus;
+}
+
 async function updateRenewalOrderStatus(
   client: PoolClient,
   orderId: string,
@@ -115,6 +125,28 @@ async function updateRenewalOrderStatus(
             WHERE payments.order_id = orders.id
               AND payments.status = 'succeeded'
           ) THEN 'paid'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_subscription_renewal_attempts attempts
+            WHERE attempts.order_id = orders.id
+              AND attempts.status IN (
+                'processing',
+                'retry_scheduled',
+                'reconciliation_required'
+              )
+          ) THEN 'pending'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'partially_refunded'
+          ) THEN 'partially_refunded'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'refunded'
+          ) THEN 'refunded'
           ELSE $2
         END,
         updated_at = now()
@@ -600,19 +632,32 @@ async function activateSubscription(
     checkout.planId,
   );
 
-  await client.query(
+  const activeGrant = await client.query<{
+    period_start: Date;
+    period_end: Date;
+  }>(
     `
-      INSERT INTO billing_access_grants (
-        order_id,
-        customer_id,
-        plan_id,
-        status,
-        period_start,
-        period_end,
-        granted_at
+      WITH inserted AS (
+        INSERT INTO billing_access_grants (
+          order_id,
+          customer_id,
+          plan_id,
+          status,
+          period_start,
+          period_end,
+          granted_at
+        )
+        VALUES ($1, $2, $3, 'granted', $4, $5, $4)
+        ON CONFLICT (order_id) DO NOTHING
+        RETURNING period_start, period_end
       )
-      VALUES ($1, $2, $3, 'granted', $4, $5, $4)
-      ON CONFLICT (order_id) DO NOTHING
+      SELECT period_start, period_end
+      FROM inserted
+      UNION ALL
+      SELECT period_start, period_end
+      FROM billing_access_grants
+      WHERE order_id = $1 AND status = 'granted'
+      LIMIT 1
     `,
     [
       checkout.orderId,
@@ -622,6 +667,13 @@ async function activateSubscription(
       periodEnd,
     ],
   );
+
+  if (!activeGrant.rows[0]) {
+    return false;
+  }
+
+  const activePeriodStart = activeGrant.rows[0].period_start;
+  const activePeriodEnd = activeGrant.rows[0].period_end;
 
   let mandateId = current?.mandate_id ?? null;
   const recurringReady =
@@ -759,8 +811,8 @@ async function activateSubscription(
       [
         subscriptionId,
         checkout.planId,
-        periodStart,
-        periodEnd,
+        activePeriodStart,
+        activePeriodEnd,
         autoRenew,
         mandateId,
         checkout.orderId,
@@ -800,8 +852,8 @@ async function activateSubscription(
         subscriptionId,
         checkout.customerId,
         checkout.planId,
-        periodStart,
-        periodEnd,
+        activePeriodStart,
+        activePeriodEnd,
         autoRenew,
         mandateId,
         checkout.orderId,
@@ -834,8 +886,8 @@ async function activateSubscription(
         planId: checkout.planId,
         billingMode: checkout.billingMode,
         autoRenew,
-        periodStart: periodStart.toISOString(),
-        periodEnd: periodEnd.toISOString(),
+        periodStart: activePeriodStart.toISOString(),
+        periodEnd: activePeriodEnd.toISOString(),
       }),
       activatedAt,
     ],
@@ -886,6 +938,8 @@ async function activateSubscription(
       [checkout.orderId, activatedAt, checkout.idempotencyKey],
     );
   }
+
+  return true;
 }
 
 export class PostgresPaymentRepository implements PaymentRepository {
@@ -1216,11 +1270,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
       }
 
       const previousStatus = checkout.status;
-      const nextStatus =
-        previousStatus === "partially_refunded" ||
-        previousStatus === "refunded"
-          ? previousStatus
-          : input.status;
+      const nextStatus = paymentStatusAfterWebhook(
+        previousStatus,
+        input.status,
+      );
       const updatedCheckout: StoredCheckout = {
         ...checkout,
         status: nextStatus,
@@ -1264,30 +1317,32 @@ export class PostgresPaymentRepository implements PaymentRepository {
           orderStatusForPayment(nextStatus),
         ],
       );
-      await client.query(
-        `
-          INSERT INTO billing_payment_events (
-            id,
-            payment_id,
-            webhook_event_id,
-            event_type,
-            from_status,
-            to_status,
-            details,
-            occurred_at
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7)
-        `,
-        [
-          randomUUID(),
-          checkout.paymentId,
-          webhookId,
-          input.eventType,
-          previousStatus,
-          nextStatus,
-          input.occurredAt,
-        ],
-      );
+      if (previousStatus !== nextStatus) {
+        await client.query(
+          `
+            INSERT INTO billing_payment_events (
+              id,
+              payment_id,
+              webhook_event_id,
+              event_type,
+              from_status,
+              to_status,
+              details,
+              occurred_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7)
+          `,
+          [
+            randomUUID(),
+            checkout.paymentId,
+            webhookId,
+            input.eventType,
+            previousStatus,
+            nextStatus,
+            input.occurredAt,
+          ],
+        );
+      }
 
       if (
         nextStatus === "succeeded" &&
@@ -1449,6 +1504,9 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
       const paymentId = previous?.id ?? randomUUID();
       const previousStatus = previous?.status ?? null;
+      const nextStatus = previousStatus
+        ? paymentStatusAfterWebhook(previousStatus, input.status)
+        : input.status;
 
       if (previous) {
         await client.query(
@@ -1467,7 +1525,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
           `,
           [
             paymentId,
-            input.status,
+            nextStatus,
             input.paymentMethodToken ?? null,
             input.paymentMethodSaved === true,
             input.occurredAt,
@@ -1497,7 +1555,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
             input.merchantAccountId,
             input.externalPaymentId,
             attemptRow.idempotency_key,
-            input.status,
+            nextStatus,
             input.money.amountMinor,
             input.money.currency,
             input.paymentMethodToken ?? null,
@@ -1508,13 +1566,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         );
       }
 
-      await updateRenewalOrderStatus(
-        client,
-        attemptRow.order_id,
-        orderStatusForPayment(input.status),
-      );
-
-      if (previousStatus !== input.status) {
+      if (previousStatus !== nextStatus) {
         await client.query(
           `
             INSERT INTO billing_payment_events (
@@ -1529,7 +1581,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
             webhookId,
             input.eventType,
             previousStatus,
-            input.status,
+            nextStatus,
             JSON.stringify({
               source: "subscription_renewal_recovery",
               renewalAttemptId: attemptRow.attempt_id,
@@ -1544,16 +1596,16 @@ export class PostgresPaymentRepository implements PaymentRepository {
         ...reservation,
         paymentId,
         externalPaymentId: input.externalPaymentId,
-        status: input.status,
+        status: nextStatus,
         confirmationUrl: "",
         paymentMethodToken: input.paymentMethodToken,
         paymentMethodSaved: input.paymentMethodSaved === true,
         updatedAt: processedAt.toISOString(),
       };
 
-      if (input.status === "succeeded" && previousStatus !== "succeeded") {
+      if (nextStatus === "succeeded" && previousStatus !== "succeeded") {
         await activateSubscription(client, checkout, processedAt);
-      } else if (input.status === "pending") {
+      } else if (nextStatus === "pending") {
         await client.query(
           `
             UPDATE billing_subscription_renewal_attempts
@@ -1565,7 +1617,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
           `,
           [attemptRow.attempt_id, processedAt],
         );
-      } else if (input.status === "canceled" || input.status === "failed") {
+      } else if (nextStatus === "canceled" || nextStatus === "failed") {
         await client.query(
           `
             UPDATE billing_subscription_renewal_attempts
@@ -1577,7 +1629,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
           `,
           [
             attemptRow.attempt_id,
-            input.status === "canceled" ? "canceled" : "failed",
+            nextStatus === "canceled" ? "canceled" : "failed",
             processedAt,
           ],
         );
@@ -1585,24 +1637,26 @@ export class PostgresPaymentRepository implements PaymentRepository {
         const graceEnd = new Date(
           attemptRow.period_start.getTime() + renewalGracePeriodMilliseconds,
         );
-        const shouldScheduleNextAttempt =
-          input.status === "canceled" &&
+        const retryAt = nextFinancialRenewalAttemptAt({
+          attemptNumber: attemptRow.attempt_number,
+          processedAt,
+          graceEnd,
+        });
+        const mayScheduleNextAttempt =
+          nextStatus === "canceled" &&
           attemptRow.attempt_number < maximumRenewalAttempts &&
           attemptRow.auto_renew &&
           !attemptRow.cancel_at_period_end &&
           (attemptRow.subscription_status === "active" ||
             attemptRow.subscription_status === "grace_period") &&
           processedAt.getTime() < graceEnd.getTime();
+        const shouldScheduleNextAttempt =
+          mayScheduleNextAttempt && retryAt !== null;
 
         if (shouldScheduleNextAttempt) {
           const nextAttemptNumber = attemptRow.attempt_number + 1;
-          const retryAt = nextFinancialRenewalAttemptAt({
-            attemptNumber: attemptRow.attempt_number,
-            processedAt,
-            graceEnd,
-          });
 
-          const insertedAttempt = await client.query(
+          await client.query(
             `
               INSERT INTO billing_subscription_renewal_attempts (
                 id, subscription_id, customer_id, order_id,
@@ -1636,15 +1690,27 @@ export class PostgresPaymentRepository implements PaymentRepository {
               retryAt,
             ],
           );
-          if (insertedAttempt.rowCount) {
-            await updateRenewalOrderStatus(
-              client,
-              attemptRow.order_id,
-              "pending",
-            );
-          }
+        } else if (mayScheduleNextAttempt) {
+          await client.query(
+            `
+              UPDATE billing_subscriptions
+              SET
+                auto_renew = false,
+                cancel_at_period_end = true,
+                renewal_due_at = NULL,
+                updated_at = now()
+              WHERE id = $1
+            `,
+            [attemptRow.subscription_id],
+          );
         }
       }
+
+      await updateRenewalOrderStatus(
+        client,
+        attemptRow.order_id,
+        orderStatusForPayment(nextStatus),
+      );
 
       await markWebhookEvent(client, webhookId, "applied");
       await client.query("COMMIT");
