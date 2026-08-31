@@ -212,7 +212,6 @@ export class PaymentService {
 
     if (event.kind === "payment") {
       if (
-        !knownCheckout &&
         event.payment.internalOrderId &&
         event.payment.internalRenewalAttemptId
       ) {

@@ -2,6 +2,11 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+  maximumRenewalAttempts,
+  nextFinancialRenewalAttemptAt,
+  renewalGracePeriodMilliseconds,
+} from "../domain/subscription-renewal-policy.mjs";
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
@@ -92,6 +97,31 @@ function orderStatusForPayment(status: PaymentStatus): OrderStatus {
     default:
       return "pending";
   }
+}
+
+async function updateRenewalOrderStatus(
+  client: PoolClient,
+  orderId: string,
+  fallbackStatus: OrderStatus,
+) {
+  await client.query(
+    `
+      UPDATE billing_orders orders
+      SET
+        status = CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'succeeded'
+          ) THEN 'paid'
+          ELSE $2
+        END,
+        updated_at = now()
+      WHERE orders.id = $1
+    `,
+    [orderId, fallbackStatus],
+  );
 }
 
 function renewalAttemptIdempotencyKey(
@@ -1478,9 +1508,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
         );
       }
 
-      await client.query(
-        "UPDATE billing_orders SET status = $2, updated_at = now() WHERE id = $1",
-        [attemptRow.order_id, orderStatusForPayment(input.status)],
+      await updateRenewalOrderStatus(
+        client,
+        attemptRow.order_id,
+        orderStatusForPayment(input.status),
       );
 
       if (previousStatus !== input.status) {
@@ -1552,11 +1583,11 @@ export class PostgresPaymentRepository implements PaymentRepository {
         );
 
         const graceEnd = new Date(
-          attemptRow.period_start.getTime() + 7 * 24 * 60 * 60 * 1000,
+          attemptRow.period_start.getTime() + renewalGracePeriodMilliseconds,
         );
         const shouldScheduleNextAttempt =
           input.status === "canceled" &&
-          attemptRow.attempt_number < 4 &&
+          attemptRow.attempt_number < maximumRenewalAttempts &&
           attemptRow.auto_renew &&
           !attemptRow.cancel_at_period_end &&
           (attemptRow.subscription_status === "active" ||
@@ -1565,14 +1596,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
         if (shouldScheduleNextAttempt) {
           const nextAttemptNumber = attemptRow.attempt_number + 1;
-          const retryAt = new Date(
-            Math.min(
-              processedAt.getTime() + 60 * 60 * 1000,
-              graceEnd.getTime(),
-            ),
-          );
+          const retryAt = nextFinancialRenewalAttemptAt({
+            attemptNumber: attemptRow.attempt_number,
+            processedAt,
+            graceEnd,
+          });
 
-          await client.query(
+          const insertedAttempt = await client.query(
             `
               INSERT INTO billing_subscription_renewal_attempts (
                 id, subscription_id, customer_id, order_id,
@@ -1587,6 +1617,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
               ON CONFLICT (
                 subscription_id, renewal_sequence, attempt_number
               ) DO NOTHING
+              RETURNING id
             `,
             [
               randomUUID(),
@@ -1605,10 +1636,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
               retryAt,
             ],
           );
-          await client.query(
-            "UPDATE billing_orders SET status = 'pending', updated_at = now() WHERE id = $1",
-            [attemptRow.order_id],
-          );
+          if (insertedAttempt.rowCount) {
+            await updateRenewalOrderStatus(
+              client,
+              attemptRow.order_id,
+              "pending",
+            );
+          }
         }
       }
 

@@ -32,5 +32,8 @@ describe("миграции восстановления рекуррентных
     expect(migration).toContain(
       "billing_access_grace_periods_one_active_idx",
     );
+    expect(createHash("sha256").update(migration).digest("hex")).toBe(
+      "b91ab5712fd0fa00c5290bf01ecfb00036edfe3644165ead02bc86be141d868b",
+    );
   });
 });

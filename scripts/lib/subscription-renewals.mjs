@@ -1,12 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
+import {
+  maximumRenewalAttempts,
+  nextFinancialRenewalAttemptAt,
+  renewalGracePeriodMilliseconds,
+} from "../../src/modules/billing/domain/subscription-renewal-policy.mjs";
 
-const maxAttempts = 4;
-const gracePeriodMilliseconds = 7 * 24 * 60 * 60 * 1000;
-const retryDelaysMilliseconds = [
+const maxAttempts = maximumRenewalAttempts;
+const gracePeriodMilliseconds = renewalGracePeriodMilliseconds;
+const transportRetryDelaysMilliseconds = [
   60 * 60 * 1000,
   24 * 60 * 60 * 1000,
   gracePeriodMilliseconds,
 ];
+
+function transportRetryDelayMilliseconds(retryCount) {
+  return transportRetryDelaysMilliseconds[
+    Math.min(retryCount, transportRetryDelaysMilliseconds.length - 1)
+  ];
+}
 
 function subscriptionPeriodEnd(periodStart, planId) {
   const start = new Date(periodStart);
@@ -70,7 +81,11 @@ function receiptFor(row) {
   };
 }
 
-export async function createYooKassaRenewal(row, fetchImplementation) {
+export async function createYooKassaRenewal(
+  row,
+  fetchImplementation,
+  { onRequestStarted = () => {} } = {},
+) {
   const shopId = process.env.YOOKASSA_SHOP_ID?.trim();
   const secretKey = process.env.YOOKASSA_SECRET_KEY?.trim();
 
@@ -78,6 +93,22 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
     throw new Error("RENEWAL_PROVIDER_NOT_CONFIGURED");
   }
 
+  const body = JSON.stringify({
+    amount: formatMoney(row.amount_minor, row.currency),
+    capture: true,
+    payment_method_id: row.provider_payment_method_token,
+    description: `Продление: ${row.plan_id === "annual" ? "Годовой" : "Месячный"} тариф — Академия Абрикософф`,
+    receipt: receiptFor(row),
+    metadata: {
+      internal_order_id: row.order_id,
+      renewal_attempt_id: row.id,
+      customer_id: row.customer_id,
+      plan_id: row.plan_id,
+      legal_entity_id: row.legal_entity_id,
+      operation: "subscription_renewal",
+    },
+  });
+  await onRequestStarted();
   let response;
 
   try {
@@ -91,21 +122,7 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
           "Content-Type": "application/json",
           "Idempotence-Key": row.idempotency_key,
         },
-        body: JSON.stringify({
-          amount: formatMoney(row.amount_minor, row.currency),
-          capture: true,
-          payment_method_id: row.provider_payment_method_token,
-          description: `Продление: ${row.plan_id === "annual" ? "Годовой" : "Месячный"} тариф — Академия Абрикософф`,
-          receipt: receiptFor(row),
-          metadata: {
-            internal_order_id: row.order_id,
-            renewal_attempt_id: row.id,
-            customer_id: row.customer_id,
-            plan_id: row.plan_id,
-            legal_entity_id: row.legal_entity_id,
-            operation: "subscription_renewal",
-          },
-        }),
+        body,
         cache: "no-store",
         signal: AbortSignal.timeout(10_000),
       },
@@ -548,6 +565,52 @@ async function createOrRefreshGracePeriod(
   );
 }
 
+async function markRenewalRequestStarted(client, row, now) {
+  await client.query("BEGIN");
+
+  try {
+    const graceEnd = new Date(
+      new Date(row.period_start).getTime() + gracePeriodMilliseconds,
+    );
+    const marked = await client.query(
+      `
+        UPDATE billing_subscription_renewal_attempts
+        SET
+          status = 'reconciliation_required',
+          next_attempt_at = $2,
+          lease_expires_at = NULL,
+          last_error_code = 'RENEWAL_PROVIDER_OUTCOME_UNKNOWN',
+          updated_at = now()
+        WHERE id = $1 AND status = 'processing'
+        RETURNING id
+      `,
+      [row.id, now],
+    );
+
+    if (!marked.rowCount) {
+      throw new Error("RENEWAL_ATTEMPT_STATE_CHANGED");
+    }
+
+    await client.query(
+      `
+        UPDATE billing_subscriptions
+        SET
+          status = 'grace_period',
+          last_renewal_attempt_at = $2,
+          renewal_error_code = 'RENEWAL_PROVIDER_OUTCOME_UNKNOWN',
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [row.subscription_id, now],
+    );
+    await createOrRefreshGracePeriod(client, row, graceEnd, now);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
 async function expireEndedGracePeriods(client, now) {
   await client.query("BEGIN");
 
@@ -823,20 +886,21 @@ async function failRenewal(client, row, errorCode, now) {
     const graceEnd = new Date(
       new Date(row.period_start).getTime() + gracePeriodMilliseconds,
     );
-    const retryOrdinal = startsNewFinancialAttempt
-      ? row.attempt_number - 1
-      : row.transport_retry_count;
     const retryAt = reconciliationRequired || finalFailure
       ? now
-      : new Date(
-          Math.min(
-            now.getTime() +
-              retryDelaysMilliseconds[
-                Math.min(retryOrdinal, retryDelaysMilliseconds.length - 1)
-              ],
-            graceEnd.getTime(),
-          ),
-        );
+      : startsNewFinancialAttempt
+        ? nextFinancialRenewalAttemptAt({
+            attemptNumber: row.attempt_number,
+            processedAt: now,
+            graceEnd,
+          })
+        : new Date(
+            Math.min(
+              now.getTime() +
+                transportRetryDelayMilliseconds(row.transport_retry_count),
+              graceEnd.getTime(),
+            ),
+          );
 
     if (startsNewFinancialAttempt && !finalFailure) {
       const nextAttemptNumber = row.attempt_number + 1;
@@ -996,6 +1060,7 @@ export async function processSubscriptionRenewals(
     now = () => new Date(),
     fetchImplementation = fetch,
     batchSize = 25,
+    completeRenewalImplementation = completeRenewal,
   } = {},
 ) {
   let processed = 0;
@@ -1014,6 +1079,9 @@ export async function processSubscriptionRenewals(
 
     await acquireRenewalLock(client, renewal.customer_id);
 
+    let externalPostStarted = false;
+    let providerResult = null;
+
     try {
       if (!(await renewalStillAllowed(client, renewal))) {
         continue;
@@ -1030,12 +1098,18 @@ export async function processSubscriptionRenewals(
               renewal.external_payment_id,
               fetchImplementation,
             )
-          : await createYooKassaRenewal(renewal, fetchImplementation);
+          : await createYooKassaRenewal(renewal, fetchImplementation, {
+              onRequestStarted: async () => {
+                await markRenewalRequestStarted(client, renewal, now());
+                externalPostStarted = true;
+              },
+            });
       } else {
         throw new Error("RENEWAL_PROVIDER_NOT_SUPPORTED");
       }
 
-      await completeRenewal(client, renewal, payment, now());
+      providerResult = payment;
+      await completeRenewalImplementation(client, renewal, payment, now());
 
       if (payment.status === "succeeded") {
         succeeded += 1;
@@ -1053,10 +1127,18 @@ export async function processSubscriptionRenewals(
         else rescheduled += 1;
       }
     } catch (error) {
-      const errorCode =
+      const reportedErrorCode =
         error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
           ? error.message
           : "RENEWAL_PROVIDER_TEMPORARY_FAILURE";
+      const errorCode =
+        providerResult?.status === "canceled" ||
+        providerResult?.status === "failed" ||
+        reportedErrorCode === "RENEWAL_PROVIDER_REJECTED"
+          ? "RENEWAL_PROVIDER_REJECTED"
+          : externalPostStarted
+            ? "RENEWAL_PROVIDER_OUTCOME_UNKNOWN"
+            : reportedErrorCode;
       const finalFailure = await failRenewal(
         client,
         renewal,
