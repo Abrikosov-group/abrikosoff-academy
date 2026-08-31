@@ -2653,6 +2653,143 @@ describe("автоматическое продление подписок с Po
     ).resolves.toMatchObject({ rows: [{ status: "succeeded" }] });
   });
 
+  it("не возвращает активный статус после окончания поздно подтверждённого периода", async () => {
+    const dueAt = new Date("2044-05-01T10:00:00.000Z");
+    const graceEnd = new Date("2044-05-08T10:00:00.000Z");
+    const recoveredAt = new Date("2044-06-02T10:00:00.000Z");
+    const expectedPeriodEnd = new Date("2044-06-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: vi
+            .fn()
+            .mockRejectedValue(new Error("Ответ провайдера потерян")),
+        }),
+      ).resolves.toMatchObject({ processed: 1, rescheduled: 1 });
+
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => graceEnd,
+          batchSize: 1,
+          fetchImplementation: vi.fn(),
+        }),
+      ).resolves.toEqual({
+        processed: 0,
+        succeeded: 0,
+        rescheduled: 0,
+        failed: 0,
+      });
+      await expect(
+        getSubscriptionSummary(pool, fixture.userId),
+      ).resolves.toMatchObject({
+        status: "past_due",
+        autoRenew: false,
+        cancelAtPeriodEnd: true,
+      });
+
+      const renewal = await pool.query<{
+        id: string;
+        order_id: string;
+      }>(
+        `
+          SELECT id, order_id
+          FROM billing_subscription_renewal_attempts
+          WHERE subscription_id = $1
+        `,
+        [fixture.subscriptionId],
+      );
+      const externalPaymentId = "success-after-paid-period-ended";
+      const repository = new PostgresPaymentRepository(
+        pool,
+        () => recoveredAt,
+      );
+
+      await expect(
+        repository.applyRecoveredRenewalPaymentEvent({
+          provider: "yookassa",
+          merchantAccountId: "renewal-test",
+          externalEventId: "success-after-paid-period-ended-event",
+          eventType: "payment.succeeded",
+          externalPaymentId,
+          status: "succeeded",
+          paymentMethodToken: `method-${fixture.userId}`,
+          paymentMethodSaved: true,
+          occurredAt: dueAt.toISOString(),
+          payloadSha256: "c".repeat(64),
+          payload: { event: "payment.succeeded" },
+          internalOrderId: renewal.rows[0].order_id,
+          internalRenewalAttemptId: renewal.rows[0].id,
+          money: { amountMinor: 150_000, currency: "RUB" },
+        }),
+      ).resolves.toMatchObject({
+        outcome: "applied",
+        checkout: { status: "succeeded" },
+      });
+
+      await expect(
+        getSubscriptionSummary(pool, fixture.userId),
+      ).resolves.toMatchObject({
+        status: "past_due",
+        currentPeriodEnd: expectedPeriodEnd.toISOString(),
+        autoRenew: false,
+        cancelAtPeriodEnd: true,
+      });
+      await expect(
+        pool.query<{
+          payment_status: string;
+          order_status: string;
+          attempt_status: string;
+          grants: string;
+        }>(
+          `
+            SELECT
+              payments.status AS payment_status,
+              orders.status AS order_status,
+              attempts.status AS attempt_status,
+              (
+                SELECT count(*)
+                FROM billing_access_grants grants
+                WHERE grants.order_id = orders.id
+                  AND grants.status = 'granted'
+              ) AS grants
+            FROM billing_subscription_renewal_attempts attempts
+            JOIN billing_orders orders ON orders.id = attempts.order_id
+            JOIN billing_payments payments ON payments.order_id = orders.id
+            WHERE attempts.id = $1
+          `,
+          [renewal.rows[0].id],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            payment_status: "succeeded",
+            order_status: "paid",
+            attempt_status: "succeeded",
+            grants: "1",
+          },
+        ],
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+  });
+
   it("завершает льготу с известным pending без нового POST и без повторного события", async () => {
     const dueAt = new Date("2042-03-01T10:00:00.000Z");
     const graceEnd = new Date("2042-03-08T10:00:00.000Z");

@@ -673,6 +673,8 @@ async function activateSubscription(
 
   const activePeriodStart = activeGrant.rows[0].period_start;
   const activePeriodEnd = activeGrant.rows[0].period_end;
+  const paidPeriodIsCurrent =
+    activePeriodEnd.getTime() > activatedAt.getTime();
 
   let mandateId = current?.mandate_id ?? null;
   const recurringReady =
@@ -778,6 +780,7 @@ async function activateSubscription(
   }
 
   const autoRenew =
+    paidPeriodIsCurrent &&
     recurringReady &&
     (checkout.renewalSequence === 0 || !current?.cancel_at_period_end);
   const subscriptionId = current?.id ?? randomUUID();
@@ -788,18 +791,23 @@ async function activateSubscription(
         UPDATE billing_subscriptions
         SET
           plan_id = $2,
-          status = 'active',
+          status = CASE WHEN $11::boolean THEN 'active' ELSE 'past_due' END,
           current_period_start = $3,
           current_period_end = $4,
           auto_renew = $5,
           mandate_id = $6,
           activated_by_order_id = $7,
-          cancel_at_period_end = CASE WHEN $5::boolean THEN false ELSE cancel_at_period_end END,
+          cancel_at_period_end = CASE
+            WHEN $5::boolean THEN false
+            WHEN NOT $11::boolean THEN true
+            ELSE cancel_at_period_end
+          END,
           canceled_at = CASE WHEN $5::boolean THEN NULL ELSE canceled_at END,
           renewal_due_at = CASE WHEN $5::boolean THEN $4::timestamptz ELSE NULL END,
           renewal_failure_count = 0,
           last_renewal_attempt_at = CASE WHEN $8::integer > 0 THEN $9::timestamptz ELSE last_renewal_attempt_at END,
           renewal_error_code = CASE
+            WHEN NOT $11::boolean THEN renewal_error_code
             WHEN $5::boolean THEN NULL
             WHEN $10 = 'recurring' THEN 'PAYMENT_METHOD_NOT_SAVED'
             ELSE NULL
@@ -818,6 +826,7 @@ async function activateSubscription(
         checkout.renewalSequence,
         activatedAt,
         checkout.billingMode,
+        paidPeriodIsCurrent,
       ],
     );
   } else {
