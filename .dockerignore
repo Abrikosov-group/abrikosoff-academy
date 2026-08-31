@@ -13,6 +13,8 @@ deploy/server/*
 deploy/systemd/*
 !deploy/systemd/academy-identity-session-retention.service
 !deploy/systemd/academy-identity-session-retention.timer
+!deploy/systemd/academy-subscription-renewals.service
+!deploy/systemd/academy-subscription-renewals.timer
 docs
 node_modules
 npm-debug.log*
