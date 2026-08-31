@@ -9,7 +9,7 @@ import type {
 export type PaymentsMode = "demo" | "live" | "disabled";
 
 export const academyLegalEntityId = "ip-fedotova";
-export const offerDocumentVersion = "2026-07-28";
+export const offerDocumentVersion = "2026-08-31";
 
 export type BillingConfig = {
   mode: PaymentsMode;
@@ -78,6 +78,7 @@ export function getBillingConfig(): BillingConfig {
       merchantAccountId: "demo-primary",
       legalEntityId: academyLegalEntityId,
       currency: "RUB",
+      billingMode: "recurring",
       priority: 100,
     });
   }
@@ -107,6 +108,7 @@ export function getBillingConfig(): BillingConfig {
       merchantAccountId,
       legalEntityId: academyLegalEntityId,
       currency: "RUB",
+      billingMode: "recurring",
       priority: 100,
     });
   }

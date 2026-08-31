@@ -119,7 +119,7 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 ```
 
 После установки `academy-task` оператор извлекает согласованные unit-файлы
-обезличивания из того же образа и включает timer:
+обезличивания и продления подписок из того же образа и включает timers:
 
 ```bash
 (
@@ -132,13 +132,17 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
   trap '
     rm -f -- \
       "$candidate_directory/academy-identity-session-retention.service" \
-      "$candidate_directory/academy-identity-session-retention.timer"
+      "$candidate_directory/academy-identity-session-retention.timer" \
+      "$candidate_directory/academy-subscription-renewals.service" \
+      "$candidate_directory/academy-subscription-renewals.timer"
     rmdir -- "$candidate_directory"
   ' EXIT
 
   for unit_name in \
     academy-identity-session-retention.service \
-    academy-identity-session-retention.timer
+    academy-identity-session-retention.timer \
+    academy-subscription-renewals.service \
+    academy-subscription-renewals.timer
   do
     candidate="$candidate_directory/$unit_name"
     sudo docker run \
@@ -158,12 +162,15 @@ PostgreSQL, `DATABASE_URL` и ключи серверных интеграций
 
   sudo systemctl daemon-reload
   sudo systemctl enable --now \
-    academy-identity-session-retention.timer
+    academy-identity-session-retention.timer \
+    academy-subscription-renewals.timer
   sudo systemctl start \
     academy-identity-session-retention.service
   sudo systemctl --no-pager status \
     academy-identity-session-retention.service \
-    academy-identity-session-retention.timer
+    academy-identity-session-retention.timer \
+    academy-subscription-renewals.service \
+    academy-subscription-renewals.timer
 )
 ```
 
@@ -268,6 +275,10 @@ Actions и процесс Next.js не являются планировщика
 старше 12 месяцев. Он сохраняет запись сессии, но удаляет из неё IP-адрес,
 географию, сведения об устройстве и браузере, сырой User-Agent и Cloudflare
 Ray ID.
+
+Timer `academy-subscription-renewals` каждые 15 минут обрабатывает наступившие
+продления. Он использует постоянные ключи идемпотентности, а при временной
+ошибке сохраняет доступ не более семи дней и планирует повторную попытку.
 
 `ADMINISTRATION_ENABLED=false` остаётся безопасным значением по умолчанию.
 До полной приёмки двух каналов и уведомлений разрешён только явно заданный

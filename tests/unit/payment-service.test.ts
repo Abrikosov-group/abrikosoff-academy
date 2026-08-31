@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRecoveredRenewalPaymentEventInput,
   ApplyRefundEventInput,
   ApplyRefundEventResult,
   PaymentRepository,
@@ -28,6 +29,7 @@ class FlakyPaymentRepository implements PaymentRepository {
   checkout: StoredCheckout | null = null;
   failNextSave = true;
   processedEvents = new Set<string>();
+  recoveredRenewalEvents: ApplyRecoveredRenewalPaymentEventInput[] = [];
 
   async findCheckoutReservationByIdempotencyKey(
     idempotencyKey: string,
@@ -106,6 +108,31 @@ class FlakyPaymentRepository implements PaymentRepository {
     return { outcome: "applied", checkout: this.checkout };
   }
 
+  async applyRecoveredRenewalPaymentEvent(
+    input: ApplyRecoveredRenewalPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult> {
+    this.recoveredRenewalEvents.push(input);
+    if (
+      !this.reservation ||
+      this.reservation.orderId !== input.internalOrderId
+    ) {
+      return { outcome: "unmatched", checkout: null };
+    }
+
+    this.checkout = {
+      ...this.reservation,
+      idempotencyKey: input.internalRenewalAttemptId,
+      paymentId: "recovered-payment",
+      externalPaymentId: input.externalPaymentId,
+      status: input.status,
+      confirmationUrl: "",
+      paymentMethodToken: input.paymentMethodToken,
+      paymentMethodSaved: input.paymentMethodSaved === true,
+      updatedAt: input.occurredAt,
+    };
+    return { outcome: "applied", checkout: this.checkout };
+  }
+
   async applyRefundEvent(
     _input: ApplyRefundEventInput,
   ): Promise<ApplyRefundEventResult> {
@@ -122,6 +149,10 @@ class IdempotentPaymentProvider implements PaymentProvider {
   currentStatus: ProviderPayment["status"] = "pending";
   verifyCalls = 0;
   private latestPayment: ProviderPayment | null = null;
+
+  setVerifiedPayment(payment: ProviderPayment) {
+    this.latestPayment = payment;
+  }
 
   async createCheckout(
     input: CreateProviderCheckoutInput,
@@ -262,9 +293,14 @@ describe("PaymentService", () => {
     );
   });
 
-  it("не вызывает API провайдера для неизвестного webhook", async () => {
+  it("проверяет неизвестный webhook до решения о повторе", async () => {
     const repository = new FlakyPaymentRepository();
     const provider = new IdempotentPaymentProvider();
+    provider.setVerifiedPayment({
+      externalPaymentId: "external_unknown",
+      status: "succeeded",
+      money: { amountMinor: 150_000, currency: "RUB" },
+    });
     const service = new PaymentService({
       repository,
       router: new PaymentProviderRouter({
@@ -283,7 +319,141 @@ describe("PaymentService", () => {
       code: "WEBHOOK_NOT_READY",
       httpStatus: 503,
     });
-    expect(provider.verifyCalls).toBe(0);
+    expect(provider.verifyCalls).toBe(1);
+  });
+
+  it("связывает поздний webhook с зарезервированным заказом", async () => {
+    const repository = new FlakyPaymentRepository();
+    repository.failNextSave = false;
+    const provider = new IdempotentPaymentProvider();
+    provider.currentStatus = "succeeded";
+    const orderId = "3f4ff588-3666-4fdc-aac9-77dbf8026891";
+    const customerId = "5d1efc7f-b455-4a48-922f-1347ef9df20e";
+    const money = { amountMinor: 150_000, currency: "RUB" as const };
+    repository.reservation = {
+      orderId,
+      customerId,
+      planId: "monthly",
+      legalEntityId: "ip-fedotova",
+      countryCode: "RU",
+      merchantAccountId: "demo-primary",
+      money,
+      idempotencyKey: "renewal-late-webhook-001",
+      provider: "demo",
+      billingMode: "recurring",
+      subscriptionId: "b20fb64d-811f-48db-a11f-3c2e0dba1cbd",
+      renewalSequence: 1,
+      offerAcceptedAt: "2026-07-28T10:00:00.000Z",
+      offerVersion: "2026-07-28",
+      recurringConsentAcceptedAt: "2026-07-28T10:00:00.000Z",
+      recurringConsentOfferVersion: "2026-07-28",
+      receiptContact: { email: "student@example.test" },
+      createdAt: "2026-08-28T10:00:00.000Z",
+      updatedAt: "2026-08-28T10:00:00.000Z",
+    };
+    provider.setVerifiedPayment({
+      externalPaymentId: "external_late_renewal",
+      internalOrderId: orderId,
+      internalRenewalAttemptId: "renewal-attempt-late-001",
+      status: "succeeded",
+      money,
+      paidAt: "2026-08-28T10:05:00.000Z",
+      paymentMethodSaved: true,
+      paymentMethodToken: "saved_method_001",
+    });
+    const service = new PaymentService({
+      repository,
+      router: new PaymentProviderRouter({
+        providers: [provider],
+        routes: [],
+      }),
+    });
+
+    const result = await service.handleWebhook(
+      "demo",
+      JSON.stringify({ externalPaymentId: "external_late_renewal" }),
+      new Headers(),
+    );
+
+    expect(result.outcome).toBe("applied");
+    expect(repository.checkout).toMatchObject({
+      orderId,
+      customerId,
+      externalPaymentId: "external_late_renewal",
+      status: "succeeded",
+    });
+    expect(provider.verifyCalls).toBe(1);
+  });
+
+  it("проводит известный платёж продления через транзакцию попытки", async () => {
+    const repository = new FlakyPaymentRepository();
+    repository.failNextSave = false;
+    const provider = new IdempotentPaymentProvider();
+    provider.currentStatus = "canceled";
+    const orderId = "f5485134-424d-416c-bbbc-df81bdcad8de";
+    const customerId = "76998ff2-e707-4e59-b4b1-406d7e574daf";
+    const externalPaymentId = "external-known-renewal";
+    const money = { amountMinor: 150_000, currency: "RUB" as const };
+    repository.reservation = {
+      orderId,
+      customerId,
+      planId: "monthly",
+      legalEntityId: "ip-fedotova",
+      countryCode: "RU",
+      merchantAccountId: "demo-primary",
+      money,
+      idempotencyKey: "known-renewal-001",
+      provider: "demo",
+      billingMode: "recurring",
+      subscriptionId: "34ba9bb7-bc11-408b-8f16-e71bc02e0661",
+      renewalSequence: 1,
+      offerAcceptedAt: "2026-08-31T10:00:00.000Z",
+      offerVersion: "2026-08-31",
+      recurringConsentAcceptedAt: "2026-08-31T10:00:00.000Z",
+      recurringConsentOfferVersion: "2026-08-31",
+      receiptContact: { email: "student@example.test" },
+      createdAt: "2026-08-31T10:00:00.000Z",
+      updatedAt: "2026-08-31T10:00:00.000Z",
+    };
+    repository.checkout = {
+      ...repository.reservation,
+      paymentId: "known-renewal-payment",
+      externalPaymentId,
+      status: "pending",
+      confirmationUrl: "",
+      paymentMethodToken: "saved-method-known",
+      paymentMethodSaved: true,
+    };
+    provider.setVerifiedPayment({
+      externalPaymentId,
+      internalOrderId: orderId,
+      internalRenewalAttemptId: "known-renewal-attempt-001",
+      status: "canceled",
+      money,
+      paymentMethodSaved: true,
+      paymentMethodToken: "saved-method-known",
+    });
+    const service = new PaymentService({
+      repository,
+      router: new PaymentProviderRouter({ providers: [provider], routes: [] }),
+    });
+
+    await expect(
+      service.handleWebhook(
+        "demo",
+        JSON.stringify({ externalPaymentId }),
+        new Headers(),
+      ),
+    ).resolves.toMatchObject({ outcome: "applied" });
+
+    expect(repository.recoveredRenewalEvents).toHaveLength(1);
+    expect(repository.recoveredRenewalEvents[0]).toMatchObject({
+      internalOrderId: orderId,
+      internalRenewalAttemptId: "known-renewal-attempt-001",
+      externalPaymentId,
+      status: "canceled",
+    });
+    expect(repository.processedEvents.size).toBe(0);
   });
 
   it("сверяет ожидающий платёж после возврата пользователя", async () => {

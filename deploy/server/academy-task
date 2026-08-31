@@ -11,7 +11,7 @@ readonly current_image_file="${shared_root}/current-image"
 readonly project_name="academy-abrikosoff"
 readonly image_prefix="ghcr.io/abrikosov-group/abrikosoff-academy:"
 readonly operation_lock_timeout_seconds=600
-readonly allowed_task="purge-identity-session-technical-data"
+readonly requested_task="${2:-}"
 
 fail() {
   printf 'Ошибка фоновой задачи: %s\n' "$*" >&2
@@ -20,7 +20,10 @@ fail() {
 
 [[ "$#" -eq 2 ]] || fail "ожидалось ровно два аргумента"
 [[ "$1" == "run" ]] || fail "разрешена только команда run"
-[[ "$2" == "${allowed_task}" ]] || fail "имя задачи не разрешено"
+case "${requested_task}" in
+  purge-identity-session-technical-data | process-subscription-renewals) ;;
+  *) fail "имя задачи не разрешено" ;;
+esac
 
 exec 9<"${academy_root}" \
   || fail "не удалось открыть каталог Академии для блокировки"
@@ -78,4 +81,4 @@ run_compose \
     --no-deps \
     -T \
     app \
-    node scripts/background-task.mjs "${allowed_task}"
+    node scripts/background-task.mjs "${requested_task}"

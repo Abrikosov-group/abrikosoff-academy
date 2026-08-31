@@ -85,6 +85,11 @@ export class DemoPaymentProvider implements PaymentProvider {
       money: input.plan.price,
       confirmationUrl: confirmationUrl.toString(),
       paidAt: new Date().toISOString(),
+      paymentMethodToken:
+        input.billingMode === "recurring"
+          ? deterministicId("demo_method", input.customerId)
+          : undefined,
+      paymentMethodSaved: input.billingMode === "recurring",
     };
 
     getDemoPaymentRegistry().set(payment.externalPaymentId, payment);

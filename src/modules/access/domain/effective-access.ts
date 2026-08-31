@@ -23,9 +23,14 @@ export type ManualAccessBasis = AccessBasisCommon & {
   source: "manual";
 };
 
+export type GraceAccessBasis = AccessBasisCommon & {
+  source: "grace";
+};
+
 export type EffectiveAccessBasis =
   | PaidAccessBasis
-  | ManualAccessBasis;
+  | ManualAccessBasis
+  | GraceAccessBasis;
 
 export type EffectiveAccessDecision = {
   evaluatedAt: string;

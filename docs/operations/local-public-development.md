@@ -47,12 +47,20 @@ SESSION_TRUSTED_PROXY=cloudflare
 ADMINISTRATION_ENABLED=false
 ADMINISTRATION_MODE=owner_preview
 ADMIN_DISPLAY_TIME_ZONE=Europe/Moscow
+EFFECTIVE_ACCESS_MODE=v2
+MANUAL_ACCESS_GRANTING_ENABLED=false
 TELEGRAM_OIDC_CLIENT_ID=8965978102
 TELEGRAM_OIDC_CLIENT_SECRET=<из защищённого хранилища>
 TELEGRAM_OIDC_REDIRECT_URI=https://academy-dev.abrikosoff.com/api/auth/telegram/callback
 PAYMENTS_MODE=demo
 PAYMENT_DEFAULT_PROVIDER=demo
 ```
+
+`EFFECTIVE_ACCESS_MODE=v2` включает в локальной среде применяемое объединённое
+чтение оплаченных и ручных оснований. Выдача ручных грантов при этом остаётся
+выключенной. Production-конфигурация этим локальным профилем не изменяется и
+до отдельного выпуска сохраняет `shadow` и
+`MANUAL_ACCESS_GRANTING_ENABLED=false`.
 
 `SESSION_TRUSTED_PROXY=cloudflare` допустим здесь, потому что публичный запрос
 приходит через именованный Cloudflare Tunnel, а локальный порт слушает только
