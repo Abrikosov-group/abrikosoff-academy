@@ -206,6 +206,37 @@ describe("ручное управление доступом", () => {
     expect(reserve).not.toHaveBeenCalled();
   });
 
+  it("терминально завершает восстановленную выдачу с истёкшим периодом", async () => {
+    const repository = new FakeRepository();
+    repository.inspection = { state: "recoverable" };
+    repository.grantExecution = {
+      state: "rejected",
+      errorCode: "ADMIN_COMMAND_INVALID_REQUEST",
+      resultStatus: 400,
+    };
+    const reserve = vi.spyOn(repository, "reserveInternalCommand");
+    const execute = vi.spyOn(repository, "executeGrantManualAccess");
+    const service = new GrantManualAccessService(repository, {
+      manualAccessGrantingEnabled: true,
+      effectiveAccessMode: "v2",
+    });
+
+    await expect(
+      service.execute({
+        ...grantInput,
+        periodStart: "2025-01-01T00:00:00Z",
+        periodEnd: "2025-01-02T00:00:00Z",
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+        httpStatus: 400,
+      }),
+    );
+    expect(reserve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("проверяет предметные права выдачи и отзыва", async () => {
     const repository = new FakeRepository();
     const noPermissions = context(new Set());

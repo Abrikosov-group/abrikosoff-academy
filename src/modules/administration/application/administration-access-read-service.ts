@@ -37,6 +37,9 @@ export class AdministrationAccessReadService {
       canRevokeManualAccess: input.permissions.has(
         "access.manual.revoke",
       ),
+      paymentContextVisible: input.permissions.has(
+        "users.read_payment_context",
+      ),
     });
   }
 }

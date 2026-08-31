@@ -205,9 +205,27 @@ export function deriveEffectiveAccessSummary(
       basis.status !== "revoked" &&
       Date.parse(basis.periodEnd) <= atTime,
   );
-  const activeUntil = active
+  const eligible = bases.filter(
+    (basis) => basis.status === "granted" || basis.status === "active",
+  );
+  let activeUntil = active
     .map((basis) => basis.periodEnd)
     .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+
+  while (activeUntil) {
+    const currentEnd = Date.parse(activeUntil);
+    const extendingEnd = eligible
+      .filter(
+        (basis) =>
+          Date.parse(basis.periodStart) <= currentEnd &&
+          Date.parse(basis.periodEnd) > currentEnd,
+      )
+      .map((basis) => basis.periodEnd)
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+
+    if (!extendingEnd) break;
+    activeUntil = extendingEnd;
+  }
   const scheduledFrom = scheduled
     .map((basis) => basis.periodStart)
     .sort((left, right) => Date.parse(left) - Date.parse(right))[0];

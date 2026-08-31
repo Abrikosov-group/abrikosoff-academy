@@ -14,5 +14,6 @@ export interface AdministrationAccessReadRepository {
     limit: number;
     at: Date;
     canRevokeManualAccess: boolean;
+    paymentContextVisible: boolean;
   }): Promise<AdminAccessListPage>;
 }

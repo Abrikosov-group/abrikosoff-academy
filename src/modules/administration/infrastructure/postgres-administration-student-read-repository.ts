@@ -316,7 +316,7 @@ export class PostgresAdministrationStudentReadRepository
               SELECT
                 'grace'::text AS source,
                 CASE
-                  WHEN grace.status = 'active' THEN 'granted'
+                  WHEN grace.status IN ('active', 'expired') THEN 'granted'
                   ELSE 'revoked'
                 END AS status,
                 grace.period_start,
@@ -739,7 +739,10 @@ export class PostgresAdministrationStudentReadRepository
         status: grace.status,
         periodStart: grace.period_start.toISOString(),
         periodEnd: grace.period_end.toISOString(),
-        effectiveNow: effectiveBasisIds.has(`grace:${grace.subscription_id}`),
+        effectiveNow:
+          grace.status === "active" &&
+          grace.period_start.getTime() <= input.at.getTime() &&
+          grace.period_end.getTime() > input.at.getTime(),
         ...(input.scope.billingContext
           ? {
               subscriptionId: grace.subscription_id,

@@ -274,6 +274,10 @@ function terminalCommandError(
     | "REVOKE_MANUAL_ACCESS_FAILED" = "GRANT_MANUAL_ACCESS_FAILED",
 ) {
   const known = {
+    ADMIN_COMMAND_INVALID_REQUEST: [
+      "Окончание периода должно быть в будущем.",
+      400,
+    ],
     USER_NOT_FOUND: ["Ученик не найден.", 404],
     MANUAL_ACCESS_GRANTING_DISABLED: [
       "Новая выдача ручного доступа временно выключена.",
@@ -466,7 +470,10 @@ export class GrantManualAccessService {
       );
     }
 
-    if (Date.parse(command.periodEnd) <= Date.now()) {
+    if (
+      inspection.state === "missing" &&
+      Date.parse(command.periodEnd) <= Date.now()
+    ) {
       throw invalidRequest("Окончание периода должно быть в будущем.");
     }
 
@@ -528,6 +535,7 @@ export class GrantManualAccessService {
       if (
         error instanceof AdministrationError &&
         (error.code === "USER_NOT_FOUND" ||
+          error.code === "ADMIN_COMMAND_INVALID_REQUEST" ||
           error.code === "COMMAND_ATTEMPT_SUPERSEDED")
       ) {
         throw error;

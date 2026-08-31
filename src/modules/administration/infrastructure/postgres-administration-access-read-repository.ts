@@ -35,6 +35,7 @@ export class PostgresAdministrationAccessReadRepository
   async listAccess(
     input: Parameters<AdministrationAccessReadRepository["listAccess"]>[0],
   ) {
+    const normalizedUsername = input.query.replace(/^@/, "");
     const result = await this.pool.query<AccessRow>(
       `
         WITH access_rows AS (
@@ -149,16 +150,33 @@ export class PostgresAdministrationAccessReadRepository
           AND ($3::text IS NULL OR rows.state = $3)
           AND (
             $4::text = ''
-            OR users.id::text = $4
+            OR lower(users.id::text) = lower($4)
+            OR (
+              $9::boolean
+              AND lower(users.receipt_email) = lower($4)
+            )
             OR strpos(lower(users.display_name), lower($4)) > 0
             OR EXISTS (
               SELECT 1
               FROM identity_methods methods
               WHERE methods.user_id = users.id
                 AND (
-                  lower(methods.identifier) = lower($4)
-                  OR lower(methods.metadata ->> 'username') =
-                    lower(regexp_replace($4, '^@', ''))
+                  (
+                    methods.method_type = 'telegram'
+                    AND methods.identifier = $4
+                  )
+                  OR (
+                    methods.method_type = 'telegram'
+                    AND methods.metadata ->> 'telegramUserId' = $4
+                  )
+                  OR (
+                    methods.method_type IN ('email', 'phone')
+                    AND lower(methods.identifier) = lower($4)
+                  )
+                  OR (
+                    methods.method_type = 'telegram'
+                    AND lower(methods.metadata ->> 'username') = lower($10)
+                  )
                 )
             )
           )
@@ -184,6 +202,8 @@ export class PostgresAdministrationAccessReadRepository
         input.cursor?.source ?? null,
         input.cursor?.id ?? null,
         input.limit + 1,
+        input.paymentContextVisible,
+        normalizedUsername,
       ],
     );
     const visible = result.rows.slice(0, input.limit);

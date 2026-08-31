@@ -113,8 +113,8 @@ export type GrantManualAccessExecution =
     }
   | {
       state: "rejected";
-      errorCode: "USER_NOT_FOUND";
-      resultStatus: 404;
+      errorCode: "USER_NOT_FOUND" | "ADMIN_COMMAND_INVALID_REQUEST";
+      resultStatus: 400 | 404;
     };
 
 export type RevokeManualAccessExecution =

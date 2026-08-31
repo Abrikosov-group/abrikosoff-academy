@@ -6,6 +6,8 @@ import {
   dateTimeLocalToUtcIso,
   formatDateTimeLocal,
 } from "@/modules/administration/domain/admin-date-time";
+import { administrationCommandErrorMessage } from "@/modules/administration/domain/admin-command-feedback";
+import { calculateManualAccessPreview } from "@/modules/administration/domain/manual-access-preview";
 import type { AdminStudentManualGrant } from "@/modules/administration/domain/student-read-model";
 
 function createIdempotencyKey() {
@@ -13,10 +15,9 @@ function createIdempotencyKey() {
 }
 
 async function readErrorMessage(response: Response) {
-  const body = (await response.json().catch(() => null)) as {
-    error?: { message?: string };
-  } | null;
-  return body?.error?.message ?? "Операция не выполнена.";
+  return administrationCommandErrorMessage(
+    await response.json().catch(() => null),
+  );
 }
 
 export function AdminManualAccessGrantForm({
@@ -47,30 +48,41 @@ export function AdminManualAccessGrantForm({
     tone: "success" | "error";
     text: string;
   }>();
-  const overlapCount = useMemo(() => {
-    const start = Date.parse(periodStart);
-    const end = Date.parse(periodEnd);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
-    return existingGrants.filter(
-      (grant) =>
-        grant.status === "granted" &&
-        Date.parse(grant.periodStart) < end &&
-        Date.parse(grant.periodEnd) > start,
-    ).length;
-  }, [existingGrants, periodEnd, periodStart]);
+  const preview = useMemo(() => {
+    try {
+      return calculateManualAccessPreview({
+        periodStart,
+        periodEnd,
+        displayTimeZone,
+        existingGrants,
+      });
+    } catch {
+      return undefined;
+    }
+  }, [displayTimeZone, existingGrants, periodEnd, periodStart]);
+  const overlapCount = preview?.overlapCount ?? 0;
   const durationLabel = useMemo(() => {
-    const duration = Date.parse(periodEnd) - Date.parse(periodStart);
-    if (!Number.isFinite(duration) || duration <= 0) return "не определена";
+    const duration = preview?.durationMilliseconds;
+    if (duration === undefined || !Number.isFinite(duration) || duration <= 0) {
+      return "не определена";
+    }
     const totalHours = Math.round(duration / 3_600_000);
     const days = Math.floor(totalHours / 24);
     const hours = totalHours % 24;
     return [days > 0 ? `${days} сут.` : "", hours > 0 ? `${hours} ч.` : ""]
       .filter(Boolean)
       .join(" ");
-  }, [periodEnd, periodStart]);
+  }, [preview]);
 
   function beginConfirmation(event: FormEvent) {
     event.preventDefault();
+    if (!preview || preview.durationMilliseconds <= 0) {
+      setMessage({
+        tone: "error",
+        text: `Проверьте начало и окончание периода в часовом поясе ${displayTimeZone}.`,
+      });
+      return;
+    }
     if (!idempotencyKey) setIdempotencyKey(createIdempotencyKey());
     setConfirming(true);
     setMessage(undefined);
@@ -179,7 +191,7 @@ export function AdminManualAccessGrantForm({
       {confirming ? (
         <div className="admin-command-confirmation" role="group">
           <p>
-            <strong>{studentDisplayName}</strong>: {periodStart} — {periodEnd}.
+            <strong>{studentDisplayName}</strong>: {periodStart} — {periodEnd} ({displayTimeZone}).
             Продолжительность: {durationLabel}. Пересечений с ручными периодами:{" "}
             {overlapCount}. Причина: {reason}
           </p>

@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   GrantManualAccessService,
+  normalizeGrantManualAccessInput,
   RevokeManualAccessService,
 } from "@/modules/administration/application/manual-access-service";
 import { AdministrationAccessReadService } from "@/modules/administration/application/administration-access-read-service";
@@ -119,25 +120,35 @@ async function insertGracePeriod(input: {
   customerId: string;
   periodStart: Date;
   periodEnd: Date;
+  subscriptionId?: string;
+  status?: "active" | "expired" | "revoked";
 }) {
-  const subscriptionId = randomUUID();
-  await pool.query(
-    `
-      INSERT INTO billing_subscriptions (
-        id, customer_id, plan_id, status, current_period_start,
-        current_period_end, auto_renew, cancel_at_period_end,
-        created_at, updated_at
-      ) VALUES ($1, $2, 'monthly', 'grace_period', $3, $4, false, false, $3, $3)
-    `,
-    [subscriptionId, input.customerId, input.periodStart, input.periodEnd],
-  );
+  const subscriptionId = input.subscriptionId ?? randomUUID();
+  if (!input.subscriptionId) {
+    await pool.query(
+      `
+        INSERT INTO billing_subscriptions (
+          id, customer_id, plan_id, status, current_period_start,
+          current_period_end, auto_renew, cancel_at_period_end,
+          created_at, updated_at
+        ) VALUES ($1, $2, 'monthly', 'grace_period', $3, $4, false, false, $3, $3)
+      `,
+      [subscriptionId, input.customerId, input.periodStart, input.periodEnd],
+    );
+  }
   const graceId = randomUUID();
   await pool.query(
     `
       INSERT INTO billing_access_grace_periods (
         id, subscription_id, customer_id, status, period_start,
-        period_end, created_at, updated_at
-      ) VALUES ($1, $2, $3, 'active', $4, $5, $4, $4)
+        period_end, created_at, updated_at, revoked_at
+      ) VALUES (
+        $1, $2, $3, $6::text, $4, $5, $4, $4,
+        CASE
+          WHEN $6::text = 'active' THEN NULL
+          ELSE $5::timestamptz
+        END
+      )
     `,
     [
       graceId,
@@ -145,6 +156,7 @@ async function insertGracePeriod(input: {
       input.customerId,
       input.periodStart,
       input.periodEnd,
+      input.status ?? "active",
     ],
   );
   return { graceId, subscriptionId };
@@ -219,6 +231,10 @@ describe("ручной доступ с PostgreSQL", () => {
       );
       await pool.query(
         "DELETE FROM billing_orders WHERE customer_id = ANY($1::uuid[])",
+        [createdUserIds],
+      );
+      await pool.query(
+        "DELETE FROM identity_methods WHERE user_id = ANY($1::uuid[])",
         [createdUserIds],
       );
       await pool.query(
@@ -671,5 +687,231 @@ describe("ручной доступ с PostgreSQL", () => {
         expect.objectContaining({ source: "grace", state: "active" }),
       ]),
     );
+  });
+
+  it("завершает восстановленную выдачу, если период истёк до повтора", async () => {
+    const actorUserId = await insertUser("Владелец восстановления периода");
+    const customerId = await insertUser("Ученик восстановления периода");
+    const identityRepository = new PostgresIdentityAdministrationRepository();
+    const repository = new PostgresAdministrationCommandRepository(
+      pool,
+      identityRepository,
+      identityRepository,
+    );
+    const service = new GrantManualAccessService(repository, {
+      manualAccessGrantingEnabled: true,
+      effectiveAccessMode: "v2",
+    });
+    const periodStart = new Date(Date.now() - 60_000).toISOString();
+    const periodEnd = new Date(Date.now() + 250).toISOString();
+    const input = {
+      context: context(actorUserId),
+      targetUserId: customerId,
+      periodStart,
+      periodEnd,
+      reason: "Восстановление короткой команды после истечения периода",
+      idempotencyKey: `grant_${randomUUID().replaceAll("-", "")}`,
+    };
+    const command = normalizeGrantManualAccessInput(input);
+    const reservation = await repository.reserveInternalCommand(command);
+    expect(reservation.state).toBe("reserved");
+    if (reservation.state !== "reserved") throw new Error("reservation failed");
+    await pool.query(
+      `
+        UPDATE admin_command_executions
+        SET lease_expires_at = statement_timestamp() - interval '1 second',
+            updated_at = statement_timestamp()
+        WHERE id = $1
+      `,
+      [reservation.executionId],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await expect(service.execute(input)).rejects.toEqual(
+      expect.objectContaining({
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+        httpStatus: 400,
+      }),
+    );
+    const terminal = await pool.query<{
+      status: string;
+      result_status: number;
+      error_code: string;
+      audits: number;
+    }>(
+      `
+        SELECT
+          execution.status,
+          execution.result_status,
+          execution.error_code,
+          count(audit.id)::integer AS audits
+        FROM admin_command_executions execution
+        LEFT JOIN admin_audit_events audit
+          ON audit.command_execution_id = execution.id
+        WHERE execution.id = $1
+        GROUP BY execution.id
+      `,
+      [reservation.executionId],
+    );
+    expect(terminal.rows[0]).toEqual({
+      status: "rejected",
+      result_status: 400,
+      error_code: "ADMIN_COMMAND_INVALID_REQUEST",
+      audits: 1,
+    });
+  });
+
+  it("перепроверяет окончание периода после customer lock", async () => {
+    const actorUserId = await insertUser("Владелец блокировки периода");
+    const customerId = await insertUser("Ученик блокировки периода");
+    const periodEnd = new Date(Date.now() + 700).toISOString();
+    const input = {
+      context: context(actorUserId),
+      targetUserId: customerId,
+      periodStart: new Date(Date.now() - 60_000).toISOString(),
+      periodEnd,
+      reason: "Проверка окончания периода после ожидания блокировки",
+      idempotencyKey: `grant_${randomUUID().replaceAll("-", "")}`,
+    };
+    const lockClient = await pool.connect();
+    await lockClient.query("BEGIN");
+    await lockClient.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 2147483647))",
+      [customerId],
+    );
+    const execution = services().grant.execute(input).then(
+      (value) => ({ value, error: undefined }),
+      (error: unknown) => ({ value: undefined, error }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 850));
+    await lockClient.query("COMMIT");
+    lockClient.release();
+
+    const outcome = await execution;
+    expect(outcome.error).toEqual(
+      expect.objectContaining({
+        code: "ADMIN_COMMAND_INVALID_REQUEST",
+        httpStatus: 400,
+      }),
+    );
+    expect(outcome.value).toBeUndefined();
+    const grants = await pool.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM access_manual_grants WHERE customer_id = $1",
+      [customerId],
+    );
+    expect(grants.rows[0]?.count).toBe(0);
+  });
+
+  it("различает завершённый grace и активную историю одной подписки", async () => {
+    const customerId = await insertUser("Ученик истории grace");
+    const at = new Date();
+    const expired = await insertGracePeriod({
+      customerId,
+      periodStart: new Date(at.getTime() - 4 * 86_400_000),
+      periodEnd: new Date(at.getTime() - 2 * 86_400_000),
+      status: "expired",
+    });
+    const active = await insertGracePeriod({
+      customerId,
+      subscriptionId: expired.subscriptionId,
+      periodStart: new Date(at.getTime() - 60_000),
+      periodEnd: new Date(at.getTime() + 2 * 86_400_000),
+      status: "active",
+    });
+    const studentRead = new AdministrationStudentReadService(
+      new PostgresAdministrationStudentReadRepository(pool),
+    );
+    const detail = await studentRead.findStudentDetail({
+      userId: customerId,
+      permissions: new Set(["users.read", "access.read"] as const),
+      at,
+    });
+
+    expect(detail?.gracePeriods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: expired.graceId, effectiveNow: false }),
+        expect.objectContaining({ id: active.graceId, effectiveNow: true }),
+      ]),
+    );
+  });
+
+  it("показывает единственный завершённый grace как завершённый доступ", async () => {
+    const customerId = await insertUser("Ученик завершённого grace");
+    const at = new Date();
+    await insertGracePeriod({
+      customerId,
+      periodStart: new Date(at.getTime() - 3 * 86_400_000),
+      periodEnd: new Date(at.getTime() - 86_400_000),
+      status: "expired",
+    });
+    const studentRead = new AdministrationStudentReadService(
+      new PostgresAdministrationStudentReadRepository(pool),
+    );
+    const page = await studentRead.listStudents({
+      filters: { query: customerId, access: "expired", limit: 50 },
+      displayTimeZone: "Europe/Moscow",
+      permissions: configuredPermissionsForRole("owner"),
+      at,
+    });
+
+    expect(page.items).toEqual([
+      expect.objectContaining({ id: customerId, accessState: "expired" }),
+    ]);
+  });
+
+  it("использует единые учётные идентификаторы в поиске доступов", async () => {
+    const actorUserId = await insertUser("Владелец поиска доступов");
+    const customerId = await insertUser("Ученик поиска доступов");
+    const receiptEmail = `receipt-${randomUUID()}@example.test`;
+    const telegramUserId = `${Date.now()}773`;
+    await pool.query(
+      "UPDATE identity_users SET receipt_email = $2 WHERE id = $1",
+      [customerId, receiptEmail],
+    );
+    await pool.query(
+      `
+        INSERT INTO identity_methods (
+          id, user_id, method_type, identifier, verified_at, metadata
+        ) VALUES ($1, $2, 'telegram', $3, statement_timestamp(), $4::jsonb)
+      `,
+      [
+        randomUUID(),
+        customerId,
+        `telegram-sub-${randomUUID()}`,
+        JSON.stringify({
+          telegramUserId,
+          username: `access_search_${Date.now()}`,
+        }),
+      ],
+    );
+    await services().grant.execute({
+      context: context(actorUserId),
+      targetUserId: customerId,
+      ...futurePeriod(-1, 3),
+      reason: "Основание для проверки единого поиска доступов",
+      idempotencyKey: `grant_${randomUUID().replaceAll("-", "")}`,
+    });
+    const accessRead = new AdministrationAccessReadService(
+      new PostgresAdministrationAccessReadRepository(pool),
+    );
+    const ownerPermissions = configuredPermissionsForRole("owner");
+
+    for (const query of [receiptEmail, telegramUserId]) {
+      const page = await accessRead.listAccess({
+        query,
+        permissions: ownerPermissions,
+        at: new Date(),
+      });
+      expect(page.items.map((item) => item.customerId), `поиск по ${query}`).toContain(
+        customerId,
+      );
+    }
+    const withoutPaymentContext = await accessRead.listAccess({
+      query: receiptEmail,
+      permissions: new Set(["access.read", "users.read"] as const),
+      at: new Date(),
+    });
+    expect(withoutPaymentContext.items).toHaveLength(0);
   });
 });

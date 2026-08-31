@@ -1024,6 +1024,18 @@ export class PostgresAdministrationCommandRepository
       }
 
       const at = activeExecution.executed_at;
+      if (new Date(command.periodEnd).getTime() <= at.getTime()) {
+        const rejected = await this.rejectManualAccessCommandInTransaction(
+          client,
+          command,
+          reservation,
+          "ADMIN_COMMAND_INVALID_REQUEST",
+          400,
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return rejected as GrantManualAccessExecution;
+      }
       const effectiveAccessService = new EffectiveAccessService(
         new PostgresEffectiveAccessRepository(client),
       );
@@ -1347,8 +1359,9 @@ export class PostgresAdministrationCommandRepository
       | "MANUAL_ACCESS_GRANT_NOT_FOUND"
       | "MANUAL_ACCESS_GRANT_ALREADY_REVOKED"
       | "MANUAL_ACCESS_GRANTING_DISABLED"
-      | "MANUAL_ACCESS_GRANTING_REQUIRES_V2",
-    resultStatus: 404 | 409,
+      | "MANUAL_ACCESS_GRANTING_REQUIRES_V2"
+      | "ADMIN_COMMAND_INVALID_REQUEST",
+    resultStatus: 400 | 404 | 409,
     beforeState?: Record<string, unknown>,
   ): Promise<
     Extract<
