@@ -40,7 +40,7 @@ export type AdminStudentAccessFilter =
   | "revoked"
   | "none";
 
-export type AdminStudentAccessSource = "paid";
+export type AdminStudentAccessSource = "paid" | "manual" | "grace";
 
 export type AdminStudentCursor = {
   createdAt: string;
@@ -145,6 +145,33 @@ export type AdminStudentPaidGrant = {
   effectiveNow: boolean;
 };
 
+export type AdminStudentManualGrant = {
+  id: string;
+  source: "manual";
+  status: "granted" | "revoked";
+  periodStart: string;
+  periodEnd: string;
+  grantReason: string;
+  grantedAt: string;
+  revokedAt?: string;
+  revokeReason?: string;
+  effectiveNow: boolean;
+  overlapsAnotherManualGrant: boolean;
+  canRevoke: boolean;
+};
+
+export type AdminStudentGracePeriod = {
+  id: string;
+  source: "grace";
+  displayName: "Льготный период автопродления";
+  status: "active" | "expired" | "revoked";
+  periodStart: string;
+  periodEnd: string;
+  effectiveNow: boolean;
+  subscriptionId?: string;
+  renewalAttemptId?: string;
+};
+
 export type AdminStudentEffectiveAccess = {
   state: AdminStudentAccessState;
   activeUntil?: string;
@@ -166,6 +193,8 @@ export type AdminStudentDetail = {
   activeSessionCount: number;
   sessionsTruncated: boolean;
   paidGrants: readonly AdminStudentPaidGrant[];
+  manualGrants: readonly AdminStudentManualGrant[];
+  gracePeriods: readonly AdminStudentGracePeriod[];
   effectiveAccess: AdminStudentEffectiveAccess;
   paymentCount?: number;
 };

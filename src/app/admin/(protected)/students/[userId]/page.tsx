@@ -11,6 +11,7 @@ import {
 import { AdminStudentSectionNavigation } from "@/components/academy/admin-student-section-navigation";
 import { normalizeAdminStudentsReturnTo } from "@/modules/administration/domain/student-presentation";
 import { getAdminDisplayTimeZone } from "@/modules/administration/server/administration-config";
+import { getAccessConfig } from "@/modules/access/server/access-config";
 import { getAdministrationRuntime } from "@/modules/administration/server/get-administration-runtime";
 import { requireAdminContext } from "@/modules/administration/server/require-admin-context";
 
@@ -53,6 +54,20 @@ export default async function AdminStudentDetailPage({
   }
 
   const displayTimeZone = getAdminDisplayTimeZone();
+  const accessConfig = getAccessConfig();
+  const canGrantManualAccess =
+    context.permissions.has("access.manual.grant") &&
+    accessConfig.manualAccessGrantingEnabled &&
+    accessConfig.effectiveAccessMode === "v2";
+  const manualAccessDisabledReason = !context.permissions.has(
+    "access.manual.grant",
+  )
+    ? "У вашей роли нет права выдавать ручной доступ."
+    : !accessConfig.manualAccessGrantingEnabled
+      ? "Новая выдача ручного доступа временно выключена."
+      : accessConfig.effectiveAccessMode !== "v2"
+        ? "Выдача ручного доступа доступна после включения режима v2."
+        : undefined;
   const returnTo = normalizeAdminStudentsReturnTo(
     resolvedSearchParams.returnTo,
   );
@@ -76,7 +91,9 @@ export default async function AdminStudentDetailPage({
         student={student}
       />
       <AdminStudentAccessSection
+        canGrantManualAccess={canGrantManualAccess}
         displayTimeZone={displayTimeZone}
+        manualAccessDisabledReason={manualAccessDisabledReason}
         student={student}
       />
       <AdminStudentIdentitySection

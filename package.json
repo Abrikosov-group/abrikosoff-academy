@@ -17,7 +17,7 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:db:prepare": "node scripts/prepare-test-database.mjs",
     "test:integration": "npm run test:db:prepare && vitest run --config vitest.integration.config.ts",
-    "test:e2e": "npm run test:db:prepare && playwright test",
+    "test:e2e": "npm run test:db:prepare && playwright test --config playwright.config.ts && playwright test --config playwright.manual-access-disabled.config.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "audit:production": "npm audit --omit=dev --audit-level=high"
   },

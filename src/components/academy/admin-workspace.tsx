@@ -18,10 +18,12 @@ const adminSidebarPreferenceMaxAge = 60 * 60 * 24 * 365;
 export function AdminWorkspace({
   children,
   initiallyCollapsed,
+  showAccess,
   showStudents,
 }: {
   children: ReactNode;
   initiallyCollapsed: boolean;
+  showAccess: boolean;
   showStudents: boolean;
 }) {
   const sidebarId = useId();
@@ -88,6 +90,7 @@ export function AdminWorkspace({
         </div>
         <AdminNavigation
           collapsed={collapsed}
+          showAccess={showAccess}
           showStudents={showStudents}
         />
         <Link

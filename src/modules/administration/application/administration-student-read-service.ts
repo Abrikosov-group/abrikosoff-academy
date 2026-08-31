@@ -70,6 +70,9 @@ export class AdministrationStudentReadService {
         billingContext:
           input.permissions.has("billing.read_related") ||
           input.permissions.has("billing.read"),
+        canRevokeManualAccess: input.permissions.has(
+          "access.manual.revoke",
+        ),
       },
     });
   }

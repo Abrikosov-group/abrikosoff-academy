@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { Pool } from "pg";
+import { EffectiveAccessService } from "@/modules/access/application/effective-access-service";
+import { PostgresEffectiveAccessRepository } from "@/modules/access/infrastructure/postgres-effective-access-repository";
 import type {
   IdentityMethodType,
   SessionAuthenticationMethod,
@@ -15,6 +17,7 @@ import {
 } from "../domain/student-list-query";
 import {
   deriveEffectivePaidAccess,
+  deriveEffectiveAccessSummary,
   formatPrimaryIdentityMethod,
   maskIdentityIdentifier,
 } from "../domain/student-presentation";
@@ -121,6 +124,27 @@ type StudentPaidGrantRow = {
   period_end: Date;
   granted_at: Date;
   revoked_at: Date | null;
+};
+
+type StudentManualGrantRow = {
+  id: string;
+  status: "granted" | "revoked";
+  period_start: Date;
+  period_end: Date;
+  grant_reason: string;
+  granted_at: Date;
+  revoked_at: Date | null;
+  revoke_reason: string | null;
+  overlaps_another: boolean;
+};
+
+type StudentGracePeriodRow = {
+  id: string;
+  subscription_id: string;
+  renewal_attempt_id: string | null;
+  status: "active" | "expired" | "revoked";
+  period_start: Date;
+  period_end: Date;
 };
 
 function recordFromUnknown(
@@ -230,7 +254,13 @@ export class PostgresAdministrationStudentReadRepository
             access_summary.active_until,
             access_summary.scheduled_from,
             COALESCE(access_summary.grant_count, 0)
+              AS access_basis_count,
+            COALESCE(access_summary.paid_count, 0)
               AS paid_grant_count,
+            COALESCE(access_summary.manual_count, 0)
+              AS manual_grant_count,
+            COALESCE(access_summary.grace_count, 0)
+              AS grace_period_count,
             users.created_at,
             last_session.created_at AS last_session_created_at,
             COALESCE(payment_summary.payment_count, 0)
@@ -264,11 +294,35 @@ export class PostgresAdministrationStudentReadRepository
           LEFT JOIN LATERAL (
             WITH RECURSIVE grant_rows AS (
               SELECT
+                'paid'::text AS source,
                 grants.status,
                 grants.period_start,
                 grants.period_end
               FROM billing_access_grants grants
               WHERE grants.customer_id = users.id
+
+              UNION ALL
+
+              SELECT
+                'manual'::text AS source,
+                grants.status,
+                grants.period_start,
+                grants.period_end
+              FROM access_manual_grants grants
+              WHERE grants.customer_id = users.id
+
+              UNION ALL
+
+              SELECT
+                'grace'::text AS source,
+                CASE
+                  WHEN grace.status = 'active' THEN 'granted'
+                  ELSE 'revoked'
+                END AS status,
+                grace.period_start,
+                grace.period_end
+              FROM billing_access_grace_periods grace
+              WHERE grace.customer_id = users.id
             ),
             continuous_coverage (coverage_end) AS (
               SELECT max(grant_rows.period_end)
@@ -291,6 +345,15 @@ export class PostgresAdministrationStudentReadRepository
             )
             SELECT
               count(*)::integer AS grant_count,
+              count(*) FILTER (
+                WHERE grant_rows.source = 'paid'
+              )::integer AS paid_count,
+              count(*) FILTER (
+                WHERE grant_rows.source = 'manual'
+              )::integer AS manual_count,
+              count(*) FILTER (
+                WHERE grant_rows.source = 'grace'
+              )::integer AS grace_count,
               (
                 SELECT max(coverage_end)
                 FROM continuous_coverage
@@ -388,6 +451,8 @@ export class PostgresAdministrationStudentReadRepository
           AND (
             $7::text IS NULL
             OR ($7::text = 'paid' AND paid_grant_count > 0)
+            OR ($7::text = 'manual' AND manual_grant_count > 0)
+            OR ($7::text = 'grace' AND grace_period_count > 0)
           )
           AND (
             $8::text IS NULL
@@ -544,7 +609,7 @@ export class PostgresAdministrationStudentReadRepository
         `,
         [input.userId, input.at],
       );
-      const grants = await client.query<StudentPaidGrantRow>(
+      const paidGrants = await client.query<StudentPaidGrantRow>(
         `
           SELECT
             order_id,
@@ -560,6 +625,61 @@ export class PostgresAdministrationStudentReadRepository
         `,
         [input.userId],
       );
+      const manualGrants = await client.query<StudentManualGrantRow>(
+        `
+          SELECT
+            grants.id,
+            grants.status,
+            grants.period_start,
+            grants.period_end,
+            grants.grant_reason,
+            grants.granted_at,
+            grants.revoked_at,
+            grants.revoke_reason,
+            EXISTS (
+              SELECT 1
+              FROM access_manual_grants other
+              WHERE other.customer_id = grants.customer_id
+                AND other.id <> grants.id
+                AND other.status = 'granted'
+                AND other.period_start < grants.period_end
+                AND other.period_end > grants.period_start
+            ) AS overlaps_another
+          FROM access_manual_grants grants
+          WHERE grants.customer_id = $1
+          ORDER BY grants.granted_at DESC, grants.id DESC
+        `,
+        [input.userId],
+      );
+      const gracePeriods = await client.query<StudentGracePeriodRow>(
+        `
+          SELECT
+            grace.id,
+            grace.subscription_id,
+            CASE
+              WHEN $2::boolean THEN (
+                SELECT attempt.id
+                FROM billing_subscription_renewal_attempts attempt
+                WHERE attempt.subscription_id = grace.subscription_id
+                  AND attempt.period_start = grace.period_start
+                ORDER BY attempt.created_at DESC, attempt.id DESC
+                LIMIT 1
+              )
+              ELSE NULL
+            END AS renewal_attempt_id,
+            grace.status,
+            grace.period_start,
+            grace.period_end
+          FROM billing_access_grace_periods grace
+          WHERE grace.customer_id = $1
+          ORDER BY grace.period_start DESC, grace.id DESC
+        `,
+        [input.userId, input.scope.billingContext],
+      );
+      const effectiveAccessDecision =
+        await new EffectiveAccessService(
+          new PostgresEffectiveAccessRepository(client),
+        ).getEffectiveAccess(input.userId, input.at);
       const payments = input.scope.billingContext
         ? await client.query<{ payment_count: number }>(
             `
@@ -575,7 +695,7 @@ export class PostgresAdministrationStudentReadRepository
         : undefined;
       await client.query("COMMIT");
 
-      const rawPaidGrants = grants.rows.map((grant) => ({
+      const rawPaidGrants = paidGrants.rows.map((grant) => ({
         source: "paid" as const,
         ...(input.scope.billingContext
           ? { orderId: grant.order_id }
@@ -591,6 +711,42 @@ export class PostgresAdministrationStudentReadRepository
         rawPaidGrants,
         input.at,
       );
+      const effectiveBasisIds = new Set(
+        effectiveAccessDecision.activeBases.map(
+          (basis) => `${basis.source}:${basis.id}`,
+        ),
+      );
+      const mappedManualGrants = manualGrants.rows.map((grant) => ({
+        id: grant.id,
+        source: "manual" as const,
+        status: grant.status,
+        periodStart: grant.period_start.toISOString(),
+        periodEnd: grant.period_end.toISOString(),
+        grantReason: grant.grant_reason,
+        grantedAt: grant.granted_at.toISOString(),
+        revokedAt: grant.revoked_at?.toISOString(),
+        revokeReason: grant.revoke_reason ?? undefined,
+        effectiveNow: effectiveBasisIds.has(`manual:${grant.id}`),
+        overlapsAnotherManualGrant: grant.overlaps_another,
+        canRevoke:
+          input.scope.canRevokeManualAccess &&
+          grant.status === "granted",
+      }));
+      const mappedGracePeriods = gracePeriods.rows.map((grace) => ({
+        id: grace.id,
+        source: "grace" as const,
+        displayName: "Льготный период автопродления" as const,
+        status: grace.status,
+        periodStart: grace.period_start.toISOString(),
+        periodEnd: grace.period_end.toISOString(),
+        effectiveNow: effectiveBasisIds.has(`grace:${grace.subscription_id}`),
+        ...(input.scope.billingContext
+          ? {
+              subscriptionId: grace.subscription_id,
+              renewalAttemptId: grace.renewal_attempt_id ?? undefined,
+            }
+          : {}),
+      }));
 
       return {
         id: student.id,
@@ -708,7 +864,16 @@ export class PostgresAdministrationStudentReadRepository
           (sessions.rows[0]?.total_count ?? 0) >
           sessions.rows.length,
         paidGrants: effectiveAccess.grants,
-        effectiveAccess: effectiveAccess.summary,
+        manualGrants: mappedManualGrants,
+        gracePeriods: mappedGracePeriods,
+        effectiveAccess: deriveEffectiveAccessSummary(
+          [
+            ...effectiveAccess.grants,
+            ...mappedManualGrants,
+            ...mappedGracePeriods,
+          ],
+          input.at,
+        ),
         ...(input.scope.billingContext
           ? {
               paymentCount:
