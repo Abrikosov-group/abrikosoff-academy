@@ -421,6 +421,7 @@ async function claimRenewal(client, now) {
           attempts.*,
           subscriptions.plan_id,
           subscriptions.customer_id,
+          subscriptions.mandate_id,
           mandates.provider,
           mandates.merchant_account_id,
           mandates.provider_payment_method_token,
@@ -866,6 +867,32 @@ async function completeRenewal(client, row, payment, now) {
     );
 
     if (appliedStatus === "succeeded") {
+      const updatedMandate = await client.query(
+        `
+          UPDATE billing_payment_mandates
+          SET
+            provider_payment_method_token = $2,
+            last_used_at = $3,
+            updated_at = now()
+          WHERE id = $1
+            AND customer_id = $4
+            AND provider = $5
+            AND merchant_account_id = $6
+            AND status = 'active'
+          RETURNING id
+        `,
+        [
+          row.mandate_id,
+          payment.paymentMethodToken,
+          now,
+          row.customer_id,
+          row.provider,
+          row.merchant_account_id,
+        ],
+      );
+      if (!updatedMandate.rowCount) {
+        throw new Error("RENEWAL_PAYMENT_MANDATE_CONFLICT");
+      }
       const activeGrant = await client.query(
         `
           WITH inserted AS (

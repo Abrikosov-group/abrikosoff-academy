@@ -177,6 +177,72 @@ describe("автоматическое продление подписок с Po
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
   });
 
+  it("сохраняет новый токен способа оплаты в активном мандате", async () => {
+    const dueAt = new Date("2042-02-28T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    const updatedPaymentMethodToken = `updated-method-${fixture.userId}`;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: vi.fn().mockResolvedValue(
+            Response.json({
+              id: "renewal-with-updated-payment-method",
+              status: "succeeded",
+              captured_at: dueAt.toISOString(),
+              payment_method: {
+                id: updatedPaymentMethodToken,
+                saved: true,
+              },
+            }),
+          ),
+        }),
+      ).resolves.toMatchObject({ succeeded: 1 });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    await expect(
+      pool.query<{
+        provider_payment_method_token: string;
+        last_used_at: Date;
+      }>(
+        `
+          SELECT
+            mandates.provider_payment_method_token,
+            mandates.last_used_at
+          FROM billing_subscriptions subscriptions
+          JOIN billing_payment_mandates mandates
+            ON mandates.id = subscriptions.mandate_id
+          WHERE subscriptions.id = $1
+        `,
+        [fixture.subscriptionId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          provider_payment_method_token: updatedPaymentMethodToken,
+          last_used_at: dueAt,
+        },
+      ],
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
   it("сохраняет полный возврат при позднем успехе той же попытки", async () => {
     const dueAt = new Date("2042-02-01T10:00:00.000Z");
     const refundAt = new Date(dueAt.getTime() + 60 * 60_000);
