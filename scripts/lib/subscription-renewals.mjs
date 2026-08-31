@@ -1,11 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  maximumRenewalAttempts,
-  nextFinancialRenewalAttemptAt,
+  decideNextFinancialRenewalAttempt,
   renewalGracePeriodMilliseconds,
 } from "../../src/modules/billing/domain/subscription-renewal-policy.mjs";
 
-const maxAttempts = maximumRenewalAttempts;
 const gracePeriodMilliseconds = renewalGracePeriodMilliseconds;
 const transportRetryDelaysMilliseconds = [
   60 * 60 * 1000,
@@ -611,6 +609,49 @@ async function markRenewalRequestStarted(client, row, now) {
   }
 }
 
+async function updateRenewalOrderStatus(client, orderId, fallbackStatus) {
+  await client.query(
+    `
+      UPDATE billing_orders orders
+      SET
+        status = CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'succeeded'
+          ) THEN 'paid'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_subscription_renewal_attempts attempts
+            WHERE attempts.order_id = orders.id
+              AND attempts.status IN (
+                'processing',
+                'retry_scheduled',
+                'reconciliation_required'
+              )
+          ) THEN 'pending'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'partially_refunded'
+          ) THEN 'partially_refunded'
+          WHEN EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'refunded'
+          ) THEN 'refunded'
+          ELSE $2
+        END,
+        updated_at = now()
+      WHERE orders.id = $1
+    `,
+    [orderId, fallbackStatus],
+  );
+}
+
 async function expireEndedGracePeriods(client, now) {
   await client.query("BEGIN");
 
@@ -645,7 +686,12 @@ async function expireEndedGracePeriods(client, now) {
       const subscription = await client.query(
         `
           UPDATE billing_subscriptions
-          SET status = 'past_due', updated_at = now()
+          SET
+            status = 'past_due',
+            auto_renew = false,
+            cancel_at_period_end = true,
+            renewal_due_at = NULL,
+            updated_at = now()
           WHERE id = $1 AND status = 'grace_period'
           RETURNING id
         `,
@@ -655,21 +701,56 @@ async function expireEndedGracePeriods(client, now) {
       if (subscription.rowCount) {
         await client.query(
           `
-            UPDATE billing_subscription_renewal_attempts
+            UPDATE billing_subscription_renewal_attempts attempts
             SET
               status = 'reconciliation_required',
               next_attempt_at = $2,
               lease_expires_at = NULL,
               last_error_code = COALESCE(
-                last_error_code,
+                attempts.last_error_code,
                 'RENEWAL_GRACE_PERIOD_EXPIRED'
               ),
               updated_at = now()
-            WHERE subscription_id = $1
-              AND status IN ('processing', 'retry_scheduled')
+            WHERE attempts.subscription_id = $1
+              AND attempts.status IN ('processing', 'retry_scheduled')
+              AND EXISTS (
+                SELECT 1
+                FROM billing_payments payments
+                WHERE payments.order_id = attempts.order_id
+                  AND payments.provider_operation_key = attempts.idempotency_key
+              )
           `,
           [row.subscription_id, now],
         );
+        const terminalAttempts = await client.query(
+          `
+            UPDATE billing_subscription_renewal_attempts attempts
+            SET
+              status = 'failed',
+              next_attempt_at = $2,
+              lease_expires_at = NULL,
+              last_error_code = 'RENEWAL_GRACE_PERIOD_EXPIRED_BEFORE_REQUEST',
+              completed_at = $2,
+              updated_at = now()
+            WHERE attempts.subscription_id = $1
+              AND attempts.status IN ('processing', 'retry_scheduled')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM billing_payments payments
+                WHERE payments.order_id = attempts.order_id
+                  AND payments.provider_operation_key = attempts.idempotency_key
+              )
+            RETURNING order_id
+          `,
+          [row.subscription_id, now],
+        );
+        const orderIds = new Set(
+          terminalAttempts.rows.map((attempt) => attempt.order_id),
+        );
+
+        for (const orderId of orderIds) {
+          await updateRenewalOrderStatus(client, orderId, "canceled");
+        }
         await client.query(
           `
             INSERT INTO billing_subscription_events (
@@ -911,28 +992,22 @@ async function failRenewal(client, row, errorCode, now) {
       new Date(row.period_start).getTime() + gracePeriodMilliseconds,
     );
     const graceExpired = now.getTime() >= graceEnd.getTime();
-    const attemptLimitReached =
-      startsNewFinancialAttempt && row.attempt_number >= maxAttempts;
-    const financialRetryAt =
-      startsNewFinancialAttempt && !attemptLimitReached && !graceExpired
-        ? nextFinancialRenewalAttemptAt({
-            attemptNumber: row.attempt_number,
-            processedAt: now,
-            graceEnd,
-          })
-        : null;
-    const safeRetryWindowExhausted =
-      startsNewFinancialAttempt &&
-      !attemptLimitReached &&
-      !graceExpired &&
-      financialRetryAt === null;
+    const financialDecision = startsNewFinancialAttempt
+      ? decideNextFinancialRenewalAttempt({
+          attemptNumber: row.attempt_number,
+          processedAt: now,
+          graceEnd,
+        })
+      : null;
     const terminalFailure =
       !reconciliationRequired &&
-      (attemptLimitReached || graceExpired || safeRetryWindowExhausted);
+      (startsNewFinancialAttempt
+        ? financialDecision.kind === "exhausted"
+        : graceExpired);
     const retryAt = reconciliationRequired || terminalFailure
       ? now
       : startsNewFinancialAttempt
-        ? financialRetryAt
+        ? financialDecision.nextAttemptAt
         : new Date(
             Math.min(
               now.getTime() +

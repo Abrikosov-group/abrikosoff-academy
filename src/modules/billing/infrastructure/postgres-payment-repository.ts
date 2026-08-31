@@ -3,8 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  maximumRenewalAttempts,
-  nextFinancialRenewalAttemptAt,
+  decideNextFinancialRenewalAttempt,
   renewalGracePeriodMilliseconds,
 } from "../domain/subscription-renewal-policy.mjs";
 import type {
@@ -1637,23 +1636,20 @@ export class PostgresPaymentRepository implements PaymentRepository {
         const graceEnd = new Date(
           attemptRow.period_start.getTime() + renewalGracePeriodMilliseconds,
         );
-        const retryAt = nextFinancialRenewalAttemptAt({
+        const financialDecision = decideNextFinancialRenewalAttempt({
           attemptNumber: attemptRow.attempt_number,
           processedAt,
           graceEnd,
         });
-        const mayScheduleNextAttempt =
-          nextStatus === "canceled" &&
-          attemptRow.attempt_number < maximumRenewalAttempts &&
+        const renewalStatusAllowsFinancialDecision =
+          attemptRow.subscription_status === "active" ||
+          attemptRow.subscription_status === "grace_period";
+        const renewalEnabled =
           attemptRow.auto_renew &&
           !attemptRow.cancel_at_period_end &&
-          (attemptRow.subscription_status === "active" ||
-            attemptRow.subscription_status === "grace_period") &&
-          processedAt.getTime() < graceEnd.getTime();
-        const shouldScheduleNextAttempt =
-          mayScheduleNextAttempt && retryAt !== null;
+          renewalStatusAllowsFinancialDecision;
 
-        if (shouldScheduleNextAttempt) {
+        if (renewalEnabled && financialDecision.kind === "retry") {
           const nextAttemptNumber = attemptRow.attempt_number + 1;
 
           await client.query(
@@ -1687,10 +1683,13 @@ export class PostgresPaymentRepository implements PaymentRepository {
               ),
               attemptRow.period_start,
               attemptRow.period_end,
-              retryAt,
+              financialDecision.nextAttemptAt,
             ],
           );
-        } else if (mayScheduleNextAttempt) {
+        } else if (
+          renewalStatusAllowsFinancialDecision &&
+          financialDecision.kind === "exhausted"
+        ) {
           await client.query(
             `
               UPDATE billing_subscriptions

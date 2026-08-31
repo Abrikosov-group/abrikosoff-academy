@@ -10,9 +10,16 @@ const financialRetryDelaysMilliseconds = [
 
 /**
  * @param {{ attemptNumber: number; processedAt: Date; graceEnd: Date }} input
- * @returns {Date | null}
+ * @returns {{ kind: "retry"; nextAttemptAt: Date } | { kind: "exhausted" }}
  */
-export function nextFinancialRenewalAttemptAt(input) {
+export function decideNextFinancialRenewalAttempt(input) {
+  if (
+    input.attemptNumber >= maximumRenewalAttempts ||
+    input.processedAt.getTime() >= input.graceEnd.getTime()
+  ) {
+    return { kind: "exhausted" };
+  }
+
   const delay =
     financialRetryDelaysMilliseconds[
       Math.min(
@@ -29,6 +36,6 @@ export function nextFinancialRenewalAttemptAt(input) {
   );
 
   return nextAttemptAt > input.processedAt.getTime()
-    ? new Date(nextAttemptAt)
-    : null;
+    ? { kind: "retry", nextAttemptAt: new Date(nextAttemptAt) }
+    : { kind: "exhausted" };
 }

@@ -3,7 +3,7 @@ import {
   createYooKassaRenewal,
   getYooKassaRenewal,
 } from "../../scripts/lib/subscription-renewals.mjs";
-import { nextFinancialRenewalAttemptAt } from "../../src/modules/billing/domain/subscription-renewal-policy.mjs";
+import { decideNextFinancialRenewalAttempt } from "../../src/modules/billing/domain/subscription-renewal-policy.mjs";
 
 const originalShopId = process.env.YOOKASSA_SHOP_ID;
 const originalSecretKey = process.env.YOOKASSA_SECRET_KEY;
@@ -21,24 +21,37 @@ describe("worker автоматического продления", () => {
     const graceEnd = new Date("2042-01-08T10:00:00.000Z");
 
     expect(
-      nextFinancialRenewalAttemptAt({
+      decideNextFinancialRenewalAttempt({
         attemptNumber: 3,
         processedAt: new Date("2042-01-02T11:00:00.000Z"),
         graceEnd,
       }),
-    ).toEqual(new Date("2042-01-08T09:45:00.000Z"));
+    ).toEqual({
+      kind: "retry",
+      nextAttemptAt: new Date("2042-01-08T09:45:00.000Z"),
+    });
   });
 
   it("не создаёт финансовую попытку после последнего безопасного запуска", () => {
     const graceEnd = new Date("2042-01-08T10:00:00.000Z");
 
     expect(
-      nextFinancialRenewalAttemptAt({
+      decideNextFinancialRenewalAttempt({
         attemptNumber: 3,
         processedAt: new Date("2042-01-08T09:50:00.000Z"),
         graceEnd,
       }),
-    ).toBeNull();
+    ).toEqual({ kind: "exhausted" });
+  });
+
+  it("завершает политику после четвёртой финансовой попытки", () => {
+    expect(
+      decideNextFinancialRenewalAttempt({
+        attemptNumber: 4,
+        processedAt: new Date("2042-01-08T09:30:00.000Z"),
+        graceEnd: new Date("2042-01-08T10:00:00.000Z"),
+      }),
+    ).toEqual({ kind: "exhausted" });
   });
 
   it("передаёт ЮKassa сохранённый способ и постоянный ключ операции", async () => {
