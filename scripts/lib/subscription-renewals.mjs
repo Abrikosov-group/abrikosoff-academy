@@ -240,7 +240,15 @@ async function claimRenewal(client, now) {
         FROM billing_subscription_renewal_attempts attempts
         JOIN billing_subscriptions subscriptions
           ON subscriptions.id = attempts.subscription_id
-        WHERE attempts.status IN ('processing', 'retry_scheduled')
+        WHERE (
+            attempts.status IN ('processing', 'retry_scheduled')
+            OR (
+              attempts.status = 'reconciliation_required'
+              AND attempts.lease_expires_at IS NOT NULL
+              AND attempts.next_attempt_at >
+                $1::timestamptz - interval '24 hours'
+            )
+          )
           AND attempts.next_attempt_at <= $1
           AND (
             attempts.lease_expires_at IS NULL
@@ -591,7 +599,7 @@ async function markRenewalRequestStarted(client, row, now) {
         SET
           status = 'reconciliation_required',
           next_attempt_at = $2,
-          lease_expires_at = NULL,
+          lease_expires_at = $2::timestamptz + interval '2 minutes',
           last_error_code = 'RENEWAL_PROVIDER_OUTCOME_UNKNOWN',
           updated_at = now()
         WHERE id = $1 AND status = 'processing'

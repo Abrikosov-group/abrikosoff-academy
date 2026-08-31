@@ -837,6 +837,136 @@ describe("автоматическое продление подписок с Po
     );
   });
 
+  it("повторно подхватывает незавершённый POST с тем же ключом идемпотентности", async () => {
+    const dueAt = new Date("2043-01-12T10:00:00.000Z");
+    const recoveryAt = new Date(dueAt.getTime() + 3 * 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const fetchProvider = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Процесс прерван после начала POST"))
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "recovered-after-worker-crash",
+          status: "succeeded",
+          captured_at: recoveryAt.toISOString(),
+          payment_method: {
+            id: `method-${fixture.userId}`,
+            saved: true,
+          },
+        }),
+      );
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toMatchObject({ processed: 1, rescheduled: 1 });
+
+      const interruptedAttempt = await pool.query<{
+        idempotency_key: string;
+      }>(
+        `
+          UPDATE billing_subscription_renewal_attempts
+          SET
+            next_attempt_at = $2,
+            lease_expires_at = $3::timestamptz - interval '1 second',
+            updated_at = now()
+          WHERE subscription_id = $1
+          RETURNING idempotency_key
+        `,
+        [fixture.subscriptionId, dueAt, recoveryAt],
+      );
+      const idempotencyKey = interruptedAttempt.rows[0].idempotency_key;
+
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => recoveryAt,
+          batchSize: 1,
+          fetchImplementation: fetchProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 1,
+        rescheduled: 0,
+        failed: 0,
+      });
+
+      expect(fetchProvider).toHaveBeenCalledTimes(2);
+      for (const callNumber of [1, 2]) {
+        expect(fetchProvider).toHaveBeenNthCalledWith(
+          callNumber,
+          "https://api.yookassa.ru/v3/payments",
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              "Idempotence-Key": idempotencyKey,
+            }),
+          }),
+        );
+      }
+      await expect(
+        pool.query<{
+          attempt_status: string;
+          payments: string;
+          grants: string;
+        }>(
+          `
+            SELECT
+              (
+                SELECT status
+                FROM billing_subscription_renewal_attempts
+                WHERE subscription_id = $1
+              ) AS attempt_status,
+              (
+                SELECT count(*)
+                FROM billing_payments payments
+                JOIN billing_orders orders ON orders.id = payments.order_id
+                WHERE orders.subscription_id = $1
+              ) AS payments,
+              (
+                SELECT count(*)
+                FROM billing_access_grants grants
+                JOIN billing_orders orders ON orders.id = grants.order_id
+                WHERE orders.subscription_id = $1
+                  AND grants.status = 'granted'
+              ) AS grants
+          `,
+          [fixture.subscriptionId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            attempt_status: "succeeded",
+            payments: "1",
+            grants: "1",
+          },
+        ],
+      });
+      await setSubscriptionRenewal(
+        pool,
+        fixture.userId,
+        false,
+        recoveryAt,
+      );
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+  });
+
   it("восстанавливает точную вторую попытку после отказа первой и неопределённого ответа второй", async () => {
     const dueAt = new Date("2043-01-15T10:00:00.000Z");
     const retryAt = new Date(dueAt.getTime() + 60 * 60_000);
