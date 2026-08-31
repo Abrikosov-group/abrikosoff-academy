@@ -43,6 +43,7 @@ export default async function ProtectedAdminLayout({
       </header>
       <AdminWorkspace
         initiallyCollapsed={sidebarInitiallyCollapsed}
+        showAccess={context.permissions.has("access.read")}
         showStudents={
           context.permissions.has("users.read") &&
           context.permissions.has("access.read")

@@ -5,13 +5,22 @@ import type { Pool, PoolClient } from "pg";
 import type { IdentityAdministrationRepository } from "@/modules/identity/application/identity-administration-repository";
 import type { IdentityUserStatusAdministrationRepository } from "@/modules/identity/application/identity-user-status-administration-repository";
 import type {
+  AdminCommandInspection,
   AdminCommandReservation,
   AdministrationCommandRepository,
   ChangeUserStatusCommand,
   ChangeUserStatusExecution,
+  GrantManualAccessCommand,
+  GrantManualAccessExecution,
   InternalAdminCommand,
+  RevokeManualAccessCommand,
+  RevokeManualAccessExecution,
   RevokeUserSessionsExecution,
 } from "../application/administration-command-repository";
+import type { ManualAccessAdministrationRepository } from "@/modules/access/application/manual-access-administration-repository";
+import { EffectiveAccessService } from "@/modules/access/application/effective-access-service";
+import { PostgresEffectiveAccessRepository } from "@/modules/access/infrastructure/postgres-effective-access-repository";
+import { PostgresManualAccessAdministrationRepository } from "@/modules/access/infrastructure/postgres-manual-access-administration-repository";
 import { AdministrationError } from "../domain/errors";
 
 type CommandExecutionRow = {
@@ -208,7 +217,70 @@ export class PostgresAdministrationCommandRepository
     private readonly pool: Pool,
     private readonly identityRepository: IdentityAdministrationRepository,
     private readonly identityUserStatusRepository: IdentityUserStatusAdministrationRepository,
+    private readonly manualAccessRepository: ManualAccessAdministrationRepository =
+      new PostgresManualAccessAdministrationRepository(),
   ) {}
+
+  async inspectInternalCommand(
+    command: InternalAdminCommand,
+  ): Promise<AdminCommandInspection> {
+    const result = await this.pool.query<CommandExecutionRow>(
+      `
+        SELECT
+          id,
+          request_sha256,
+          status,
+          result_status,
+          result,
+          error_code,
+          lease_expires_at > statement_timestamp() AS lease_is_live,
+          attempt_count
+        FROM admin_command_executions
+        WHERE principal_key = $1
+          AND action = $2
+          AND idempotency_key = $3
+      `,
+      [command.principalKey, command.action, command.idempotencyKey],
+    );
+    const existing = result.rows[0];
+
+    if (result.rows.length > 1) {
+      return { state: "conflict" };
+    }
+
+    if (!existing) {
+      return { state: "missing" };
+    }
+
+    if (existing.request_sha256 !== command.requestSha256) {
+      return { state: "conflict" };
+    }
+
+    if (
+      existing.status === "succeeded" ||
+      existing.status === "rejected" ||
+      existing.status === "failed"
+    ) {
+      if (existing.result_status === null) {
+        throw new TypeError(
+          "Терминальное исполнение команды не содержит HTTP-статус.",
+        );
+      }
+
+      return {
+        state: "replayed",
+        executionId: existing.id,
+        status: existing.status,
+        resultStatus: existing.result_status,
+        result: existing.result,
+        errorCode: existing.error_code ?? undefined,
+      };
+    }
+
+    return existing.lease_is_live
+      ? { state: "in_progress" }
+      : { state: "recoverable" };
+  }
 
   async reserveInternalCommand(
     command: InternalAdminCommand,
@@ -880,6 +952,475 @@ export class PostgresAdministrationCommandRepository
     } finally {
       client.release();
     }
+  }
+
+  async executeGrantManualAccess(
+    command: GrantManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<GrantManualAccessExecution> {
+    const client = await this.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 2147483647))",
+        [command.customerId],
+      );
+      const user = await client.query<{ status: string }>(
+        `
+          SELECT status
+          FROM identity_users
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [command.customerId],
+      );
+      const execution = await client.query<{
+        id: string;
+        executed_at: Date;
+      }>(
+        `
+          SELECT id, statement_timestamp() AS executed_at
+          FROM admin_command_executions
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+            AND lease_expires_at > statement_timestamp()
+          FOR UPDATE
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+        ],
+      );
+      const activeExecution = execution.rows[0];
+
+      if (!activeExecution) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      if (!user.rows[0] || user.rows[0].status === "deleted") {
+        const rejected = await this.rejectManualAccessCommandInTransaction(
+          client,
+          command,
+          reservation,
+          "USER_NOT_FOUND",
+          404,
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return rejected as GrantManualAccessExecution;
+      }
+
+      const at = activeExecution.executed_at;
+      if (new Date(command.periodEnd).getTime() <= at.getTime()) {
+        const rejected = await this.rejectManualAccessCommandInTransaction(
+          client,
+          command,
+          reservation,
+          "ADMIN_COMMAND_INVALID_REQUEST",
+          400,
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return rejected as GrantManualAccessExecution;
+      }
+      const effectiveAccessService = new EffectiveAccessService(
+        new PostgresEffectiveAccessRepository(client),
+      );
+      const beforeEffectiveAccess =
+        await effectiveAccessService.getEffectiveAccess(
+          command.customerId,
+          at,
+        );
+      const periodStart = new Date(command.periodStart);
+      const periodEnd = new Date(command.periodEnd);
+      const overlapCount =
+        await this.manualAccessRepository.countOverlaps(client, {
+          customerId: command.customerId,
+          periodStart,
+          periodEnd,
+        });
+      const grantId = randomUUID();
+
+      await this.manualAccessRepository.insertGrant(client, {
+        id: grantId,
+        customerId: command.customerId,
+        periodStart,
+        periodEnd,
+        reason: command.reason,
+        actorUserId: command.actorUserId,
+        grantedAt: at,
+        commandExecutionId: reservation.executionId,
+      });
+      const effectiveAccess =
+        await effectiveAccessService.getEffectiveAccess(
+          command.customerId,
+          at,
+        );
+      const result = {
+        grantId,
+        customerId: command.customerId,
+        status: "granted" as const,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        grantedAt: at.toISOString(),
+        overlapCount,
+        effectiveAccess,
+      };
+      const completed = await client.query<{ completed_at: Date }>(
+        `
+          UPDATE admin_command_executions
+          SET
+            status = 'succeeded',
+            result_status = 201,
+            result = $4::jsonb,
+            error_code = NULL,
+            lease_expires_at = NULL,
+            completed_at = statement_timestamp(),
+            updated_at = statement_timestamp()
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+          RETURNING completed_at
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+          JSON.stringify(result),
+        ],
+      );
+
+      if (!completed.rows[0]) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      await insertAuditEvent(client, {
+        command: {
+          ...command,
+          targetType: "access_manual_grant",
+          targetId: grantId,
+        },
+        executionId: reservation.executionId,
+        outcome: "succeeded",
+        beforeState: {
+          effectiveAccess: beforeEffectiveAccess,
+          overlapCount,
+        },
+        afterState: {
+          status: "granted",
+          periodStart: result.periodStart,
+          periodEnd: result.periodEnd,
+          effectiveAccess,
+        },
+        createdAt: completed.rows[0].completed_at,
+      });
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return { state: "succeeded", ...result };
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async executeRevokeManualAccess(
+    command: RevokeManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<RevokeManualAccessExecution> {
+    const client = await this.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 2147483647))",
+        [command.customerId],
+      );
+      const grant = await this.manualAccessRepository.lockGrant(
+        client,
+        command.grantId,
+      );
+      const execution = await client.query<{
+        id: string;
+        executed_at: Date;
+      }>(
+        `
+          SELECT id, statement_timestamp() AS executed_at
+          FROM admin_command_executions
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+            AND lease_expires_at > statement_timestamp()
+          FOR UPDATE
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+        ],
+      );
+      const activeExecution = execution.rows[0];
+
+      if (!activeExecution) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      if (!grant || grant.customerId !== command.customerId) {
+        const rejected = await this.rejectManualAccessCommandInTransaction(
+          client,
+          command,
+          reservation,
+          "MANUAL_ACCESS_GRANT_NOT_FOUND",
+          404,
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return rejected as RevokeManualAccessExecution;
+      }
+
+      if (grant.status === "revoked") {
+        const rejected = await this.rejectManualAccessCommandInTransaction(
+          client,
+          command,
+          reservation,
+          "MANUAL_ACCESS_GRANT_ALREADY_REVOKED",
+          409,
+          { status: "revoked" },
+        );
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return rejected as RevokeManualAccessExecution;
+      }
+
+      const at = activeExecution.executed_at;
+      const effectiveAccessService = new EffectiveAccessService(
+        new PostgresEffectiveAccessRepository(client),
+      );
+      const beforeEffectiveAccess =
+        await effectiveAccessService.getEffectiveAccess(
+          command.customerId,
+          at,
+        );
+      await this.manualAccessRepository.revokeGrant(client, {
+        grantId: command.grantId,
+        actorUserId: command.actorUserId,
+        reason: command.reason,
+        revokedAt: at,
+      });
+      const effectiveAccess =
+        await effectiveAccessService.getEffectiveAccess(
+          command.customerId,
+          at,
+        );
+      const result = {
+        grantId: command.grantId,
+        customerId: command.customerId,
+        status: "revoked" as const,
+        revokedAt: at.toISOString(),
+        effectiveAccess,
+      };
+      const completed = await client.query<{ completed_at: Date }>(
+        `
+          UPDATE admin_command_executions
+          SET
+            status = 'succeeded',
+            result_status = 200,
+            result = $4::jsonb,
+            error_code = NULL,
+            lease_expires_at = NULL,
+            completed_at = statement_timestamp(),
+            updated_at = statement_timestamp()
+          WHERE id = $1
+            AND request_sha256 = $2
+            AND status = 'in_progress'
+            AND attempt_count = $3
+          RETURNING completed_at
+        `,
+        [
+          reservation.executionId,
+          command.requestSha256,
+          reservation.attemptCount,
+          JSON.stringify(result),
+        ],
+      );
+
+      if (!completed.rows[0]) {
+        throw new AdministrationError(
+          "COMMAND_ATTEMPT_SUPERSEDED",
+          "Операция уже продолжена другой попыткой.",
+          409,
+        );
+      }
+
+      await insertAuditEvent(client, {
+        command,
+        executionId: reservation.executionId,
+        outcome: "succeeded",
+        beforeState: {
+          status: grant.status,
+          effectiveAccess: beforeEffectiveAccess,
+        },
+        afterState: {
+          status: "revoked",
+          revokedAt: result.revokedAt,
+          effectiveAccess,
+        },
+        createdAt: completed.rows[0].completed_at,
+      });
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return { state: "succeeded", ...result };
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectManualAccessGrantingGate(
+    command: GrantManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+    errorCode:
+      | "MANUAL_ACCESS_GRANTING_DISABLED"
+      | "MANUAL_ACCESS_GRANTING_REQUIRES_V2",
+  ) {
+    const client = await this.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await client.query("BEGIN");
+      transactionOpen = true;
+      const rejected = await this.rejectManualAccessCommandInTransaction(
+        client,
+        command,
+        reservation,
+        errorCode,
+        409,
+      );
+      await client.query("COMMIT");
+      transactionOpen = false;
+      return rejected.state === "rejected";
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async rejectManualAccessCommandInTransaction(
+    client: PoolClient,
+    command: GrantManualAccessCommand | RevokeManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+    errorCode:
+      | "USER_NOT_FOUND"
+      | "MANUAL_ACCESS_GRANT_NOT_FOUND"
+      | "MANUAL_ACCESS_GRANT_ALREADY_REVOKED"
+      | "MANUAL_ACCESS_GRANTING_DISABLED"
+      | "MANUAL_ACCESS_GRANTING_REQUIRES_V2"
+      | "ADMIN_COMMAND_INVALID_REQUEST",
+    resultStatus: 400 | 404 | 409,
+    beforeState?: Record<string, unknown>,
+  ): Promise<
+    Extract<
+      GrantManualAccessExecution | RevokeManualAccessExecution,
+      { state: "rejected" }
+    >
+  > {
+    const rejected = await client.query<{ completed_at: Date }>(
+      `
+        UPDATE admin_command_executions
+        SET
+          status = 'rejected',
+          result_status = $4,
+          result = '{"completed":false}'::jsonb,
+          error_code = $5,
+          lease_expires_at = NULL,
+          completed_at = statement_timestamp(),
+          updated_at = statement_timestamp()
+        WHERE id = $1
+          AND request_sha256 = $2
+          AND status = 'in_progress'
+          AND attempt_count = $3
+        RETURNING completed_at
+      `,
+      [
+        reservation.executionId,
+        command.requestSha256,
+        reservation.attemptCount,
+        resultStatus,
+        errorCode,
+      ],
+    );
+    const execution = rejected.rows[0];
+
+    if (!execution) {
+      throw new AdministrationError(
+        "COMMAND_ATTEMPT_SUPERSEDED",
+        "Операция уже продолжена другой попыткой.",
+        409,
+      );
+    }
+
+    await insertAuditEvent(client, {
+      command,
+      executionId: reservation.executionId,
+      outcome: "rejected",
+      errorCode,
+      beforeState,
+      createdAt: execution.completed_at,
+    });
+
+    return {
+      state: "rejected",
+      errorCode,
+      resultStatus,
+    } as Extract<
+      GrantManualAccessExecution | RevokeManualAccessExecution,
+      { state: "rejected" }
+    >;
   }
 
   async recordFailedInternalCommand(

@@ -22,6 +22,7 @@ export interface AdministrationStudentReadRepository {
     scope: {
       paymentContext: boolean;
       billingContext: boolean;
+      canRevokeManualAccess: boolean;
     };
   }): Promise<AdminStudentDetail | null>;
 }

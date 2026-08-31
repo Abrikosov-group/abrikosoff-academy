@@ -2,11 +2,13 @@
 
 import { GaugeIcon } from "@phosphor-icons/react/dist/csr/Gauge";
 import { StudentIcon } from "@phosphor-icons/react/dist/csr/Student";
+import { KeyIcon } from "@phosphor-icons/react/dist/csr/Key";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 type AdminNavigationProps = {
   collapsed: boolean;
+  showAccess: boolean;
   showStudents: boolean;
 };
 
@@ -17,6 +19,7 @@ function isCurrentRoute(pathname: string, href: string) {
 }
 export function AdminNavigation({
   collapsed,
+  showAccess,
   showStudents,
 }: AdminNavigationProps) {
   const pathname = usePathname();
@@ -32,6 +35,12 @@ export function AdminNavigation({
       icon: StudentIcon,
       label: "Ученики",
       visible: showStudents,
+    },
+    {
+      href: "/admin/access",
+      icon: KeyIcon,
+      label: "Доступ",
+      visible: showAccess,
     },
   ] as const;
 

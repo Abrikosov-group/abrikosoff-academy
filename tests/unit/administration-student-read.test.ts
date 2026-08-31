@@ -5,6 +5,7 @@ import {
   parseAdminStudentListQuery,
 } from "@/modules/administration/domain/student-list-query";
 import {
+  deriveEffectiveAccessSummary,
   deriveEffectivePaidAccess,
   formatIpAddress,
   formatPrimaryIdentityMethod,
@@ -452,6 +453,40 @@ describe("фактический оплаченный доступ", () => {
       activeUntil: undefined,
       scheduledFrom: undefined,
       mostRecentEnd: undefined,
+    });
+  });
+});
+
+describe("объединённый фактический доступ", () => {
+  it("продлевает окончание по непрерывной цепочке разных оснований", () => {
+    const at = new Date("2026-07-29T12:00:00.000Z");
+    const summary = deriveEffectiveAccessSummary(
+      [
+        {
+          status: "granted",
+          periodStart: "2026-07-01T00:00:00.000Z",
+          periodEnd: "2026-08-01T00:00:00.000Z",
+          effectiveNow: true,
+        },
+        {
+          status: "granted",
+          periodStart: "2026-08-01T00:00:00.000Z",
+          periodEnd: "2026-09-01T00:00:00.000Z",
+          effectiveNow: false,
+        },
+        {
+          status: "active",
+          periodStart: "2026-08-31T00:00:00.000Z",
+          periodEnd: "2026-10-01T00:00:00.000Z",
+          effectiveNow: false,
+        },
+      ],
+      at,
+    );
+
+    expect(summary).toMatchObject({
+      state: "active",
+      activeUntil: "2026-10-01T00:00:00.000Z",
     });
   });
 });

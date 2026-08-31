@@ -2,6 +2,10 @@ import { CopyableIpAddress } from "@/components/academy/copyable-ip-address";
 import { AdminRevokeSessionsDialog } from "@/components/academy/admin-revoke-sessions-dialog";
 import { AdminUserStatusDialog } from "@/components/academy/admin-user-status-dialog";
 import {
+  AdminManualAccessGrantForm,
+  AdminManualAccessRevokeForm,
+} from "@/components/academy/admin-manual-access-controls";
+import {
   CopyButton,
   CopyableValue,
 } from "@/components/academy/copyable-value";
@@ -393,13 +397,21 @@ export function AdminStudentOverview({
 }
 
 export function AdminStudentAccessSection({
+  canGrantManualAccess,
   displayTimeZone,
+  manualAccessDisabledReason,
   student,
 }: {
+  canGrantManualAccess: boolean;
   displayTimeZone: string;
+  manualAccessDisabledReason?: string;
   student: AdminStudentDetail;
 }) {
   const accessState = student.effectiveAccess.state;
+  const sourceCount =
+    student.paidGrants.length +
+    student.manualGrants.length +
+    student.gracePeriods.length;
 
   return (
     <section
@@ -416,7 +428,7 @@ export function AdminStudentAccessSection({
           </h2>
           <p>
             {formatRussianCount(
-              student.paidGrants.length,
+              sourceCount,
               sourceCountForms,
             )}{" "}
             доступа
@@ -467,15 +479,24 @@ export function AdminStudentAccessSection({
           )}
         </div>
         <p>
-          Сейчас учитываются только оплаченные периоды. Ручные
-          доступы ещё не подключены.
+          Состояние рассчитано по оплаченным, ручным и льготным
+          основаниям на один момент времени.
         </p>
       </div>
+
+      <AdminManualAccessGrantForm
+        canGrant={canGrantManualAccess}
+        disabledReason={manualAccessDisabledReason}
+        displayTimeZone={displayTimeZone}
+        existingGrants={student.manualGrants}
+        studentDisplayName={student.displayName}
+        studentId={student.id}
+      />
 
       {student.paidGrants.length === 0 ? (
         <div className="admin-empty-state admin-empty-state-compact">
           <h3>Оплаченных периодов нет</h3>
-          <p>Источники доступа для этого ученика не найдены.</p>
+          <p>Оплаченные основания для этого ученика отсутствуют.</p>
         </div>
       ) : (
         <div className="admin-table-scroll admin-responsive-table-wrap">
@@ -557,6 +578,93 @@ export function AdminStudentAccessSection({
           </table>
         </div>
       )}
+
+      {student.manualGrants.length > 0 ? (
+        <div className="admin-access-source-list">
+          <h3>Ручные основания</h3>
+          {student.manualGrants.map((grant) => (
+            <article className="admin-access-source-card" key={grant.id}>
+              <div>
+                <strong>Ручной доступ</strong>
+                <span
+                  className={`badge ${
+                    grant.effectiveNow
+                      ? "badge-success"
+                      : grant.status === "revoked"
+                        ? "badge-error"
+                        : "badge-neutral"
+                  }`}
+                >
+                  {grant.effectiveNow
+                    ? "Действует"
+                    : grant.status === "revoked"
+                      ? "Отозван"
+                      : "Не действует"}
+                </span>
+              </div>
+              <p>
+                {formatAdminDateTime(grant.periodStart, displayTimeZone)} —{" "}
+                {formatAdminDateTime(grant.periodEnd, displayTimeZone)}
+              </p>
+              <p>{grant.grantReason}</p>
+              {grant.overlapsAnotherManualGrant ? (
+                <p className="badge badge-warning">
+                  Пересекается с другим ручным периодом
+                </p>
+              ) : null}
+              {grant.revokeReason ? (
+                <p>Причина отзыва: {grant.revokeReason}</p>
+              ) : null}
+              <AdminManualAccessRevokeForm
+                accessRemainsAfterRevoke={
+                  student.paidGrants.some((item) => item.effectiveNow) ||
+                  student.gracePeriods.some((item) => item.effectiveNow) ||
+                  student.manualGrants.some(
+                    (item) => item.id !== grant.id && item.effectiveNow,
+                  )
+                }
+                grant={grant}
+                studentId={student.id}
+              />
+            </article>
+          ))}
+        </div>
+      ) : null}
+
+      {student.gracePeriods.length > 0 ? (
+        <div className="admin-access-source-list">
+          <h3>Льготные периоды</h3>
+          {student.gracePeriods.map((grace) => (
+            <article className="admin-access-source-card" key={grace.id}>
+              <div>
+                <strong>{grace.displayName}</strong>
+                <span
+                  className={`badge ${
+                    grace.effectiveNow
+                      ? "badge-success"
+                      : grace.status === "revoked"
+                        ? "badge-error"
+                        : "badge-neutral"
+                  }`}
+                >
+                  {grace.effectiveNow ? "Действует" : "Не действует"}
+                </span>
+              </div>
+              <p>
+                {formatAdminDateTime(grace.periodStart, displayTimeZone)} —{" "}
+                {formatAdminDateTime(grace.periodEnd, displayTimeZone)}
+              </p>
+              {grace.subscriptionId ? (
+                <CopyableValue
+                  displayValue={`${grace.subscriptionId.slice(0, 8)}…`}
+                  label="ID подписки"
+                  value={grace.subscriptionId}
+                />
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

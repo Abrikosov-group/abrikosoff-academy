@@ -1,6 +1,7 @@
 import type { AdminRole } from "../domain/types";
 import type { UserStatusCommandAction } from "../domain/user-status-command";
 import type { IdentityUserStatus } from "@/modules/identity/domain/types";
+import type { EffectiveAccessDecision } from "@/modules/access/domain/effective-access";
 
 export type InternalAdminCommand = {
   principalKey: string;
@@ -37,6 +38,11 @@ export type AdminCommandReservation =
   | {
       state: "in_progress";
     };
+
+export type AdminCommandInspection =
+  | Exclude<AdminCommandReservation, { state: "reserved" }>
+  | { state: "missing" }
+  | { state: "recoverable" };
 
 export type RevokeUserSessionsExecution =
   | {
@@ -82,6 +88,52 @@ export type ChangeUserStatusExecution =
       resultStatus: 404 | 409;
     };
 
+export type GrantManualAccessCommand = InternalAdminCommand & {
+  customerId: string;
+  periodStart: string;
+  periodEnd: string;
+};
+
+export type RevokeManualAccessCommand = InternalAdminCommand & {
+  customerId: string;
+  grantId: string;
+};
+
+export type GrantManualAccessExecution =
+  | {
+      state: "succeeded";
+      grantId: string;
+      customerId: string;
+      status: "granted";
+      periodStart: string;
+      periodEnd: string;
+      grantedAt: string;
+      overlapCount: number;
+      effectiveAccess: EffectiveAccessDecision;
+    }
+  | {
+      state: "rejected";
+      errorCode: "USER_NOT_FOUND" | "ADMIN_COMMAND_INVALID_REQUEST";
+      resultStatus: 400 | 404;
+    };
+
+export type RevokeManualAccessExecution =
+  | {
+      state: "succeeded";
+      grantId: string;
+      customerId: string;
+      status: "revoked";
+      revokedAt: string;
+      effectiveAccess: EffectiveAccessDecision;
+    }
+  | {
+      state: "rejected";
+      errorCode:
+        | "MANUAL_ACCESS_GRANT_NOT_FOUND"
+        | "MANUAL_ACCESS_GRANT_ALREADY_REVOKED";
+      resultStatus: 404 | 409;
+    };
+
 export interface AdministrationCommandLifecycleRepository {
   reserveInternalCommand(
     command: InternalAdminCommand,
@@ -94,6 +146,40 @@ export interface AdministrationCommandLifecycleRepository {
       attemptCount: number;
     },
     errorCode: string,
+  ): Promise<boolean>;
+}
+
+export interface AdministrationManualAccessCommandRepository
+  extends AdministrationCommandLifecycleRepository {
+  inspectInternalCommand(
+    command: InternalAdminCommand,
+  ): Promise<AdminCommandInspection>;
+
+  executeGrantManualAccess(
+    command: GrantManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<GrantManualAccessExecution>;
+
+  executeRevokeManualAccess(
+    command: RevokeManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+  ): Promise<RevokeManualAccessExecution>;
+
+  rejectManualAccessGrantingGate(
+    command: GrantManualAccessCommand,
+    reservation: {
+      executionId: string;
+      attemptCount: number;
+    },
+    errorCode:
+      | "MANUAL_ACCESS_GRANTING_DISABLED"
+      | "MANUAL_ACCESS_GRANTING_REQUIRES_V2",
   ): Promise<boolean>;
 }
 
@@ -122,4 +208,5 @@ export interface AdministrationUserStatusCommandRepository
 export interface AdministrationCommandRepository
   extends
     AdministrationSessionCommandRepository,
-    AdministrationUserStatusCommandRepository {}
+    AdministrationUserStatusCommandRepository,
+    AdministrationManualAccessCommandRepository {}

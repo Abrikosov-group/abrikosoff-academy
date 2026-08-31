@@ -6,6 +6,7 @@ import type {
   AdminStudentSession,
   AdminStudentStatus,
   AdminStudentTelegramProfile,
+  AdminStudentEffectiveAccess,
 } from "./student-read-model";
 import { telegramProfileMetadataVersion } from "@/modules/identity/domain/telegram-profile";
 
@@ -180,6 +181,72 @@ export function deriveEffectivePaidAccess(
         Date.parse(grant.periodStart) <= atTime &&
         Date.parse(grant.periodEnd) > atTime,
     })),
+  };
+}
+
+export function deriveEffectiveAccessSummary(
+  bases: readonly {
+    status: "granted" | "revoked" | "active" | "expired";
+    periodStart: string;
+    periodEnd: string;
+    effectiveNow: boolean;
+  }[],
+  at: Date,
+): AdminStudentEffectiveAccess {
+  const atTime = at.getTime();
+  const active = bases.filter((basis) => basis.effectiveNow);
+  const scheduled = bases.filter(
+    (basis) =>
+      (basis.status === "granted" || basis.status === "active") &&
+      Date.parse(basis.periodStart) > atTime,
+  );
+  const ended = bases.filter(
+    (basis) =>
+      basis.status !== "revoked" &&
+      Date.parse(basis.periodEnd) <= atTime,
+  );
+  const eligible = bases.filter(
+    (basis) => basis.status === "granted" || basis.status === "active",
+  );
+  let activeUntil = active
+    .map((basis) => basis.periodEnd)
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+
+  while (activeUntil) {
+    const currentEnd = Date.parse(activeUntil);
+    const extendingEnd = eligible
+      .filter(
+        (basis) =>
+          Date.parse(basis.periodStart) <= currentEnd &&
+          Date.parse(basis.periodEnd) > currentEnd,
+      )
+      .map((basis) => basis.periodEnd)
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+
+    if (!extendingEnd) break;
+    activeUntil = extendingEnd;
+  }
+  const scheduledFrom = scheduled
+    .map((basis) => basis.periodStart)
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+  const mostRecentEnd = ended
+    .map((basis) => basis.periodEnd)
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+
+  return {
+    state:
+      active.length > 0
+        ? "active"
+        : scheduled.length > 0
+          ? "scheduled"
+          : ended.length > 0
+            ? "expired"
+            : bases.length > 0
+              ? "revoked"
+              : "none",
+    activeUntil,
+    scheduledFrom,
+    mostRecentEnd,
   };
 }
 
