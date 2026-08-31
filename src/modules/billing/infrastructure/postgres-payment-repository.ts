@@ -1720,31 +1720,41 @@ export class PostgresPaymentRepository implements PaymentRepository {
             ],
           );
 
-          if (previousStatus !== nextStatus) {
-            await client.query(
-              `
-                INSERT INTO billing_subscription_events (
-                  id, subscription_id, customer_id, event_type,
-                  details, occurred_at
-                )
-                VALUES (
-                  $1, $2, $3, 'subscription.renewal_failed', $4::jsonb, $5
-                )
-              `,
-              [
-                randomUUID(),
-                attemptRow.subscription_id,
-                attemptRow.customer_id,
-                JSON.stringify({
-                  renewalSequence: attemptRow.renewal_sequence,
-                  attemptNumber: attemptRow.attempt_number,
-                  errorCode: "RENEWAL_PROVIDER_REJECTED",
-                  nextAttemptAt: null,
-                }),
-                processedAt,
-              ],
-            );
-          }
+          const renewalFailureDetails = {
+            renewalSequence: attemptRow.renewal_sequence,
+            attemptNumber: attemptRow.attempt_number,
+            errorCode: "RENEWAL_PROVIDER_REJECTED",
+            nextAttemptAt: null,
+          };
+
+          await client.query(
+            `
+              INSERT INTO billing_subscription_events (
+                id, subscription_id, customer_id, event_type,
+                details, occurred_at
+              )
+              SELECT
+                $1, $2, $3, 'subscription.renewal_failed', $4::jsonb, $5
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM billing_subscription_events events
+                WHERE events.subscription_id = $2
+                  AND events.event_type = 'subscription.renewal_failed'
+                  AND events.details @> $6::jsonb
+              )
+            `,
+            [
+              randomUUID(),
+              attemptRow.subscription_id,
+              attemptRow.customer_id,
+              JSON.stringify(renewalFailureDetails),
+              processedAt,
+              JSON.stringify({
+                renewalSequence: renewalFailureDetails.renewalSequence,
+                attemptNumber: renewalFailureDetails.attemptNumber,
+              }),
+            ],
+          );
         }
       }
 
