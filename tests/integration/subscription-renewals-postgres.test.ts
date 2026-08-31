@@ -3091,61 +3091,58 @@ describe("автоматическое продление подписок с Po
       [fixture.subscriptionId],
     );
     const freshOrderId = randomUUID();
+    const freshRepository = new PostgresPaymentRepository(
+      pool,
+      () => freshPeriodStart,
+    );
+    const freshCheckout = {
+      orderId: freshOrderId,
+      customerId: fixture.userId,
+      planId: "monthly" as const,
+      legalEntityId: "ip-fedotova",
+      countryCode: "RU",
+      merchantAccountId: "renewal-test",
+      money: { amountMinor: 150_000, currency: "RUB" as const },
+      idempotencyKey: `fresh-${freshOrderId}`,
+      provider: "yookassa" as const,
+      billingMode: "recurring" as const,
+      renewalSequence: 0,
+      offerAcceptedAt: freshPeriodStart.toISOString(),
+      offerVersion: "2026-08-31",
+      recurringConsentAcceptedAt: freshPeriodStart.toISOString(),
+      recurringConsentOfferVersion: "2026-08-31",
+      receiptContact: {
+        email: `renewal-${fixture.userId}@example.test`,
+      },
+      createdAt: freshPeriodStart.toISOString(),
+      updatedAt: freshPeriodStart.toISOString(),
+      paymentId: randomUUID(),
+      status: "succeeded" as const,
+      confirmationUrl: "",
+      externalPaymentId: `fresh-payment-${freshOrderId}`,
+      paymentMethodToken: `method-${fixture.userId}`,
+      paymentMethodSaved: true,
+    };
 
-    await pool.query(
-      `
-        INSERT INTO billing_orders (
-          id, customer_id, plan_id, legal_entity_id, country_code,
-          amount_minor, currency, status, idempotency_key,
-          selected_provider, merchant_account_id, billing_mode,
-          renewal_sequence, offer_accepted_at, offer_version,
-          recurring_consent_accepted_at, recurring_consent_offer_version,
-          receipt_email
-        )
-        VALUES (
-          $1, $2, 'monthly', 'ip-fedotova', 'RU', 150000, 'RUB', 'paid',
-          $3, 'yookassa', 'renewal-test', 'recurring', 0,
-          $4, '2026-08-31', $4, '2026-08-31', $5
-        )
-      `,
-      [
-        freshOrderId,
-        fixture.userId,
-        `fresh-${freshOrderId}`,
-        freshPeriodStart,
-        `renewal-${fixture.userId}@example.test`,
+    await freshRepository.reserveCheckout(freshCheckout);
+    await freshRepository.saveCheckout(freshCheckout);
+    await expect(
+      pool.query(
+        `
+          SELECT status, last_error_code
+          FROM billing_subscription_renewal_attempts
+          WHERE id = $1
+        `,
+        [oldAttempt.rows[0].id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          status: "canceled",
+          last_error_code: "RENEWAL_SUPERSEDED_BY_CHECKOUT",
+        },
       ],
-    );
-    await pool.query(
-      `
-        INSERT INTO billing_access_grants (
-          order_id, customer_id, plan_id, status,
-          period_start, period_end, granted_at
-        )
-        VALUES ($1, $2, 'monthly', 'granted', $3, $4, $3)
-      `,
-      [freshOrderId, fixture.userId, freshPeriodStart, freshPeriodEnd],
-    );
-    await pool.query(
-      `
-        UPDATE billing_subscriptions
-        SET
-          status = 'active',
-          current_period_start = $2,
-          current_period_end = $3,
-          auto_renew = true,
-          cancel_at_period_end = false,
-          renewal_due_at = $3,
-          activated_by_order_id = $4
-        WHERE id = $1
-      `,
-      [
-        fixture.subscriptionId,
-        freshPeriodStart,
-        freshPeriodEnd,
-        freshOrderId,
-      ],
-    );
+    });
 
     const repository = new PostgresPaymentRepository(
       pool,

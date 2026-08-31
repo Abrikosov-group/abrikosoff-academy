@@ -687,6 +687,42 @@ async function activateSubscription(
       activePeriodEnd.getTime() > current.current_period_end.getTime(),
   );
 
+  if (
+    current &&
+    advancesSubscriptionProjection &&
+    checkout.renewalSequence === 0
+  ) {
+    await client.query(
+      `
+        WITH superseded AS (
+          UPDATE billing_subscription_renewal_attempts attempts
+          SET
+            status = 'canceled',
+            lease_expires_at = NULL,
+            last_error_code = 'RENEWAL_SUPERSEDED_BY_CHECKOUT',
+            completed_at = $3,
+            updated_at = now()
+          WHERE attempts.subscription_id = $1
+            AND attempts.status = 'reconciliation_required'
+            AND attempts.period_end <= $2
+          RETURNING attempts.order_id
+        )
+        UPDATE billing_orders orders
+        SET status = 'canceled', updated_at = now()
+        FROM superseded
+        WHERE orders.id = superseded.order_id
+          AND orders.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = orders.id
+              AND payments.status = 'succeeded'
+          )
+      `,
+      [current.id, activePeriodEnd, activatedAt],
+    );
+  }
+
   let mandateId = current?.mandate_id ?? null;
   const recurringReady =
     checkout.billingMode === "recurring" &&
@@ -1493,6 +1529,11 @@ export class PostgresPaymentRepository implements PaymentRepository {
         return { outcome: "unmatched", checkout: null };
       }
 
+      const attemptMayStillControlSubscription =
+        attemptRow.attempt_status === "processing" ||
+        attemptRow.attempt_status === "retry_scheduled" ||
+        attemptRow.attempt_status === "reconciliation_required";
+
       const existingPayment = await client.query<{
         id: string;
         external_payment_id: string;
@@ -1642,7 +1683,12 @@ export class PostgresPaymentRepository implements PaymentRepository {
                 next_attempt_at = $2::timestamptz + interval '15 minutes',
                 lease_expires_at = NULL,
                 updated_at = now()
-            WHERE id = $1 AND status <> 'succeeded'
+            WHERE id = $1
+              AND status IN (
+                'processing',
+                'retry_scheduled',
+                'reconciliation_required'
+              )
           `,
           [attemptRow.attempt_id, processedAt],
         );
@@ -1654,7 +1700,12 @@ export class PostgresPaymentRepository implements PaymentRepository {
                 lease_expires_at = NULL,
                 completed_at = $3,
                 updated_at = now()
-            WHERE id = $1 AND status <> 'succeeded'
+            WHERE id = $1
+              AND status IN (
+                'processing',
+                'retry_scheduled',
+                'reconciliation_required'
+              )
           `,
           [
             attemptRow.attempt_id,
@@ -1679,7 +1730,11 @@ export class PostgresPaymentRepository implements PaymentRepository {
           !attemptRow.cancel_at_period_end &&
           renewalStatusAllowsFinancialDecision;
 
-        if (renewalEnabled && financialDecision.kind === "retry") {
+        if (
+          attemptMayStillControlSubscription &&
+          renewalEnabled &&
+          financialDecision.kind === "retry"
+        ) {
           const nextAttemptNumber = attemptRow.attempt_number + 1;
 
           await client.query(
@@ -1716,7 +1771,10 @@ export class PostgresPaymentRepository implements PaymentRepository {
               financialDecision.nextAttemptAt,
             ],
           );
-        } else if (financialDecision.kind === "exhausted") {
+        } else if (
+          attemptMayStillControlSubscription &&
+          financialDecision.kind === "exhausted"
+        ) {
           await client.query(
             `
               UPDATE billing_subscription_renewal_attempts
