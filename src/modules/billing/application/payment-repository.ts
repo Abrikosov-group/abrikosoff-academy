@@ -28,6 +28,13 @@ export type ApplyPaymentEventResult =
   | { outcome: "duplicate"; checkout: StoredCheckout | null }
   | { outcome: "unmatched"; checkout: null };
 
+export type ApplyRecoveredRenewalPaymentEventInput =
+  ApplyPaymentEventInput & {
+    internalOrderId: string;
+    internalRenewalAttemptId: string;
+    money: Money;
+  };
+
 export type ApplyRefundEventInput = {
   provider: PaymentProviderId;
   merchantAccountId: string;
@@ -47,10 +54,6 @@ export type ApplyRefundEventResult = ApplyPaymentEventResult;
 export interface PaymentRepository {
   findCheckoutReservationByIdempotencyKey(
     idempotencyKey: string,
-  ): Promise<CheckoutReservation | null>;
-
-  findCheckoutReservationByOrderId(
-    orderId: string,
   ): Promise<CheckoutReservation | null>;
 
   reserveCheckout(
@@ -76,6 +79,10 @@ export interface PaymentRepository {
 
   applyPaymentEvent(
     input: ApplyPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult>;
+
+  applyRecoveredRenewalPaymentEvent(
+    input: ApplyRecoveredRenewalPaymentEventInput,
   ): Promise<ApplyPaymentEventResult>;
 
   applyRefundEvent(

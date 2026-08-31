@@ -1,6 +1,7 @@
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRecoveredRenewalPaymentEventInput,
   ApplyRefundEventInput,
   ApplyRefundEventResult,
   PaymentRepository,
@@ -57,14 +58,6 @@ export class InMemoryPaymentRepository implements PaymentRepository {
       this.state.reservationsByIdempotencyKey.get(idempotencyKey) ??
       null
     );
-  }
-
-  async findCheckoutReservationByOrderId(orderId: string) {
-    for (const reservation of this.state.reservationsByIdempotencyKey.values()) {
-      if (reservation.orderId === orderId) return reservation;
-    }
-
-    return null;
   }
 
   async reserveCheckout(
@@ -196,6 +189,13 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     );
 
     return { outcome: "applied", checkout: updated };
+  }
+
+  async applyRecoveredRenewalPaymentEvent(
+    _input: ApplyRecoveredRenewalPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult> {
+    void _input;
+    return { outcome: "unmatched", checkout: null };
   }
 
   async applyRefundEvent(

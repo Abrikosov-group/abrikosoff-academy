@@ -31,6 +31,7 @@ export type ProviderPayment = {
   status: PaymentStatus;
   money: Money;
   internalOrderId?: string;
+  internalRenewalAttemptId?: string;
   confirmationUrl?: string;
   paidAt?: string;
   paymentMethodToken?: string;

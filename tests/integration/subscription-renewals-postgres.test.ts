@@ -177,7 +177,7 @@ describe("автоматическое продление подписок с Po
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
   });
 
-  it("не повторяет POST после неопределённого ответа провайдера", async () => {
+  it("не повторяет POST после HTTP 5xx ни за пределами окна идемпотентности, ни на границе льготы", async () => {
     const dueAt = new Date("2043-01-01T10:00:00.000Z");
     const fixture = await createRecurringSubscription({
       provider: "yookassa",
@@ -188,9 +188,12 @@ describe("автоматическое продление подписок с Po
     const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
     process.env.YOOKASSA_SHOP_ID = "integration-shop";
     process.env.YOOKASSA_SECRET_KEY = "integration-secret";
-    const unavailableProvider = vi
-      .fn()
-      .mockRejectedValue(new Error("Тестовый временный отказ провайдера"));
+    const unavailableProvider = vi.fn().mockResolvedValue(
+      Response.json(
+        { type: "error", description: "Тестовый HTTP 503" },
+        { status: 503 },
+      ),
+    );
 
     try {
       await expect(
@@ -207,7 +210,31 @@ describe("автоматическое продление подписок с Po
       });
       await expect(
         processSubscriptionRenewals(client, {
+          now: () => new Date(dueAt.getTime() + 60 * 60_000),
+          batchSize: 25,
+          fetchImplementation: unavailableProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 0,
+        succeeded: 0,
+        rescheduled: 0,
+        failed: 0,
+      });
+      await expect(
+        processSubscriptionRenewals(client, {
           now: () => new Date(dueAt.getTime() + 25 * 60 * 60_000),
+          batchSize: 25,
+          fetchImplementation: unavailableProvider,
+        }),
+      ).resolves.toEqual({
+        processed: 0,
+        succeeded: 0,
+        rescheduled: 0,
+        failed: 0,
+      });
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => new Date(dueAt.getTime() + 7 * 24 * 60 * 60_000),
           batchSize: 25,
           fetchImplementation: unavailableProvider,
         }),
@@ -257,12 +284,13 @@ describe("автоматическое продление подписок с Po
       pool,
       fixture.userId,
       false,
-      new Date(dueAt.getTime() + 25 * 60 * 60_000),
+      new Date(dueAt.getTime() + 7 * 24 * 60 * 60_000),
     );
   });
 
-  it("восстанавливает поздний платёж по внутреннему номеру заказа", async () => {
+  it("восстанавливает точную вторую попытку после отказа первой и неопределённого ответа второй", async () => {
     const dueAt = new Date("2043-01-15T10:00:00.000Z");
+    const retryAt = new Date(dueAt.getTime() + 60 * 60_000);
     const webhookAt = new Date(dueAt.getTime() + 8 * 24 * 60 * 60_000);
     const fixture = await createRecurringSubscription({
       provider: "yookassa",
@@ -273,32 +301,53 @@ describe("автоматическое продление подписок с Po
     const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
     process.env.YOOKASSA_SHOP_ID = "integration-shop";
     process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const fetchProvider = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "renewal-first-canceled",
+          status: "canceled",
+          created_at: dueAt.toISOString(),
+          payment_method: {
+            id: `method-${fixture.userId}`,
+            saved: true,
+          },
+        }),
+      )
+      .mockRejectedValueOnce(
+        new Error("Соединение оборвалось после принятия второго платежа"),
+      );
 
     try {
       await processSubscriptionRenewals(client, {
         now: () => dueAt,
         batchSize: 1,
-        fetchImplementation: async () => {
-          throw new Error("Соединение оборвалось после принятия платежа");
-        },
+        fetchImplementation: fetchProvider,
+      });
+      await processSubscriptionRenewals(client, {
+        now: () => retryAt,
+        batchSize: 1,
+        fetchImplementation: fetchProvider,
       });
       await processSubscriptionRenewals(client, {
         now: () => webhookAt,
         batchSize: 1,
-        fetchImplementation: async () => {
-          throw new Error("Повторный POST не должен выполняться");
-        },
+        fetchImplementation: fetchProvider,
       });
 
-      const order = await pool.query<{ id: string }>(
+      const renewal = await pool.query<{
+        order_id: string;
+        attempt_id: string;
+      }>(
         `
-          SELECT id
-          FROM billing_orders
-          WHERE subscription_id = $1 AND renewal_sequence = 1
+          SELECT order_id, id AS attempt_id
+          FROM billing_subscription_renewal_attempts
+          WHERE subscription_id = $1 AND attempt_number = 2
         `,
         [fixture.subscriptionId],
       );
-      const orderId = order.rows[0].id;
+      const orderId = renewal.rows[0].order_id;
+      const attemptId = renewal.rows[0].attempt_id;
       const externalPaymentId = "late-renewal-payment";
       vi.stubGlobal(
         "fetch",
@@ -308,7 +357,10 @@ describe("автоматическое продление подписок с Po
             status: "succeeded",
             amount: { value: "1500.00", currency: "RUB" },
             captured_at: webhookAt.toISOString(),
-            metadata: { internal_order_id: orderId },
+            metadata: {
+              internal_order_id: orderId,
+              renewal_attempt_id: attemptId,
+            },
             payment_method: {
               id: `method-${fixture.userId}`,
               saved: true,
@@ -345,7 +397,8 @@ describe("автоматическое продление подписок с Po
         payments: string;
         grants: string;
         payment_events: string;
-        attempt_status: string;
+        recovered_payment_events: string;
+        attempt_statuses: string[];
       }>(
         `
           SELECT
@@ -369,20 +422,33 @@ describe("автоматическое продление подписок с Po
               WHERE orders.subscription_id = $1
             ) AS payment_events,
             (
+              SELECT count(*)
+              FROM billing_payment_events events
+              JOIN billing_payments payments ON payments.id = events.payment_id
+              WHERE payments.provider_operation_key = (
+                SELECT idempotency_key
+                FROM billing_subscription_renewal_attempts
+                WHERE id = $2
+              )
+            ) AS recovered_payment_events,
+            ARRAY(
               SELECT status
               FROM billing_subscription_renewal_attempts
               WHERE subscription_id = $1
-            ) AS attempt_status
+              ORDER BY attempt_number
+            ) AS attempt_statuses
         `,
-        [fixture.subscriptionId],
+        [fixture.subscriptionId, attemptId],
       );
 
       expect(counts.rows[0]).toEqual({
-        payments: "1",
+        payments: "2",
         grants: "1",
         payment_events: "2",
-        attempt_status: "succeeded",
+        recovered_payment_events: "1",
+        attempt_statuses: ["canceled", "succeeded"],
       });
+      expect(fetchProvider).toHaveBeenCalledTimes(2);
     } finally {
       vi.unstubAllGlobals();
       client.release();
@@ -451,6 +517,135 @@ describe("автоматическое продление подписок с Po
       grants: "1",
     });
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
+  it("сериализует worker и поздний webhook в один согласованный результат", async () => {
+    const dueAt = new Date("2043-02-15T10:00:00.000Z");
+    const retryAt = new Date(dueAt.getTime() + 15 * 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+    const externalPaymentId = "worker-webhook-race-payment";
+
+    try {
+      await processSubscriptionRenewals(client, {
+        now: () => dueAt,
+        batchSize: 1,
+        fetchImplementation: vi.fn().mockResolvedValue(
+          Response.json({
+            id: externalPaymentId,
+            status: "pending",
+            created_at: dueAt.toISOString(),
+            payment_method: {
+              id: `method-${fixture.userId}`,
+              saved: true,
+            },
+          }),
+        ),
+      });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async () =>
+          Response.json({
+            id: externalPaymentId,
+            status: "succeeded",
+            amount: { value: "1500.00", currency: "RUB" },
+            captured_at: retryAt.toISOString(),
+            payment_method: {
+              id: `method-${fixture.userId}`,
+              saved: true,
+            },
+          }),
+        ),
+      );
+      const provider = new YooKassaPaymentProvider({
+        shopId: "integration-shop",
+        secretKey: "integration-secret",
+        merchantAccountId: "renewal-test",
+      });
+      const service = new PaymentService({
+        repository: new PostgresPaymentRepository(pool, () => retryAt),
+        router: new PaymentProviderRouter({
+          providers: [provider],
+          routes: [],
+        }),
+      });
+      const rawBody = JSON.stringify({
+        type: "notification",
+        event: "payment.succeeded",
+        object: { id: externalPaymentId, status: "succeeded" },
+      });
+      const workerFetch = vi.fn().mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return Response.json({
+          id: externalPaymentId,
+          status: "pending",
+          created_at: dueAt.toISOString(),
+          payment_method: {
+            id: `method-${fixture.userId}`,
+            saved: true,
+          },
+        });
+      });
+
+      await Promise.all([
+        processSubscriptionRenewals(client, {
+          now: () => retryAt,
+          batchSize: 1,
+          fetchImplementation: workerFetch,
+        }),
+        service.handleWebhook("yookassa", rawBody, new Headers()),
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+    }
+
+    const result = await pool.query<{
+      payments: string;
+      grants: string;
+      attempt_status: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT count(*)
+            FROM billing_payments payments
+            JOIN billing_orders orders ON orders.id = payments.order_id
+            WHERE orders.subscription_id = $1
+          ) AS payments,
+          (
+            SELECT count(*)
+            FROM billing_access_grants grants
+            JOIN billing_orders orders ON orders.id = grants.order_id
+            WHERE orders.subscription_id = $1
+          ) AS grants,
+          (
+            SELECT status
+            FROM billing_subscription_renewal_attempts
+            WHERE subscription_id = $1
+          ) AS attempt_status
+      `,
+      [fixture.subscriptionId],
+    );
+
+    expect(result.rows[0]).toEqual({
+      payments: "1",
+      grants: "1",
+      attempt_status: "succeeded",
+    });
+    await setSubscriptionRenewal(pool, fixture.userId, false, retryAt);
   });
 
   it("сохраняет pending и продолжает его через GET без второго POST", async () => {
@@ -584,9 +779,9 @@ describe("автоматическое продление подписок с Po
     await setSubscriptionRenewal(pool, fixture.userId, false, webhookAt);
   });
 
-  it("создаёт отдельную финансовую попытку после подтверждённого отказа", async () => {
+  it("закрывает поздно отменённую попытку и планирует отдельную следующую", async () => {
     const dueAt = new Date("2043-03-15T10:00:00.000Z");
-    const retryAt = new Date(dueAt.getTime() + 60 * 60_000);
+    const webhookAt = new Date(dueAt.getTime() + 30 * 60_000);
     const fixture = await createRecurringSubscription({
       provider: "yookassa",
       periodEnd: dueAt,
@@ -596,55 +791,15 @@ describe("автоматическое продление подписок с Po
     const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
     process.env.YOOKASSA_SHOP_ID = "integration-shop";
     process.env.YOOKASSA_SECRET_KEY = "integration-secret";
-    const fetchProvider = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          id: "renewal-canceled-first",
-          status: "canceled",
-          created_at: dueAt.toISOString(),
-          payment_method: {
-            id: `method-${fixture.userId}`,
-            saved: true,
-          },
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          id: "renewal-succeeded-second",
-          status: "succeeded",
-          captured_at: retryAt.toISOString(),
-          payment_method: {
-            id: `method-${fixture.userId}`,
-            saved: true,
-          },
-        }),
-      );
+    const fetchProvider = vi.fn().mockRejectedValue(
+      new Error("Соединение оборвалось после принятия платежа"),
+    );
 
     try {
-      await expect(
-        processSubscriptionRenewals(client, {
-          now: () => dueAt,
-          batchSize: 25,
-          fetchImplementation: fetchProvider,
-        }),
-      ).resolves.toEqual({
-        processed: 1,
-        succeeded: 0,
-        rescheduled: 1,
-        failed: 0,
-      });
-      await expect(
-        processSubscriptionRenewals(client, {
-          now: () => retryAt,
-          batchSize: 25,
-          fetchImplementation: fetchProvider,
-        }),
-      ).resolves.toEqual({
-        processed: 1,
-        succeeded: 1,
-        rescheduled: 0,
-        failed: 0,
+      await processSubscriptionRenewals(client, {
+        now: () => dueAt,
+        batchSize: 1,
+        fetchImplementation: fetchProvider,
       });
     } finally {
       client.release();
@@ -654,22 +809,79 @@ describe("автоматическое продление подписок с Po
       else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
     }
 
-    const operationKeys = fetchProvider.mock.calls.map(
-      (call) => call[1]?.headers?.["Idempotence-Key"],
+    const renewal = await pool.query<{ id: string; order_id: string }>(
+      `
+        SELECT id, order_id
+        FROM billing_subscription_renewal_attempts
+        WHERE subscription_id = $1 AND attempt_number = 1
+      `,
+      [fixture.subscriptionId],
     );
-    expect(operationKeys).toHaveLength(2);
-    expect(operationKeys[0]).not.toBe(operationKeys[1]);
+    const externalPaymentId = "late-canceled-renewal";
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async () =>
+          Response.json({
+            id: externalPaymentId,
+            status: "canceled",
+            amount: { value: "1500.00", currency: "RUB" },
+            created_at: webhookAt.toISOString(),
+            metadata: {
+              internal_order_id: renewal.rows[0].order_id,
+              renewal_attempt_id: renewal.rows[0].id,
+            },
+            payment_method: {
+              id: `method-${fixture.userId}`,
+              saved: true,
+            },
+          }),
+        ),
+      );
+      const provider = new YooKassaPaymentProvider({
+        shopId: "integration-shop",
+        secretKey: "integration-secret",
+        merchantAccountId: "renewal-test",
+      });
+      const service = new PaymentService({
+        repository: new PostgresPaymentRepository(pool, () => webhookAt),
+        router: new PaymentProviderRouter({
+          providers: [provider],
+          routes: [],
+        }),
+      });
+      const rawBody = JSON.stringify({
+        type: "notification",
+        event: "payment.canceled",
+        object: { id: externalPaymentId, status: "canceled" },
+      });
+
+      await expect(
+        service.handleWebhook("yookassa", rawBody, new Headers()),
+      ).resolves.toMatchObject({ outcome: "applied" });
+      await expect(
+        service.handleWebhook("yookassa", rawBody, new Headers()),
+      ).resolves.toMatchObject({ outcome: "duplicate" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
 
     const counts = await pool.query<{
-      orders: string;
+      order_status: string;
       payments: string;
       grants: string;
-      attempt_number: number;
-      attempt_status: string;
+      payment_events: string;
+      attempt_numbers: number[];
+      attempt_statuses: string[];
     }>(
       `
         SELECT
-          (SELECT count(*) FROM billing_orders WHERE subscription_id = $1) AS orders,
+          (
+            SELECT status
+            FROM billing_orders
+            WHERE subscription_id = $1 AND renewal_sequence = 1
+          ) AS order_status,
           (
             SELECT count(*)
             FROM billing_payments payments
@@ -683,30 +895,40 @@ describe("автоматическое продление подписок с Po
             WHERE orders.subscription_id = $1
           ) AS grants,
           (
+            SELECT count(*)
+            FROM billing_payment_events events
+            JOIN billing_payments payments ON payments.id = events.payment_id
+            JOIN billing_orders orders ON orders.id = payments.order_id
+            WHERE orders.subscription_id = $1
+          ) AS payment_events,
+          ARRAY(
             SELECT attempt_number
             FROM billing_subscription_renewal_attempts
             WHERE subscription_id = $1
-          ) AS attempt_number,
-          (
+            ORDER BY attempt_number
+          ) AS attempt_numbers,
+          ARRAY(
             SELECT status
             FROM billing_subscription_renewal_attempts
             WHERE subscription_id = $1
-          ) AS attempt_status
+            ORDER BY attempt_number
+          ) AS attempt_statuses
       `,
       [fixture.subscriptionId],
     );
 
     expect(counts.rows[0]).toEqual({
-      orders: "1",
-      payments: "2",
-      grants: "1",
-      attempt_number: 2,
-      attempt_status: "succeeded",
+      order_status: "pending",
+      payments: "1",
+      grants: "0",
+      payment_events: "1",
+      attempt_numbers: [1, 2],
+      attempt_statuses: ["canceled", "retry_scheduled"],
     });
-    await setSubscriptionRenewal(pool, fixture.userId, false, retryAt);
+    await setSubscriptionRenewal(pool, fixture.userId, false, webhookAt);
   });
 
-  it("отключает продление во время льготного периода", async () => {
+  it("отключает будущие списания, но принимает поздний успех уже отправленной попытки", async () => {
     const dueAt = new Date("2043-04-01T10:00:00.000Z");
     const fixture = await createRecurringSubscription({
       provider: "yookassa",
@@ -765,6 +987,75 @@ describe("автоматическое продление подписок с Po
     }
 
     expect(unavailableProvider).not.toHaveBeenCalled();
+    const renewal = await pool.query<{
+      id: string;
+      order_id: string;
+      status: string;
+    }>(
+      `
+        SELECT id, order_id, status
+        FROM billing_subscription_renewal_attempts
+        WHERE subscription_id = $1
+      `,
+      [fixture.subscriptionId],
+    );
+    expect(renewal.rows).toMatchObject([
+      { status: "reconciliation_required" },
+    ]);
+
+    const webhookAt = new Date(dueAt.getTime() + 3 * 60 * 60_000);
+    const externalPaymentId = "late-success-after-renewal-disabled";
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          Response.json({
+            id: externalPaymentId,
+            status: "succeeded",
+            amount: { value: "1500.00", currency: "RUB" },
+            captured_at: webhookAt.toISOString(),
+            metadata: {
+              internal_order_id: renewal.rows[0].order_id,
+              renewal_attempt_id: renewal.rows[0].id,
+            },
+            payment_method: {
+              id: `method-${fixture.userId}`,
+              saved: true,
+            },
+          }),
+        ),
+      );
+      const provider = new YooKassaPaymentProvider({
+        shopId: "integration-shop",
+        secretKey: "integration-secret",
+        merchantAccountId: "renewal-test",
+      });
+      const service = new PaymentService({
+        repository: new PostgresPaymentRepository(pool, () => webhookAt),
+        router: new PaymentProviderRouter({
+          providers: [provider],
+          routes: [],
+        }),
+      });
+      const rawBody = JSON.stringify({
+        type: "notification",
+        event: "payment.succeeded",
+        object: { id: externalPaymentId, status: "succeeded" },
+      });
+
+      await expect(
+        service.handleWebhook("yookassa", rawBody, new Headers()),
+      ).resolves.toMatchObject({ outcome: "applied" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(await getSubscriptionSummary(pool, fixture.userId)).toMatchObject({
+      status: "active",
+      autoRenew: false,
+      cancelAtPeriodEnd: true,
+    });
     await expect(
       pool.query(
         `
@@ -774,10 +1065,10 @@ describe("автоматическое продление подписок с Po
         `,
         [fixture.subscriptionId],
       ),
-    ).resolves.toMatchObject({ rows: [{ status: "canceled" }] });
+    ).resolves.toMatchObject({ rows: [{ status: "succeeded" }] });
   });
 
-  it("завершает льготу, сохраняя неопределённую операцию для сверки", async () => {
+  it("завершает льготу с известным pending без нового POST и без повторного события", async () => {
     const dueAt = new Date("2042-03-01T10:00:00.000Z");
     const graceEnd = new Date("2042-03-08T10:00:00.000Z");
     const fixture = await createRecurringSubscription({
@@ -789,9 +1080,17 @@ describe("автоматическое продление подписок с Po
     const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
     process.env.YOOKASSA_SHOP_ID = "integration-shop";
     process.env.YOOKASSA_SECRET_KEY = "integration-secret";
-    const unavailableProvider = async () => {
-      throw new Error("Тестовый временный отказ провайдера");
-    };
+    const unavailableProvider = vi.fn().mockResolvedValue(
+      Response.json({
+        id: "pending-at-grace-boundary",
+        status: "pending",
+        created_at: dueAt.toISOString(),
+        payment_method: {
+          id: `method-${fixture.userId}`,
+          saved: true,
+        },
+      }),
+    );
 
     try {
       await processSubscriptionRenewals(client, {
@@ -824,17 +1123,30 @@ describe("автоматическое продление подписок с Po
       autoRenew: true,
       cancelAtPeriodEnd: false,
     });
+    expect(unavailableProvider.mock.calls.map((call) => call[1]?.method)).toEqual([
+      "POST",
+    ]);
     await expect(
-      pool.query(
+      pool.query<{
+        status: string;
+        expired_events: string;
+      }>(
         `
-          SELECT status
-          FROM billing_subscription_renewal_attempts
-          WHERE subscription_id = $1
+          SELECT
+            attempts.status,
+            (
+              SELECT count(*)
+              FROM billing_subscription_events events
+              WHERE events.subscription_id = $1
+                AND events.event_type = 'subscription.expired'
+            ) AS expired_events
+          FROM billing_subscription_renewal_attempts attempts
+          WHERE attempts.subscription_id = $1
         `,
         [fixture.subscriptionId],
       ),
     ).resolves.toMatchObject({
-      rows: [{ status: "reconciliation_required" }],
+      rows: [{ status: "reconciliation_required", expired_events: "1" }],
     });
     await setSubscriptionRenewal(pool, fixture.userId, false, graceEnd);
   });

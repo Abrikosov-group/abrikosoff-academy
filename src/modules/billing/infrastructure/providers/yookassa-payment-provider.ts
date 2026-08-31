@@ -169,12 +169,17 @@ function parseProviderPayment(payload: unknown): ProviderPayment {
     metadata && typeof metadata.internal_order_id === "string"
       ? metadata.internal_order_id
       : undefined;
+  const internalRenewalAttemptId =
+    metadata && typeof metadata.renewal_attempt_id === "string"
+      ? metadata.renewal_attempt_id
+      : undefined;
 
   return {
     externalPaymentId: requiredString(payment, "id"),
     status: mapPaymentStatus(requiredString(payment, "status")),
     money: parseMoney(payment.amount),
     internalOrderId,
+    internalRenewalAttemptId,
     confirmationUrl,
     paidAt,
     paymentMethodToken,

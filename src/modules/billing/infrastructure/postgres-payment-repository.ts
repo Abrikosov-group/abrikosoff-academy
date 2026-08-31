@@ -1,10 +1,11 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRecoveredRenewalPaymentEventInput,
   ApplyRefundEventInput,
   ApplyRefundEventResult,
   PaymentRepository,
@@ -93,6 +94,18 @@ function orderStatusForPayment(status: PaymentStatus): OrderStatus {
   }
 }
 
+function renewalAttemptIdempotencyKey(
+  subscriptionId: string,
+  renewalSequence: number,
+  attemptNumber: number,
+) {
+  return createHash("sha256")
+    .update(
+      `subscription-renewal:${subscriptionId}:${renewalSequence}:${attemptNumber}`,
+    )
+    .digest("hex");
+}
+
 function mapCheckoutRow(row: CheckoutRow): StoredCheckout {
   return {
     orderId: row.order_id,
@@ -142,7 +155,7 @@ const checkoutSelect = `
     payments.merchant_account_id,
     payments.amount_minor,
     payments.currency,
-    orders.idempotency_key,
+    payments.provider_operation_key AS idempotency_key,
     orders.selected_provider,
     payments.external_payment_id,
     payments.status AS payment_status,
@@ -237,18 +250,6 @@ async function findReservationByIdempotencyKey(
   const result = await client.query<CheckoutReservationRow>(
     `${reservationSelect} WHERE orders.idempotency_key = $1 LIMIT 1`,
     [idempotencyKey],
-  );
-
-  return result.rows[0] ? mapReservationRow(result.rows[0]) : null;
-}
-
-async function findReservationByOrderId(
-  client: Pool | PoolClient,
-  orderId: string,
-) {
-  const result = await client.query<CheckoutReservationRow>(
-    `${reservationSelect} WHERE orders.id = $1 LIMIT 1`,
-    [orderId],
   );
 
   return result.rows[0] ? mapReservationRow(result.rows[0]) : null;
@@ -829,13 +830,30 @@ async function activateSubscription(
           completed_at = $2,
           updated_at = now()
         WHERE order_id = $1
-          AND status IN (
-            'processing',
-            'retry_scheduled',
-            'reconciliation_required'
+          AND idempotency_key = $3
+          AND status <> 'succeeded'
+      `,
+      [checkout.orderId, activatedAt, checkout.idempotencyKey],
+    );
+    await client.query(
+      `
+        UPDATE billing_subscription_renewal_attempts attempts
+        SET
+          status = 'canceled',
+          lease_expires_at = NULL,
+          completed_at = $2,
+          updated_at = now()
+        WHERE attempts.order_id = $1
+          AND attempts.idempotency_key <> $3
+          AND attempts.status IN ('processing', 'retry_scheduled')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM billing_payments payments
+            WHERE payments.order_id = attempts.order_id
+              AND payments.provider_operation_key = attempts.idempotency_key
           )
       `,
-      [checkout.orderId, activatedAt],
+      [checkout.orderId, activatedAt, checkout.idempotencyKey],
     );
   }
 }
@@ -853,10 +871,6 @@ export class PostgresPaymentRepository implements PaymentRepository {
       this.pool,
       idempotencyKey,
     );
-  }
-
-  async findCheckoutReservationByOrderId(orderId: string) {
-    return findReservationByOrderId(this.pool, orderId);
   }
 
   async reserveCheckout(input: ReserveCheckoutInput) {
@@ -1126,6 +1140,26 @@ export class PostgresPaymentRepository implements PaymentRepository {
 
     try {
       await client.query("BEGIN");
+      const owner = await client.query<{ customer_id: string }>(
+        `
+          SELECT orders.customer_id
+          FROM billing_payments payments
+          JOIN billing_orders orders ON orders.id = payments.order_id
+          WHERE payments.provider = $1
+            AND payments.merchant_account_id = $2
+            AND payments.external_payment_id = $3
+        `,
+        [
+          input.provider,
+          input.merchantAccountId,
+          input.externalPaymentId,
+        ],
+      );
+
+      if (owner.rows[0]) {
+        await lockCustomerAccess(client, owner.rows[0].customer_id);
+      }
+
       const webhookId = await acquireWebhookEvent(client, input);
       await lockPaymentByExternalId(
         client,
@@ -1240,6 +1274,347 @@ export class PostgresPaymentRepository implements PaymentRepository {
       await client.query("COMMIT");
 
       return { outcome: "applied", checkout: updatedCheckout };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async applyRecoveredRenewalPaymentEvent(
+    input: ApplyRecoveredRenewalPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult> {
+    const client = await this.pool.connect();
+    const processedAt = this.now();
+
+    try {
+      await client.query("BEGIN");
+      const owner = await client.query<{ customer_id: string }>(
+        `
+          SELECT customer_id
+          FROM billing_subscription_renewal_attempts
+          WHERE id = $1
+        `,
+        [input.internalRenewalAttemptId],
+      );
+
+      if (owner.rows[0]) {
+        await lockCustomerAccess(client, owner.rows[0].customer_id);
+      }
+
+      const webhookId = await acquireWebhookEvent(client, input);
+      const attempt = await client.query<
+        CheckoutReservationRow & {
+          attempt_id: string;
+          attempt_status: string;
+          attempt_number: number;
+          period_start: Date;
+          period_end: Date;
+          auto_renew: boolean;
+          cancel_at_period_end: boolean;
+          subscription_status: string;
+        }
+      >(
+        `
+          SELECT
+            orders.id AS order_id,
+            orders.customer_id,
+            orders.plan_id,
+            orders.legal_entity_id,
+            orders.country_code,
+            orders.merchant_account_id,
+            orders.amount_minor,
+            orders.currency,
+            attempts.idempotency_key,
+            orders.selected_provider,
+            orders.billing_mode,
+            orders.subscription_id,
+            orders.renewal_sequence,
+            orders.offer_accepted_at,
+            orders.offer_version,
+            orders.recurring_consent_accepted_at,
+            orders.recurring_consent_offer_version,
+            orders.receipt_email,
+            orders.receipt_phone,
+            orders.created_at,
+            orders.updated_at,
+            attempts.id AS attempt_id,
+            attempts.status AS attempt_status,
+            attempts.attempt_number,
+            attempts.period_start,
+            attempts.period_end,
+            subscriptions.auto_renew,
+            subscriptions.cancel_at_period_end,
+            subscriptions.status AS subscription_status
+          FROM billing_subscription_renewal_attempts attempts
+          JOIN billing_orders orders ON orders.id = attempts.order_id
+          JOIN billing_subscriptions subscriptions
+            ON subscriptions.id = attempts.subscription_id
+          WHERE attempts.id = $1
+            AND orders.id = $2
+          FOR UPDATE OF attempts, orders
+        `,
+        [input.internalRenewalAttemptId, input.internalOrderId],
+      );
+      const attemptRow = attempt.rows[0];
+
+      if (!webhookId) {
+        const duplicateCheckout = await findByExternalPaymentId(
+          client,
+          input.provider,
+          input.merchantAccountId,
+          input.externalPaymentId,
+        );
+        await client.query("COMMIT");
+        return { outcome: "duplicate", checkout: duplicateCheckout };
+      }
+
+      if (
+        !attemptRow ||
+        attemptRow.selected_provider !== input.provider ||
+        attemptRow.merchant_account_id !== input.merchantAccountId ||
+        Number(attemptRow.amount_minor) !== input.money.amountMinor ||
+        attemptRow.currency !== input.money.currency
+      ) {
+        await markWebhookEvent(client, webhookId, "ignored");
+        await client.query("COMMIT");
+        return { outcome: "unmatched", checkout: null };
+      }
+
+      const existingPayment = await client.query<{
+        id: string;
+        external_payment_id: string;
+        provider_operation_key: string;
+        status: PaymentStatus;
+      }>(
+        `
+          SELECT id, external_payment_id, provider_operation_key, status
+          FROM billing_payments
+          WHERE provider = $1
+            AND merchant_account_id = $2
+            AND (
+              external_payment_id = $3
+              OR provider_operation_key = $4
+            )
+          FOR UPDATE
+        `,
+        [
+          input.provider,
+          input.merchantAccountId,
+          input.externalPaymentId,
+          attemptRow.idempotency_key,
+        ],
+      );
+      const previous = existingPayment.rows[0];
+
+      if (
+        existingPayment.rowCount &&
+        (existingPayment.rowCount !== 1 ||
+          previous.external_payment_id !== input.externalPaymentId ||
+          previous.provider_operation_key !== attemptRow.idempotency_key)
+      ) {
+        throw new Error("RENEWAL_PROVIDER_OPERATION_MISMATCH");
+      }
+
+      const paymentId = previous?.id ?? randomUUID();
+      const previousStatus = previous?.status ?? null;
+
+      if (previous) {
+        await client.query(
+          `
+            UPDATE billing_payments
+            SET
+              status = $2,
+              payment_method_token = COALESCE($3, payment_method_token),
+              payment_method_saved = payment_method_saved OR $4,
+              paid_at = CASE
+                WHEN $2 = 'succeeded' THEN COALESCE(paid_at, $5)
+                ELSE paid_at
+              END,
+              updated_at = now()
+            WHERE id = $1
+          `,
+          [
+            paymentId,
+            input.status,
+            input.paymentMethodToken ?? null,
+            input.paymentMethodSaved === true,
+            input.occurredAt,
+          ],
+        );
+      } else {
+        await client.query(
+          `
+            INSERT INTO billing_payments (
+              id, order_id, provider, merchant_account_id,
+              external_payment_id, provider_operation_key, status,
+              amount_minor, currency, confirmation_url,
+              payment_method_token, payment_method_saved, paid_at,
+              created_at, updated_at
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, NULL,
+              $10, $11,
+              CASE WHEN $7 = 'succeeded' THEN $12::timestamptz ELSE NULL END,
+              $13, $13
+            )
+          `,
+          [
+            paymentId,
+            attemptRow.order_id,
+            input.provider,
+            input.merchantAccountId,
+            input.externalPaymentId,
+            attemptRow.idempotency_key,
+            input.status,
+            input.money.amountMinor,
+            input.money.currency,
+            input.paymentMethodToken ?? null,
+            input.paymentMethodSaved === true,
+            input.occurredAt,
+            processedAt,
+          ],
+        );
+      }
+
+      await client.query(
+        "UPDATE billing_orders SET status = $2, updated_at = now() WHERE id = $1",
+        [attemptRow.order_id, orderStatusForPayment(input.status)],
+      );
+
+      if (previousStatus !== input.status) {
+        await client.query(
+          `
+            INSERT INTO billing_payment_events (
+              id, payment_id, webhook_event_id, event_type,
+              from_status, to_status, details, occurred_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+          `,
+          [
+            randomUUID(),
+            paymentId,
+            webhookId,
+            input.eventType,
+            previousStatus,
+            input.status,
+            JSON.stringify({
+              source: "subscription_renewal_recovery",
+              renewalAttemptId: attemptRow.attempt_id,
+            }),
+            input.occurredAt,
+          ],
+        );
+      }
+
+      const reservation = mapReservationRow(attemptRow);
+      const checkout: StoredCheckout = {
+        ...reservation,
+        paymentId,
+        externalPaymentId: input.externalPaymentId,
+        status: input.status,
+        confirmationUrl: "",
+        paymentMethodToken: input.paymentMethodToken,
+        paymentMethodSaved: input.paymentMethodSaved === true,
+        updatedAt: processedAt.toISOString(),
+      };
+
+      if (input.status === "succeeded" && previousStatus !== "succeeded") {
+        await activateSubscription(client, checkout, processedAt);
+      } else if (input.status === "pending") {
+        await client.query(
+          `
+            UPDATE billing_subscription_renewal_attempts
+            SET status = 'retry_scheduled',
+                next_attempt_at = $2::timestamptz + interval '15 minutes',
+                lease_expires_at = NULL,
+                updated_at = now()
+            WHERE id = $1 AND status <> 'succeeded'
+          `,
+          [attemptRow.attempt_id, processedAt],
+        );
+      } else if (input.status === "canceled" || input.status === "failed") {
+        await client.query(
+          `
+            UPDATE billing_subscription_renewal_attempts
+            SET status = $2,
+                lease_expires_at = NULL,
+                completed_at = $3,
+                updated_at = now()
+            WHERE id = $1 AND status <> 'succeeded'
+          `,
+          [
+            attemptRow.attempt_id,
+            input.status === "canceled" ? "canceled" : "failed",
+            processedAt,
+          ],
+        );
+
+        const graceEnd = new Date(
+          attemptRow.period_start.getTime() + 7 * 24 * 60 * 60 * 1000,
+        );
+        const shouldScheduleNextAttempt =
+          input.status === "canceled" &&
+          attemptRow.attempt_number < 4 &&
+          attemptRow.auto_renew &&
+          !attemptRow.cancel_at_period_end &&
+          (attemptRow.subscription_status === "active" ||
+            attemptRow.subscription_status === "grace_period") &&
+          processedAt.getTime() < graceEnd.getTime();
+
+        if (shouldScheduleNextAttempt) {
+          const nextAttemptNumber = attemptRow.attempt_number + 1;
+          const retryAt = new Date(
+            Math.min(
+              processedAt.getTime() + 60 * 60 * 1000,
+              graceEnd.getTime(),
+            ),
+          );
+
+          await client.query(
+            `
+              INSERT INTO billing_subscription_renewal_attempts (
+                id, subscription_id, customer_id, order_id,
+                renewal_sequence, attempt_number, idempotency_key,
+                status, period_start, period_end, next_attempt_at,
+                lease_expires_at
+              )
+              VALUES (
+                $1, $2, $3, $4, $5, $6, $7, 'retry_scheduled',
+                $8, $9, $10, NULL
+              )
+              ON CONFLICT (
+                subscription_id, renewal_sequence, attempt_number
+              ) DO NOTHING
+            `,
+            [
+              randomUUID(),
+              attemptRow.subscription_id,
+              attemptRow.customer_id,
+              attemptRow.order_id,
+              attemptRow.renewal_sequence,
+              nextAttemptNumber,
+              renewalAttemptIdempotencyKey(
+                attemptRow.subscription_id!,
+                attemptRow.renewal_sequence,
+                nextAttemptNumber,
+              ),
+              attemptRow.period_start,
+              attemptRow.period_end,
+              retryAt,
+            ],
+          );
+          await client.query(
+            "UPDATE billing_orders SET status = 'pending', updated_at = now() WHERE id = $1",
+            [attemptRow.order_id],
+          );
+        }
+      }
+
+      await markWebhookEvent(client, webhookId, "applied");
+      await client.query("COMMIT");
+      return { outcome: "applied", checkout };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1612,17 +1987,19 @@ export async function setSubscriptionRenewal(
     if (!enabled) {
       await client.query(
         `
-          UPDATE billing_subscription_renewal_attempts
+          UPDATE billing_subscription_renewal_attempts attempts
           SET
             status = 'canceled',
             lease_expires_at = NULL,
             completed_at = $2,
             updated_at = now()
-          WHERE subscription_id = $1
-            AND status IN (
-              'processing',
-              'retry_scheduled',
-              'reconciliation_required'
+          WHERE attempts.subscription_id = $1
+            AND attempts.status IN ('processing', 'retry_scheduled')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM billing_payments payments
+              WHERE payments.provider_operation_key = attempts.idempotency_key
+                AND payments.order_id = attempts.order_id
             )
         `,
         [subscription.id, changedAt],

@@ -59,6 +59,7 @@ describe("YooKassaPaymentProvider", () => {
         captured_at: "2026-07-28T10:05:00.000Z",
         metadata: {
           internal_order_id: "order-renewal-001",
+          renewal_attempt_id: "attempt-renewal-001",
         },
       }),
     );
@@ -86,6 +87,7 @@ describe("YooKassaPaymentProvider", () => {
       payment: {
         status: "succeeded",
         internalOrderId: "order-renewal-001",
+        internalRenewalAttemptId: "attempt-renewal-001",
       },
     });
     expect(String(fetchMock.mock.calls[0][0])).toBe(

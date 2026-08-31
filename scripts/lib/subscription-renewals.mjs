@@ -99,6 +99,7 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
           receipt: receiptFor(row),
           metadata: {
             internal_order_id: row.order_id,
+            renewal_attempt_id: row.id,
             customer_id: row.customer_id,
             plan_id: row.plan_id,
             legal_entity_id: row.legal_entity_id,
@@ -116,7 +117,7 @@ export async function createYooKassaRenewal(row, fetchImplementation) {
   if (!response.ok) {
     throw new Error(
       response.status >= 500
-        ? "RENEWAL_PROVIDER_TEMPORARY_FAILURE"
+        ? "RENEWAL_PROVIDER_OUTCOME_UNKNOWN"
         : "RENEWAL_PROVIDER_REJECTED",
     );
   }
@@ -551,21 +552,33 @@ async function expireEndedGracePeriods(client, now) {
   await client.query("BEGIN");
 
   try {
-    const expired = await client.query(
+    const ended = await client.query(
       `
-        UPDATE billing_access_grace_periods grace
-        SET status = 'expired', revoked_at = $1, updated_at = now()
-        FROM billing_subscription_renewal_attempts attempts
-        WHERE grace.status = 'active'
-          AND grace.period_end <= $1
-          AND attempts.subscription_id = grace.subscription_id
-          AND attempts.status = 'reconciliation_required'
-        RETURNING grace.subscription_id, grace.customer_id, grace.period_end
+        SELECT id, subscription_id, customer_id, period_end
+        FROM billing_access_grace_periods
+        WHERE status = 'active' AND period_end <= $1
+        ORDER BY period_end, id
       `,
       [now],
     );
 
-    for (const row of expired.rows) {
+    for (const row of ended.rows) {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 2147483647))",
+        [row.customer_id],
+      );
+      const expired = await client.query(
+        `
+          UPDATE billing_access_grace_periods
+          SET status = 'expired', revoked_at = $2, updated_at = now()
+          WHERE id = $1 AND status = 'active' AND period_end <= $2
+          RETURNING id
+        `,
+        [row.id, now],
+      );
+
+      if (!expired.rowCount) continue;
+
       const subscription = await client.query(
         `
           UPDATE billing_subscriptions
@@ -577,6 +590,23 @@ async function expireEndedGracePeriods(client, now) {
       );
 
       if (subscription.rowCount) {
+        await client.query(
+          `
+            UPDATE billing_subscription_renewal_attempts
+            SET
+              status = 'reconciliation_required',
+              next_attempt_at = $2,
+              lease_expires_at = NULL,
+              last_error_code = COALESCE(
+                last_error_code,
+                'RENEWAL_GRACE_PERIOD_EXPIRED'
+              ),
+              updated_at = now()
+            WHERE subscription_id = $1
+              AND status IN ('processing', 'retry_scheduled')
+          `,
+          [row.subscription_id, now],
+        );
         await client.query(
           `
             INSERT INTO billing_subscription_events (
@@ -793,19 +823,6 @@ async function failRenewal(client, row, errorCode, now) {
     const graceEnd = new Date(
       new Date(row.period_start).getTime() + gracePeriodMilliseconds,
     );
-    const nextAttemptNumber = startsNewFinancialAttempt
-      ? row.attempt_number + 1
-      : row.attempt_number;
-    const nextTransportRetryCount = startsNewFinancialAttempt
-      ? 0
-      : row.transport_retry_count + 1;
-    const nextIdempotencyKey = startsNewFinancialAttempt
-      ? deterministicIdempotencyKey(
-          row.subscription_id,
-          row.renewal_sequence,
-          nextAttemptNumber,
-        )
-      : row.idempotency_key;
     const retryOrdinal = startsNewFinancialAttempt
       ? row.attempt_number - 1
       : row.transport_retry_count;
@@ -821,45 +838,85 @@ async function failRenewal(client, row, errorCode, now) {
           ),
         );
 
-    await client.query(
-      `
-        UPDATE billing_subscription_renewal_attempts
-        SET
-          status = $2::text,
-          next_attempt_at = $3::timestamptz,
-          lease_expires_at = NULL,
-          last_error_code = $4,
-          attempt_number = $6::integer,
-          transport_retry_count = $7::integer,
-          idempotency_key = $8,
-          completed_at = CASE
-            WHEN $2::text = 'failed' THEN $5::timestamptz
-            ELSE NULL
-          END,
-          updated_at = now()
-        WHERE id = $1
-      `,
-      [
-        row.id,
-        reconciliationRequired
-          ? "reconciliation_required"
-          : finalFailure
-            ? "failed"
-            : "retry_scheduled",
-        retryAt,
-        errorCode,
-        now,
-        reconciliationRequired || finalFailure
-          ? row.attempt_number
-          : nextAttemptNumber,
-        reconciliationRequired || finalFailure
-          ? row.transport_retry_count
-          : nextTransportRetryCount,
-        reconciliationRequired || finalFailure
-          ? row.idempotency_key
-          : nextIdempotencyKey,
-      ],
-    );
+    if (startsNewFinancialAttempt && !finalFailure) {
+      const nextAttemptNumber = row.attempt_number + 1;
+
+      await client.query(
+        `
+          UPDATE billing_subscription_renewal_attempts
+          SET
+            status = 'canceled',
+            lease_expires_at = NULL,
+            last_error_code = $2,
+            completed_at = $3,
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [row.id, errorCode, now],
+      );
+      await client.query(
+        `
+          INSERT INTO billing_subscription_renewal_attempts (
+            id, subscription_id, customer_id, order_id, renewal_sequence,
+            attempt_number, idempotency_key, status, period_start,
+            period_end, next_attempt_at, lease_expires_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, 'retry_scheduled', $8, $9, $10,
+            NULL
+          )
+        `,
+        [
+          randomUUID(),
+          row.subscription_id,
+          row.customer_id,
+          row.order_id,
+          row.renewal_sequence,
+          nextAttemptNumber,
+          deterministicIdempotencyKey(
+            row.subscription_id,
+            row.renewal_sequence,
+            nextAttemptNumber,
+          ),
+          row.period_start,
+          row.period_end,
+          retryAt,
+        ],
+      );
+    } else {
+      await client.query(
+        `
+          UPDATE billing_subscription_renewal_attempts
+          SET
+            status = $2::text,
+            next_attempt_at = $3::timestamptz,
+            lease_expires_at = NULL,
+            last_error_code = $4,
+            transport_retry_count = CASE
+              WHEN $2::text = 'retry_scheduled'
+                THEN transport_retry_count + 1
+              ELSE transport_retry_count
+            END,
+            completed_at = CASE
+              WHEN $2::text = 'failed' THEN $5::timestamptz
+              ELSE completed_at
+            END,
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [
+          row.id,
+          reconciliationRequired
+            ? "reconciliation_required"
+            : finalFailure
+              ? "failed"
+              : "retry_scheduled",
+          retryAt,
+          errorCode,
+          now,
+        ],
+      );
+    }
     await client.query(
       `
         UPDATE billing_subscriptions

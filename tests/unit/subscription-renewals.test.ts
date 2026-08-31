@@ -31,6 +31,7 @@ describe("worker автоматического продления", () => {
 
     const payment = await createYooKassaRenewal(
       {
+        id: "renewal-attempt-001",
         order_id: "order-renewal",
         customer_id: "customer-renewal",
         plan_id: "annual",
@@ -51,6 +52,10 @@ describe("worker автоматического продления", () => {
       "Idempotence-Key": "renewal-payment-key",
     });
     expect(request.payment_method_id).toBe("method-saved");
+    expect(request.metadata).toMatchObject({
+      internal_order_id: "order-renewal",
+      renewal_attempt_id: "renewal-attempt-001",
+    });
     expect(payment).toMatchObject({
       status: "succeeded",
       paymentMethodToken: "method-saved",

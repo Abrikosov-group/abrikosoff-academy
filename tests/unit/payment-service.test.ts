@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRecoveredRenewalPaymentEventInput,
   ApplyRefundEventInput,
   ApplyRefundEventResult,
   PaymentRepository,
@@ -33,12 +34,6 @@ class FlakyPaymentRepository implements PaymentRepository {
     idempotencyKey: string,
   ) {
     return this.reservation?.idempotencyKey === idempotencyKey
-      ? this.reservation
-      : null;
-  }
-
-  async findCheckoutReservationByOrderId(orderId: string) {
-    return this.reservation?.orderId === orderId
       ? this.reservation
       : null;
   }
@@ -107,6 +102,30 @@ class FlakyPaymentRepository implements PaymentRepository {
     this.checkout = {
       ...checkout,
       status: input.status,
+      updatedAt: input.occurredAt,
+    };
+    return { outcome: "applied", checkout: this.checkout };
+  }
+
+  async applyRecoveredRenewalPaymentEvent(
+    input: ApplyRecoveredRenewalPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult> {
+    if (
+      !this.reservation ||
+      this.reservation.orderId !== input.internalOrderId
+    ) {
+      return { outcome: "unmatched", checkout: null };
+    }
+
+    this.checkout = {
+      ...this.reservation,
+      idempotencyKey: input.internalRenewalAttemptId,
+      paymentId: "recovered-payment",
+      externalPaymentId: input.externalPaymentId,
+      status: input.status,
+      confirmationUrl: "",
+      paymentMethodToken: input.paymentMethodToken,
+      paymentMethodSaved: input.paymentMethodSaved === true,
       updatedAt: input.occurredAt,
     };
     return { outcome: "applied", checkout: this.checkout };
@@ -333,6 +352,7 @@ describe("PaymentService", () => {
     provider.setVerifiedPayment({
       externalPaymentId: "external_late_renewal",
       internalOrderId: orderId,
+      internalRenewalAttemptId: "renewal-attempt-late-001",
       status: "succeeded",
       money,
       paidAt: "2026-08-28T10:05:00.000Z",

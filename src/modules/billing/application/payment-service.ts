@@ -187,7 +187,7 @@ export class PaymentService {
   ) {
     const provider = this.options.router.getProvider(providerId);
     const reference = provider.parseWebhookReference(rawBody, headers);
-    let knownCheckout =
+    const knownCheckout =
       await this.options.repository.findCheckoutByExternalPaymentId(
         providerId,
         reference.merchantAccountId,
@@ -211,34 +211,39 @@ export class PaymentService {
     }
 
     if (event.kind === "payment") {
-      if (!knownCheckout && event.payment.internalOrderId) {
-        const reservation =
-          await this.options.repository.findCheckoutReservationByOrderId(
-            event.payment.internalOrderId,
-          );
-
-        if (
-          reservation &&
-          reservation.provider === providerId &&
-          reservation.merchantAccountId === event.merchantAccountId
-        ) {
-          assertProviderMoneyMatchesCheckout(
-            reservation,
-            event.payment.money.amountMinor,
-            event.payment.money.currency,
-          );
-          knownCheckout = await this.options.repository.saveCheckout({
-            ...reservation,
-            paymentId: randomUUID(),
-            externalPaymentId: event.payment.externalPaymentId,
+      if (
+        !knownCheckout &&
+        event.payment.internalOrderId &&
+        event.payment.internalRenewalAttemptId
+      ) {
+        const recovered =
+          await this.options.repository.applyRecoveredRenewalPaymentEvent({
+            provider: providerId,
+            merchantAccountId: event.merchantAccountId,
+            externalEventId: event.externalEventId,
+            eventType: event.eventType,
+            externalPaymentId: event.externalPaymentId,
             status: event.payment.status,
-            confirmationUrl: event.payment.confirmationUrl ?? "",
-            updatedAt: event.occurredAt,
             paymentMethodToken: event.payment.paymentMethodToken,
-            paymentMethodSaved:
-              event.payment.paymentMethodSaved === true,
+            paymentMethodSaved: event.payment.paymentMethodSaved === true,
+            occurredAt: event.occurredAt,
+            payloadSha256,
+            payload: event.auditPayload,
+            internalOrderId: event.payment.internalOrderId,
+            internalRenewalAttemptId:
+              event.payment.internalRenewalAttemptId,
+            money: event.payment.money,
           });
+
+        if (recovered.outcome === "unmatched") {
+          throw new BillingError(
+            "WEBHOOK_NOT_READY",
+            "Платёж пока не найден. Уведомление будет обработано повторно.",
+            503,
+          );
         }
+
+        return recovered;
       }
 
       if (!knownCheckout) {
