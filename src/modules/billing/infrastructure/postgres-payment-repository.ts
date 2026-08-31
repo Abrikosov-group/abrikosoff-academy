@@ -2099,7 +2099,7 @@ export async function setSubscriptionRenewal(
     if (
       !subscription ||
       (enabled
-        ? !paidPeriodIsActive
+        ? !paidPeriodIsActive && !gracePeriodIsActive
         : !paidPeriodIsActive &&
           !gracePeriodIsActive &&
           !subscription.has_open_renewal)

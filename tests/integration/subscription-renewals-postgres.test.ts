@@ -177,6 +177,94 @@ describe("автоматическое продление подписок с Po
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
   });
 
+  it("возобновляет автопродление во время действующей льготы", async () => {
+    const dueAt = new Date("2042-02-28T10:00:00.000Z");
+    const reenabledAt = new Date(dueAt.getTime() + 60 * 60_000);
+    const graceEnd = new Date(dueAt.getTime() + 7 * 24 * 60 * 60_000);
+    const fixture = await createRecurringSubscription({
+      provider: "demo",
+      periodEnd: dueAt,
+    });
+
+    await pool.query(
+      `
+        UPDATE billing_subscriptions
+        SET
+          status = 'grace_period',
+          auto_renew = false,
+          cancel_at_period_end = true,
+          canceled_at = $2,
+          renewal_due_at = NULL
+        WHERE id = $1
+      `,
+      [fixture.subscriptionId, dueAt],
+    );
+    await pool.query(
+      `
+        INSERT INTO billing_access_grace_periods (
+          subscription_id, customer_id, status, period_start, period_end
+        )
+        VALUES ($1, $2, 'active', $3, $4)
+      `,
+      [fixture.subscriptionId, fixture.userId, dueAt, graceEnd],
+    );
+
+    try {
+      await expect(
+        setSubscriptionRenewal(pool, fixture.userId, true, reenabledAt),
+      ).resolves.toMatchObject({
+        status: "grace_period",
+        autoRenew: true,
+        cancelAtPeriodEnd: false,
+        renewalDueAt: dueAt.toISOString(),
+        gracePeriodEnd: graceEnd.toISOString(),
+      });
+
+      const client = await pool.connect();
+      try {
+        await expect(
+          processSubscriptionRenewals(client, {
+            now: () => reenabledAt,
+            batchSize: 1,
+          }),
+        ).resolves.toEqual({
+          processed: 1,
+          succeeded: 1,
+          rescheduled: 0,
+          failed: 0,
+        });
+      } finally {
+        client.release();
+      }
+
+      await expect(
+        getSubscriptionSummary(pool, fixture.userId),
+      ).resolves.toMatchObject({
+        status: "active",
+        autoRenew: true,
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: "2042-03-28T10:00:00.000Z",
+      });
+      await expect(
+        pool.query<{ status: string }>(
+          `
+            SELECT status
+            FROM billing_access_grace_periods
+            WHERE subscription_id = $1
+          `,
+          [fixture.subscriptionId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ status: "revoked" }] });
+    } finally {
+      await setSubscriptionRenewal(
+        pool,
+        fixture.userId,
+        false,
+        reenabledAt,
+      );
+    }
+  });
+
   it("сохраняет новый токен способа оплаты в активном мандате", async () => {
     const dueAt = new Date("2042-02-28T10:00:00.000Z");
     const fixture = await createRecurringSubscription({
