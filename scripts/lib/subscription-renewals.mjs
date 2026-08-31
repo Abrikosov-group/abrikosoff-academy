@@ -488,10 +488,17 @@ async function renewalStillAllowed(client, row) {
           attempts.status AS attempt_status,
           subscriptions.auto_renew,
           subscriptions.cancel_at_period_end,
-          subscriptions.status AS subscription_status
+          subscriptions.status AS subscription_status,
+          subscriptions.current_period_end,
+          subscriptions.mandate_id,
+          mandates.status AS mandate_status,
+          mandates.provider AS mandate_provider,
+          mandates.merchant_account_id AS mandate_merchant_account_id
         FROM billing_subscription_renewal_attempts attempts
         JOIN billing_subscriptions subscriptions
           ON subscriptions.id = attempts.subscription_id
+        LEFT JOIN billing_payment_mandates mandates
+          ON mandates.id = subscriptions.mandate_id
         WHERE attempts.id = $1
         FOR UPDATE OF attempts, subscriptions
       `,
@@ -503,6 +510,13 @@ async function renewalStillAllowed(client, row) {
         current.attempt_status === "processing" &&
         current.auto_renew &&
         !current.cancel_at_period_end &&
+        new Date(current.current_period_end).getTime() ===
+          new Date(row.period_start).getTime() &&
+        current.mandate_id === row.mandate_id &&
+        current.mandate_status === "active" &&
+        current.mandate_provider === row.provider &&
+        current.mandate_merchant_account_id ===
+          row.merchant_account_id &&
         (current.subscription_status === "active" ||
           current.subscription_status === "grace_period"),
     );
@@ -890,9 +904,7 @@ async function completeRenewal(client, row, payment, now) {
           row.merchant_account_id,
         ],
       );
-      if (!updatedMandate.rowCount) {
-        throw new Error("RENEWAL_PAYMENT_MANDATE_CONFLICT");
-      }
+      const automaticRenewalContinues = updatedMandate.rowCount === 1;
       const activeGrant = await client.query(
         `
           WITH inserted AS (
@@ -924,15 +936,33 @@ async function completeRenewal(client, row, payment, now) {
             status = 'active',
             current_period_start = $2,
             current_period_end = $3,
-            renewal_due_at = $3,
+            auto_renew = CASE WHEN $6::boolean THEN auto_renew ELSE false END,
+            cancel_at_period_end = CASE
+              WHEN $6::boolean THEN cancel_at_period_end
+              ELSE true
+            END,
+            renewal_due_at = CASE
+              WHEN $6::boolean THEN $3::timestamptz
+              ELSE NULL
+            END,
             renewal_failure_count = 0,
             last_renewal_attempt_at = $4,
-            renewal_error_code = NULL,
+            renewal_error_code = CASE
+              WHEN $6::boolean THEN NULL
+              ELSE 'PAYMENT_METHOD_NOT_SAVED'
+            END,
             activated_by_order_id = $5,
             updated_at = now()
           WHERE id = $1
         `,
-        [row.subscription_id, row.period_start, row.period_end, now, row.order_id],
+        [
+          row.subscription_id,
+          row.period_start,
+          row.period_end,
+          now,
+          row.order_id,
+          automaticRenewalContinues,
+        ],
       );
       await client.query(
         `
@@ -960,7 +990,11 @@ async function completeRenewal(client, row, payment, now) {
         `,
         [
           randomUUID(), row.subscription_id, row.customer_id,
-          JSON.stringify({ orderId: row.order_id, renewalSequence: row.renewal_sequence }),
+          JSON.stringify({
+            orderId: row.order_id,
+            renewalSequence: row.renewal_sequence,
+            automaticRenewalContinues,
+          }),
           now,
         ],
       );

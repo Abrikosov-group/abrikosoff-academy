@@ -88,7 +88,12 @@ async function createRecurringSubscription(input: {
     [subscriptionId, userId, acceptedAt, input.periodEnd, mandateId, orderId],
   );
 
-  return { userId, subscriptionId, periodEnd: input.periodEnd };
+  return {
+    userId,
+    subscriptionId,
+    mandateId,
+    periodEnd: input.periodEnd,
+  };
 }
 
 afterAll(async () => {
@@ -329,6 +334,114 @@ describe("автоматическое продление подписок с Po
       ],
     });
     await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+  });
+
+  it("сохраняет успешный платёж при конфликте мандата", async () => {
+    const dueAt = new Date("2042-03-01T10:00:00.000Z");
+    const fixture = await createRecurringSubscription({
+      provider: "yookassa",
+      periodEnd: dueAt,
+    });
+    const client = await pool.connect();
+    const previousShopId = process.env.YOOKASSA_SHOP_ID;
+    const previousSecretKey = process.env.YOOKASSA_SECRET_KEY;
+    const externalPaymentId = "renewal-with-revoked-mandate";
+    process.env.YOOKASSA_SHOP_ID = "integration-shop";
+    process.env.YOOKASSA_SECRET_KEY = "integration-secret";
+
+    try {
+      await expect(
+        processSubscriptionRenewals(client, {
+          now: () => dueAt,
+          batchSize: 1,
+          fetchImplementation: vi.fn().mockImplementation(async () => {
+            await pool.query(
+              `
+                UPDATE billing_payment_mandates
+                SET status = 'revoked', revoked_at = $2, updated_at = now()
+                WHERE id = $1
+              `,
+              [fixture.mandateId, dueAt],
+            );
+
+            return Response.json({
+              id: externalPaymentId,
+              status: "succeeded",
+              captured_at: dueAt.toISOString(),
+              payment_method: {
+                id: `replacement-${fixture.userId}`,
+                saved: true,
+              },
+            });
+          }),
+        }),
+      ).resolves.toEqual({
+        processed: 1,
+        succeeded: 1,
+        rescheduled: 0,
+        failed: 0,
+      });
+
+      await expect(
+        pool.query<{
+          payment_status: string;
+          external_payment_id: string;
+          order_status: string;
+          attempt_status: string;
+          subscription_status: string;
+          auto_renew: boolean;
+          cancel_at_period_end: boolean;
+          renewal_error_code: string;
+          grants: string;
+        }>(
+          `
+            SELECT
+              payments.status AS payment_status,
+              payments.external_payment_id,
+              orders.status AS order_status,
+              attempts.status AS attempt_status,
+              subscriptions.status AS subscription_status,
+              subscriptions.auto_renew,
+              subscriptions.cancel_at_period_end,
+              subscriptions.renewal_error_code,
+              (
+                SELECT count(*)
+                FROM billing_access_grants grants
+                WHERE grants.order_id = orders.id
+                  AND grants.status = 'granted'
+              ) AS grants
+            FROM billing_subscription_renewal_attempts attempts
+            JOIN billing_orders orders ON orders.id = attempts.order_id
+            JOIN billing_payments payments ON payments.order_id = orders.id
+            JOIN billing_subscriptions subscriptions
+              ON subscriptions.id = attempts.subscription_id
+            WHERE attempts.subscription_id = $1
+          `,
+          [fixture.subscriptionId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            payment_status: "succeeded",
+            external_payment_id: externalPaymentId,
+            order_status: "paid",
+            attempt_status: "succeeded",
+            subscription_status: "active",
+            auto_renew: false,
+            cancel_at_period_end: true,
+            renewal_error_code: "PAYMENT_METHOD_NOT_SAVED",
+            grants: "1",
+          },
+        ],
+      });
+    } finally {
+      client.release();
+      if (previousShopId === undefined) delete process.env.YOOKASSA_SHOP_ID;
+      else process.env.YOOKASSA_SHOP_ID = previousShopId;
+      if (previousSecretKey === undefined) delete process.env.YOOKASSA_SECRET_KEY;
+      else process.env.YOOKASSA_SECRET_KEY = previousSecretKey;
+      await setSubscriptionRenewal(pool, fixture.userId, false, dueAt);
+    }
   });
 
   it("сохраняет полный возврат при позднем успехе той же попытки", async () => {
