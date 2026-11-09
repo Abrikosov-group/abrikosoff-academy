@@ -3,8 +3,8 @@
 FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 
 RUN apk add --no-cache \
-    curl=8.20.0-r0 \
-    openssh-client-default=10.2_p1-r0 \
+    curl=8.23.0-r0 \
+    openssh-client-default=10.2_p1-r1 \
     squid=7.6-r0 \
     tini=0.19.0-r3
 
