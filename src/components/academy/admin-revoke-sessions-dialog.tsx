@@ -43,6 +43,10 @@ type CommandPayload = {
   revokedSessionCount?: unknown;
 };
 
+function navigateWithFullReload(path: string) {
+  window.location.assign(new URL(path, window.location.origin));
+}
+
 export function AdminRevokeSessionsDialog({
   activeSessionCount,
   isCurrentActor,
@@ -150,7 +154,7 @@ export function AdminRevokeSessionsDialog({
           errorCode === "ADMIN_AUTH_REQUIRED" ||
           errorCode === "ADMIN_LOGIN_REQUIRED"
         ) {
-          window.location.assign(
+          navigateWithFullReload(
             `/login?next=${encodeURIComponent(
               `/admin/students/${studentId}`,
             )}`,
@@ -158,7 +162,7 @@ export function AdminRevokeSessionsDialog({
           return;
         }
         if (errorCode === "ADMIN_REAUTH_REQUIRED") {
-          window.location.assign(
+          navigateWithFullReload(
             `/admin/verify?next=${encodeURIComponent(
               `/admin/students/${studentId}`,
             )}`,
@@ -195,7 +199,7 @@ export function AdminRevokeSessionsDialog({
       submittedReasonRef.current = null;
 
       if (payload.currentSessionRevoked === true) {
-        window.location.assign("/login");
+        navigateWithFullReload("/login");
         return;
       }
 
