@@ -169,13 +169,13 @@ jobs:
     needs: acknowledge-manual
     if: needs.acknowledge-manual.outputs.accepted == 'true'
     # Обновляйте SHA только отдельным PR после проверки центрального workflow.
-    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@4061fd546bd52095d1b1556df44244b231580b15
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49
     with:
       trigger: manual
       command: ${{ github.event.comment.body }}
       repository: ${{ github.repository }}
       trusted_workflow_repository: Abrikosov-group/.github
-      trusted_workflow_sha: 4061fd546bd52095d1b1556df44244b231580b15
+      trusted_workflow_sha: aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49
       pr_number: ${{ github.event.issue.number }}
       comment_id: ${{ github.event.comment.id }}
       author_association: ${{ github.event.comment.author_association }}
@@ -189,7 +189,8 @@ jobs:
       expected_codex_runner_name: abrikosoff-academy-review-codex-01
       expected_claude_runner_name: abrikosoff-academy-review-claude-01
       claude_enabled: false
-      codex_fallback_enabled: true
+      codex_model: gpt-5.6-terra
+      codex_fallback_enabled: false
       reuse_existing_reviews: true
       review_gate_context: ИИ-ревью Codex
 
@@ -280,13 +281,13 @@ jobs:
       group: organizational-review-caller-auto-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
       cancel-in-progress: true
     # Обновляйте SHA только отдельным PR после проверки центрального workflow.
-    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@4061fd546bd52095d1b1556df44244b231580b15
+    uses: Abrikosov-group/.github/.github/workflows/review-all.yml@aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49
     with:
       trigger: automatic
       command: /review-all
       repository: ${{ github.repository }}
       trusted_workflow_repository: Abrikosov-group/.github
-      trusted_workflow_sha: 4061fd546bd52095d1b1556df44244b231580b15
+      trusted_workflow_sha: aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49
       pr_number: ${{ github.event.pull_request.number }}
       expected_head_sha: ${{ github.event.pull_request.head.sha }}
       automatic_base_refs: main
@@ -299,6 +300,7 @@ jobs:
       expected_codex_runner_name: abrikosoff-academy-review-codex-01
       expected_claude_runner_name: abrikosoff-academy-review-claude-01
       claude_enabled: false
-      codex_fallback_enabled: true
+      codex_model: gpt-5.6-terra
+      codex_fallback_enabled: false
       reuse_existing_reviews: true
       review_gate_context: ИИ-ревью Codex
