@@ -5,8 +5,8 @@ umask 077
 
 readonly ORGANIZATION='Abrikosov-group'
 readonly RUNNER_GROUP='abrikosoff-academy-review'
-readonly RUNNER_VERSION='2.336.0'
-readonly RUNNER_SHA256='04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d'
+readonly RUNNER_VERSION='2.338.2'
+readonly RUNNER_SHA256='baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40'
 readonly RUNNER_ARCHIVE="actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
 readonly RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_ARCHIVE}"
 readonly CACHE_DIRECTORY='/var/cache/github-actions-runner'
