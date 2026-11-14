@@ -1,0 +1,12 @@
+[Unit]
+Description=Проверка подписок для автоматического продления каждые 15 минут
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=30s
+AccuracySec=30s
+Persistent=true
+Unit=academy-subscription-renewals.service
+
+[Install]
+WantedBy=timers.target

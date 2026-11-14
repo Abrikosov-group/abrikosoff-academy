@@ -2,18 +2,22 @@
 
 import pg from "pg";
 import { purgeIdentitySessionTechnicalData } from "./lib/identity-session-retention.mjs";
+import { processSubscriptionRenewals } from "./lib/subscription-renewals.mjs";
 
 const { Client } = pg;
-const taskName = "purge-identity-session-technical-data";
 const startedAt = Date.now();
 const requestedTask = process.argv[2];
+const allowedTasks = new Set([
+  "purge-identity-session-technical-data",
+  "process-subscription-renewals",
+]);
 let client;
 
 function writeResult(payload) {
   process.stdout.write(
     `${JSON.stringify({
       event: "background_task.completed",
-      task: taskName,
+      task: requestedTask,
       durationMs: Date.now() - startedAt,
       ...payload,
     })}\n`,
@@ -21,7 +25,7 @@ function writeResult(payload) {
 }
 
 try {
-  if (process.argv.length !== 3 || requestedTask !== taskName) {
+  if (process.argv.length !== 3 || !allowedTasks.has(requestedTask)) {
     throw new Error("BACKGROUND_TASK_NOT_ALLOWED");
   }
 
@@ -33,7 +37,7 @@ try {
 
   client = new Client({
     connectionString: databaseUrl,
-    application_name: `academy-background-${taskName}`,
+    application_name: `academy-background-${requestedTask}`,
   });
   await client.connect();
 
@@ -44,23 +48,26 @@ try {
         hashtext($1)
       ) AS acquired
     `,
-    [taskName],
+    [requestedTask],
   );
 
   if (!lock.rows[0]?.acquired) {
     writeResult({ processed: 0, skipped: "lock_busy" });
   } else {
-    const processed =
-      await purgeIdentitySessionTechnicalData(client);
-    writeResult({ processed });
+    if (requestedTask === "purge-identity-session-technical-data") {
+      const processed = await purgeIdentitySessionTechnicalData(client);
+      writeResult({ processed });
+    } else {
+      writeResult(await processSubscriptionRenewals(client));
+    }
   }
 } catch {
   process.stderr.write(
     `${JSON.stringify({
       event: "background_task.failed",
       task:
-        requestedTask === taskName
-          ? taskName
+        allowedTasks.has(requestedTask)
+          ? requestedTask
           : "unknown",
       durationMs: Date.now() - startedAt,
       errorCode: "BACKGROUND_TASK_FAILED",

@@ -8,6 +8,7 @@
     "db:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/migrate.mjs",
     "admin": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/academy-admin.mjs",
     "access:shadow:verify": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/check-effective-access-shadow-readiness.mjs",
+    "billing:renewals": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/background-task.mjs process-subscription-renewals",
     "check:telegram-egress": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/check-telegram-egress.mjs",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",

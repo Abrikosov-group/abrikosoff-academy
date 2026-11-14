@@ -1,6 +1,7 @@
 type AccessSubscription = {
   status: string;
   currentPeriodEnd?: string;
+  gracePeriodEnd?: string;
 };
 
 export function hasCurrentSubscriptionAccess(
@@ -16,7 +17,11 @@ export function hasCurrentSubscriptionAccess(
     return false;
   }
 
-  const periodEnd = Date.parse(subscription.currentPeriodEnd);
+  const periodEnd = Date.parse(
+    subscription.status === "grace_period" && subscription.gracePeriodEnd
+      ? subscription.gracePeriodEnd
+      : subscription.currentPeriodEnd,
+  );
 
   return Number.isFinite(periodEnd) && periodEnd > at.getTime();
 }

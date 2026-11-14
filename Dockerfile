@@ -51,6 +51,12 @@ COPY --from=builder --chown=root:root --chmod=0444 \
 COPY --from=builder --chown=root:root --chmod=0444 \
   /app/deploy/systemd/academy-identity-session-retention.timer \
   /usr/local/share/academy/systemd/academy-identity-session-retention.timer
+COPY --from=builder --chown=root:root --chmod=0444 \
+  /app/deploy/systemd/academy-subscription-renewals.service \
+  /usr/local/share/academy/systemd/academy-subscription-renewals.service
+COPY --from=builder --chown=root:root --chmod=0444 \
+  /app/deploy/systemd/academy-subscription-renewals.timer \
+  /usr/local/share/academy/systemd/academy-subscription-renewals.timer
 
 USER nextjs
 

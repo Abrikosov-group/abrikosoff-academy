@@ -15,6 +15,7 @@ export type CreateProviderCheckoutInput = {
   receiptContact: ReceiptContact;
   idempotencyKey: string;
   returnUrl: string;
+  billingMode: "recurring" | "one_time";
 };
 
 export type RefundProviderPaymentInput = {
@@ -29,8 +30,12 @@ export type ProviderPayment = {
   externalPaymentId: string;
   status: PaymentStatus;
   money: Money;
+  internalOrderId?: string;
+  internalRenewalAttemptId?: string;
   confirmationUrl?: string;
   paidAt?: string;
+  paymentMethodToken?: string;
+  paymentMethodSaved?: boolean;
 };
 
 export type ProviderRefund = {

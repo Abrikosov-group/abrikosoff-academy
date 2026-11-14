@@ -6,7 +6,7 @@ import type { EffectiveAccessBasis } from "../domain/effective-access";
 
 type ActiveBasisRow = {
   id: string;
-  source: "paid" | "manual";
+  source: "paid" | "manual" | "grace";
   plan_id: "monthly" | "annual" | null;
   period_start: Date;
   period_end: Date;
@@ -62,6 +62,27 @@ export class PostgresEffectiveAccessRepository
           AND grants.period_start <= $2
           AND grants.period_end > $2
 
+        UNION ALL
+
+        SELECT
+          grace.subscription_id AS id,
+          'grace'::text AS source,
+          NULL::text AS plan_id,
+          grace.period_start,
+          grace.period_end
+        FROM billing_access_grace_periods grace
+        WHERE grace.customer_id = $1
+          AND (
+            grace.status = 'active'
+            OR (
+              grace.status IN ('revoked', 'expired')
+              AND grace.revoked_at > $2
+            )
+          )
+          AND grace.created_at <= $2
+          AND grace.period_start <= $2
+          AND grace.period_end > $2
+
         ORDER BY period_end, period_start, source, id
       `,
       [userId, at],
@@ -88,10 +109,9 @@ export class PostgresEffectiveAccessRepository
         };
       }
 
-      return {
-        ...common,
-        source: "manual",
-      };
+      return row.source === "manual"
+        ? { ...common, source: "manual" }
+        : { ...common, source: "grace" };
     });
   }
 

@@ -1,6 +1,7 @@
 import type {
   ApplyPaymentEventInput,
   ApplyPaymentEventResult,
+  ApplyRecoveredRenewalPaymentEventInput,
   ApplyRefundEventInput,
   ApplyRefundEventResult,
   PaymentRepository,
@@ -171,6 +172,10 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     const updated: StoredCheckout = {
       ...checkout,
       status: nextStatus,
+      paymentMethodToken:
+        input.paymentMethodToken ?? checkout.paymentMethodToken,
+      paymentMethodSaved:
+        input.paymentMethodSaved === true || checkout.paymentMethodSaved,
       updatedAt: new Date().toISOString(),
     };
 
@@ -184,6 +189,13 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     );
 
     return { outcome: "applied", checkout: updated };
+  }
+
+  async applyRecoveredRenewalPaymentEvent(
+    _input: ApplyRecoveredRenewalPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult> {
+    void _input;
+    return { outcome: "unmatched", checkout: null };
   }
 
   async applyRefundEvent(

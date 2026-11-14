@@ -16,6 +16,8 @@ export type ApplyPaymentEventInput = {
   eventType: string;
   externalPaymentId: string;
   status: PaymentStatus;
+  paymentMethodToken?: string;
+  paymentMethodSaved?: boolean;
   occurredAt: string;
   payloadSha256: string;
   payload: unknown;
@@ -25,6 +27,13 @@ export type ApplyPaymentEventResult =
   | { outcome: "applied"; checkout: StoredCheckout }
   | { outcome: "duplicate"; checkout: StoredCheckout | null }
   | { outcome: "unmatched"; checkout: null };
+
+export type ApplyRecoveredRenewalPaymentEventInput =
+  ApplyPaymentEventInput & {
+    internalOrderId: string;
+    internalRenewalAttemptId: string;
+    money: Money;
+  };
 
 export type ApplyRefundEventInput = {
   provider: PaymentProviderId;
@@ -70,6 +79,10 @@ export interface PaymentRepository {
 
   applyPaymentEvent(
     input: ApplyPaymentEventInput,
+  ): Promise<ApplyPaymentEventResult>;
+
+  applyRecoveredRenewalPaymentEvent(
+    input: ApplyRecoveredRenewalPaymentEventInput,
   ): Promise<ApplyPaymentEventResult>;
 
   applyRefundEvent(

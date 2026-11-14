@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     if (body.offerAccepted !== true) {
       throw new BillingError(
         "INVALID_REQUEST",
-        "Подтвердите условия разовой оплаты доступа.",
+        "Подтвердите условия подписки и автоматического продления.",
         400,
       );
     }
@@ -120,6 +120,10 @@ export async function POST(request: Request) {
         email: receiptEmail ?? user.receiptEmail,
       },
       offerAcceptance: {
+        acceptedAt: new Date().toISOString(),
+        offerVersion: offerDocumentVersion,
+      },
+      recurringConsent: {
         acceptedAt: new Date().toISOString(),
         offerVersion: offerDocumentVersion,
       },

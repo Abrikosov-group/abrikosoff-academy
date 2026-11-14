@@ -93,7 +93,7 @@ export default async function DashboardPage() {
               · доступ до
               <br />
               <strong>
-                {periodEnd} · без повторного списания
+                {periodEnd}
               </strong>
             </p>
           ) : (
@@ -113,8 +113,8 @@ export default async function DashboardPage() {
                 <strong>Продление</strong>
                 <span>
                   {subscription?.autoRenew
-                    ? "Автоматически"
-                    : "Только вручную"}
+                    ? `Автоматически ${periodEnd}`
+                    : "Отключено"}
                 </span>
               </p>
             </div>
