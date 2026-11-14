@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const reviewedWorkflowSha = "4061fd546bd52095d1b1556df44244b231580b15";
+const reviewedWorkflowSha = "aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49";
 const runnerBundleDirectory =
   "infra/github-runners/abrikosoff-academy-review";
 
@@ -105,7 +105,8 @@ describe("организационное двойное ИИ-ревью", () => 
       "expected_codex_runner_name: abrikosoff-academy-review-codex-01",
       "expected_claude_runner_name: abrikosoff-academy-review-claude-01",
       "claude_enabled: false",
-      "codex_fallback_enabled: true",
+      "codex_model: gpt-5.6-terra",
+      "codex_fallback_enabled: false",
       "reuse_existing_reviews: true",
       "review_gate_context: ИИ-ревью Codex",
     ];

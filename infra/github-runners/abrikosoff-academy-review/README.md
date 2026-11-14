@@ -16,16 +16,17 @@ runner’ов других проектов не описывают фактич
 
 - доступна только репозиторию `Abrikosov-group/abrikosoff-academy`;
 - разрешает public repository, поскольку Academy публична;
-- ограничена exact reusable workflow
-  `Abrikosov-group/.github/.github/workflows/review-all.yml@4061fd546bd52095d1b1556df44244b231580b15`;
+- разрешает exact reusable workflow
+  `Abrikosov-group/.github/.github/workflows/review-all.yml@aa7bc8aaaf1a9b1f051d2e3c9f64b71845c59c49`;
 - не содержит runner’ов Sawabook, production или staging.
 
 Временный режим `codex_only_temporary` передаёт в оба вызова workflow
 `claude_enabled: false`. Организационный Codex остаётся обязательным;
-Claude runner и его OAuth не используются. Резерв Codex включён только при
-техническом сбое основной модели. Перед первым запуском оператор сверяет
-`selected_workflows` группы с закреплённым выше SHA и обновляет его вместе
-с caller; старый SHA не даёт запустить новый workflow. Для Codex-only запуска
+Claude runner и его OAuth не используются. Для Academy выбрана модель
+`gpt-5.6-terra` с усилием `xhigh`; автоматический резерв отключён, поэтому
+недоступность модели приводит к ошибке проверки. В `selected_workflows` группы
+проверен новый SHA; прежний `4061fd546bd52095d1b1556df44244b231580b15`
+сохранён на переходный период для отката caller. Для Codex-only запуска
 online должны быть runner оркестрации и Codex. Claude runner можно оставить
 остановленным. Возврат Claude требует отдельного решения владельца.
 
