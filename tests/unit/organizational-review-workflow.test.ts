@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const reviewedWorkflowSha = "5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f";
+const reviewedWorkflowSha = "4061fd546bd52095d1b1556df44244b231580b15";
 const runnerBundleDirectory =
   "infra/github-runners/abrikosoff-academy-review";
 
@@ -104,8 +104,10 @@ describe("организационное двойное ИИ-ревью", () => 
       "expected_orchestration_runner_name: abrikosoff-academy-review-orchestration-01",
       "expected_codex_runner_name: abrikosoff-academy-review-codex-01",
       "expected_claude_runner_name: abrikosoff-academy-review-claude-01",
+      "claude_enabled: false",
+      "codex_fallback_enabled: true",
       "reuse_existing_reviews: true",
-      "review_gate_context: Двойное ИИ-ревью",
+      "review_gate_context: ИИ-ревью Codex",
     ];
     const manualJob = extractJob(
       workflow,
@@ -131,14 +133,14 @@ describe("организационное двойное ИИ-ревью", () => 
     expect(workflow).toContain("github.event.pull_request.base.ref == 'main'");
   });
 
-  it("разрешает доверенный ручной повтор обоих ревьюеров", () => {
+  it("разрешает доверенный ручной запуск Codex без вызова Claude", () => {
     expect(workflow).toContain("issue_comment:");
     expect(workflow).toContain(
       "github.event.comment.body == '/review-all'",
     );
     expect(workflow).toContain("trigger: manual");
     expect(workflow).toContain("trigger: automatic");
-    expect(workflow).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(workflow).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
   });
 
   it("не отменяет ручное ревью из-за недоступной служебной реакции", () => {
@@ -245,6 +247,9 @@ esac
     );
     expect(developmentWorkflow).toContain("Организационный Codex");
     expect(developmentWorkflow).toContain("Организационный Claude");
+    expect(developmentWorkflow).toContain("codex_only_temporary");
+    expect(developmentWorkflow).toContain("claude_enabled: false");
+    expect(pullRequestTemplate).toContain("➖ заменён независимым Codex");
     expect(developmentWorkflow).toMatch(
       /Только владелец переводит PR из Draft\s+в Ready for review/u,
     );
@@ -264,9 +269,9 @@ esac
     for (const contractPart of exactRunnerContract) {
       expect(runnerInstall).toContain(contractPart);
     }
-    expect(runnerInstall).toContain("RUNNER_VERSION='2.336.0'");
+    expect(runnerInstall).toContain("RUNNER_VERSION='2.338.2'");
     expect(runnerInstall).toContain(
-      "RUNNER_SHA256='04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d'",
+      "RUNNER_SHA256='baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40'",
     );
     expect(runnerInstall).toContain("IFS= read -r orchestration_token");
     expect(runnerInstall).toContain("IFS= read -r codex_token");

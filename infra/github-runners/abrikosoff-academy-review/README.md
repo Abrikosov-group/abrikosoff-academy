@@ -1,6 +1,6 @@
-# Изолированные runner’ы двойного ревью Academy
+# Изолированные runner’ы организационного ревью Academy
 
-Организационный workflow двойного ИИ-ревью использует три отдельных self-hosted
+Организационный workflow использует три отдельных self-hosted
 runner’а на VPS `srv1909949.hstgr.cloud` (`187.124.113.218`). Старые IP в именах
 runner’ов других проектов не описывают фактический адрес сервера и не должны
 использоваться для настройки Academy.
@@ -12,13 +12,28 @@ runner’ов других проектов не описывают фактич
 | Анализ Claude | `abrikosoff-academy-review-claude-01` | `abrikosoff-academy-review-claude` |
 
 Все три runner’а принадлежат закрытой организационной группе
-`abrikosoff-academy-review`. Группа:
+`abrikosoff-academy-review`. Для запуска этой версии группа должна:
 
 - доступна только репозиторию `Abrikosov-group/abrikosoff-academy`;
 - разрешает public repository, поскольку Academy публична;
 - ограничена exact reusable workflow
-  `Abrikosov-group/.github/.github/workflows/review-all.yml@5fb3bc99efb0703cb5e979295ba1c75f2f0cce1f`;
+  `Abrikosov-group/.github/.github/workflows/review-all.yml@4061fd546bd52095d1b1556df44244b231580b15`;
 - не содержит runner’ов Sawabook, production или staging.
+
+Временный режим `codex_only_temporary` передаёт в оба вызова workflow
+`claude_enabled: false`. Организационный Codex остаётся обязательным;
+Claude runner и его OAuth не используются. Резерв Codex включён только при
+техническом сбое основной модели. Перед первым запуском оператор сверяет
+`selected_workflows` группы с закреплённым выше SHA и обновляет его вместе
+с caller; старый SHA не даёт запустить новый workflow. Для Codex-only запуска
+online должны быть runner оркестрации и Codex. Claude runner можно оставить
+остановленным. Возврат Claude требует отдельного решения владельца.
+
+По снимку 14.11.2026 установленные runner версии `2.336.0` GitHub больше не
+допускает к заданиям. Перед включением служб обновите их до версии, которую
+возвращает GitHub API для организации, и проверьте контрольную сумму архива.
+Закреплённая версия для новой первичной установки — `2.338.2`; обновление
+существующей установки не выполняется `install.sh`.
 
 ## Граница доверия
 
@@ -100,7 +115,7 @@ status`. Любое несовпадение останавливает уста
 
 1. Все существующие `actions.runner.*` имеют `ProtectProc=invisible`.
 2. Runner group имеет точные настройки, перечисленные выше, и пока пуста.
-3. На сервере установлены GitHub Actions Runner `2.336.0`, Codex CLI `0.147.0`
+3. На сервере установлены GitHub Actions Runner `2.338.2`, Codex CLI `0.147.0`
    и Claude Code `2.1.226` либо доступна загрузка закреплённого runner archive.
 4. Отдельный Academy Codex OAuth
    `/var/lib/abrikosoff-academy-review-codex/.codex/auth.json` является обычным
