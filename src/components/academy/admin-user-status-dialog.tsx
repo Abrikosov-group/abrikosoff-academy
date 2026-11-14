@@ -47,6 +47,10 @@ type CommandFeedback = {
   tone: "danger" | "success";
 };
 
+function navigateWithFullReload(path: string) {
+  window.location.assign(new URL(path, window.location.origin));
+}
+
 export function AdminUserStatusDialog({
   isCurrentActor,
   studentDisplayName,
@@ -179,7 +183,7 @@ export function AdminUserStatusDialog({
           errorCode === "ADMIN_AUTH_REQUIRED" ||
           errorCode === "ADMIN_LOGIN_REQUIRED"
         ) {
-          window.location.assign(
+          navigateWithFullReload(
             `/login?next=${encodeURIComponent(
               `/admin/students/${studentId}`,
             )}`,
@@ -187,7 +191,7 @@ export function AdminUserStatusDialog({
           return;
         }
         if (errorCode === "ADMIN_REAUTH_REQUIRED") {
-          window.location.assign(
+          navigateWithFullReload(
             `/admin/verify?next=${encodeURIComponent(
               `/admin/students/${studentId}`,
             )}`,
@@ -227,7 +231,7 @@ export function AdminUserStatusDialog({
       submittedInputRef.current = null;
 
       if (payload.currentSessionRevoked === true) {
-        window.location.assign("/login");
+        navigateWithFullReload("/login");
         return;
       }
 
